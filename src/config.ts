@@ -2,22 +2,29 @@ import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
+import { loadPreferences, type ModelSettings } from "./preferences.js"
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
-const promptPath = join(currentDir, "prompts", "base-system.md")
+const promptsDir = join(currentDir, "prompts")
+const promptPath = join(promptsDir, "base-system.md")
+const titlePromptPath = join(promptsDir, "title-system.md")
 
 export type FurnaceConfig = {
   appName: string
   model: string
+  modelSettings: ModelSettings
   openRouterApiKey: string
   siteUrl: string
   systemPrompt: string
+  titleModel: string
+  titleSystemPrompt: string
 }
 
 export async function loadConfig(): Promise<FurnaceConfig> {
   dotenv.config({ quiet: true })
 
   const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim()
+  const preferences = await loadPreferences()
 
   if (!openRouterApiKey) {
     throw new Error("OPENROUTER_API_KEY is missing. Add it to .env before running Furnace.")
@@ -25,9 +32,12 @@ export async function loadConfig(): Promise<FurnaceConfig> {
 
   return {
     appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
-    model: process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4.6",
+    model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4.6",
+    modelSettings: preferences.modelSettings || {},
     openRouterApiKey,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
     systemPrompt: await readFile(promptPath, "utf8"),
+    titleModel: process.env.OPENROUTER_TITLE_MODEL?.trim() || "openai/gpt-4o-mini",
+    titleSystemPrompt: await readFile(titlePromptPath, "utf8"),
   }
 }

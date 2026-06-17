@@ -10,6 +10,9 @@ coverage/
 .env.*
 !.env.example
 
+# Local Furnace state
+.furnace/
+
 # Logs
 *.log
 npm-debug.log*

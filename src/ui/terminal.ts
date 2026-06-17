@@ -1,5 +1,6 @@
 import readline from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
+import type { TranscriptMessage } from "../session/types.js"
 
 const colors = {
   accent: "\x1b[38;5;149m",
@@ -14,6 +15,7 @@ const colors = {
 export type PromptContext = {
   cwd: string
   model: string
+  title?: string
 }
 
 type Layout = {
@@ -26,6 +28,7 @@ type Layout = {
 
 let activeLayout: Layout | undefined
 let activeContext: PromptContext | undefined
+let streamTranscript: TranscriptMessage[] = []
 
 export function clearScreen(): void {
   output.write("\x1b[2J\x1b[H")
@@ -39,8 +42,9 @@ export function renderHeader(context: PromptContext): void {
   renderInputPanel(context, activeLayout)
 }
 
-export async function readPrompt(context: PromptContext): Promise<string> {
+export async function readPrompt(context: PromptContext, transcript: TranscriptMessage[] = []): Promise<string> {
   renderHeader(context)
+  renderTranscriptArea(transcript)
 
   const rl = readline.createInterface({ input, output })
   const layout = activeLayout || getLayout()
@@ -50,23 +54,18 @@ export async function readPrompt(context: PromptContext): Promise<string> {
   return prompt.trim()
 }
 
-export function renderAssistantStart(prompt?: string): void {
+export function renderAssistantStart(transcriptOrPrompt?: string | TranscriptMessage[]): void {
+  const transcript = typeof transcriptOrPrompt === "string" ? [{ role: "user" as const, content: transcriptOrPrompt }] : transcriptOrPrompt || []
+  streamTranscript = transcript
+
   if (!activeLayout || !activeContext) {
-    if (prompt) renderUserBlock(prompt)
+    renderTranscript(transcript)
     output.write(`\n${colors.border}─ response ${"─".repeat(50)}${colors.reset}\n\n`)
     return
   }
 
-  clearResponseArea(activeLayout)
-  renderInputPanel(activeContext, activeLayout)
-  output.write(setScrollRegion(activeLayout.responseTop, activeLayout.responseBottom))
-  output.write(moveTo(activeLayout.responseTop, 1))
-
-  if (prompt) {
-    renderUserBlock(prompt, activeLayout.width)
-    output.write("\n")
-  }
-
+  const responseRow = renderTranscriptArea(transcript, 4)
+  output.write(moveTo(responseRow, 1))
   output.write(`${colors.border}─ response ${"─".repeat(Math.min(50, activeLayout.width - 12))}${colors.reset}\n\n`)
 }
 
@@ -76,18 +75,17 @@ export function renderAssistantToken(token: string): void {
 
 export function renderDone(): void {
   output.write(`\n\n${colors.dim}done${colors.reset}\n`)
-
-  if (activeLayout) {
-    output.write(resetScrollRegion())
-    output.write(moveTo(activeLayout.rows, 1))
-    output.write("\n")
-  }
 }
 
 export function renderError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error)
   output.write(resetScrollRegion())
   output.write(`\n${colors.error}error:${colors.reset} ${message}\n`)
+}
+
+export function renderConversation(transcript: TranscriptMessage[]): void {
+  streamTranscript = transcript
+  renderTranscriptArea(transcript)
 }
 
 function renderTitle(layout: Layout): void {
@@ -105,7 +103,7 @@ function renderTitle(layout: Layout): void {
 function renderInputPanel(context: PromptContext, layout: Layout): void {
   const width = layout.width
   const cwd = shortenHome(context.cwd)
-  const status = "0.0%/1.0M (auto)"
+  const status = "0.0%/auto"
   const model = context.model
 
   output.write(moveTo(layout.inputTop, 1))
@@ -115,7 +113,7 @@ function renderInputPanel(context: PromptContext, layout: Layout): void {
   output.write(moveTo(layout.inputTop + 2, 1))
   output.write(`${colors.border}${"─".repeat(width)}${colors.reset}`)
   output.write(moveTo(layout.inputTop + 3, 1))
-  output.write(`${colors.dim}${truncate(cwd, width)}${colors.reset}${clearToEndOfLine()}`)
+  output.write(`${colors.dim}${truncate(context.title ? `${cwd} · ${context.title}` : cwd, width)}${colors.reset}${clearToEndOfLine()}`)
   output.write(moveTo(layout.inputTop + 4, 1))
   output.write(`${colors.dim}${status}${colors.reset}${colors.dim}${alignRight(model, width - status.length)}${colors.reset}`)
   output.write(clearToEndOfLine())
@@ -124,6 +122,74 @@ function renderInputPanel(context: PromptContext, layout: Layout): void {
 function renderUserBlock(prompt: string, width = Math.max(60, output.columns || 80)): void {
   output.write(`${colors.accent}> user ${colors.border}${"─".repeat(Math.max(0, width - 8))}${colors.reset}\n\n`)
   output.write(`${prompt}\n`)
+}
+
+function renderAssistantBlock(content: string, width = Math.max(60, output.columns || 80)): void {
+  output.write(`${colors.border}─ assistant ${"─".repeat(Math.max(0, width - 12))}${colors.reset}\n\n`)
+  output.write(`${content}\n`)
+}
+
+function renderTranscriptArea(transcript: TranscriptMessage[], reserveLines = 0): number {
+  if (!activeLayout || !activeContext) return 1
+
+  clearResponseArea(activeLayout)
+  renderInputPanel(activeContext, activeLayout)
+  return renderTranscriptLines(transcript, activeLayout, reserveLines)
+}
+
+function renderTranscript(transcript: TranscriptMessage[], width = Math.max(60, output.columns || 80)): void {
+  for (const message of transcript) {
+    if (message.role === "user") renderUserBlock(message.content, width)
+    else renderAssistantBlock(message.content, width)
+    output.write("\n")
+  }
+}
+
+function renderTranscriptLines(transcript: TranscriptMessage[], layout: Layout, reserveLines: number): number {
+  const lines = buildTranscriptLines(transcript, layout.width)
+  const available = Math.max(1, layout.responseBottom - layout.responseTop + 1 - reserveLines)
+  const visible = lines.slice(Math.max(0, lines.length - available))
+
+  for (let index = 0; index < visible.length; index += 1) {
+    output.write(moveTo(layout.responseTop + index, 1))
+    output.write(truncate(visible[index] ?? "", layout.width))
+    output.write(clearToEndOfLine())
+  }
+
+  return Math.min(layout.responseBottom, layout.responseTop + visible.length)
+}
+
+function buildTranscriptLines(transcript: TranscriptMessage[], width: number): string[] {
+  const lines: string[] = []
+
+  for (const message of transcript) {
+    const label = message.role === "user" ? "> user " : "─ assistant "
+    // Keep these fixed-area transcript lines plain. They are clipped to the
+    // terminal width, and clipping ANSI-colored strings can leak escape codes.
+    lines.push(`${label}${"─".repeat(Math.max(0, width - label.length))}`)
+    lines.push("")
+    lines.push(...wrap(message.content, width))
+    lines.push("")
+  }
+
+  return lines
+}
+
+function wrap(text: string, width: number): string[] {
+  const result: string[] = []
+  for (const sourceLine of text.split("\n")) {
+    let line = sourceLine
+    if (!line) {
+      result.push("")
+      continue
+    }
+    while (line.length > width) {
+      result.push(line.slice(0, width))
+      line = line.slice(width)
+    }
+    result.push(line)
+  }
+  return result
 }
 
 function clearResponseArea(layout: Layout): void {

@@ -2,29 +2,45 @@
 
 Furnace should be built in phases. Each phase should leave the project in a usable state, even if the feature set is narrow.
 
+## Current Status
+
+Furnace currently has a TypeScript CLI, OpenRouter streaming responses, Pi TUI-based interactive rendering, and local SQLite-backed multi-turn sessions. Session storage follows the Pi-style tree model: each entry has a parent entry, and each session tracks an active leaf. The current implementation supports fresh chats by default, `--continue`, `/new`, `/history` with arrow-key selection, automatic session titles, a thinking loader while the assistant is generating, active transcript rendering, and sending the root-to-leaf path back to the model.
+
+Validated so far:
+
+- `npm run typecheck`
+- `npm test`
+- `npm run build`
+- Live two-turn OpenRouter smoke test where the model used prior-turn context.
+
 ## Phase 0: Project Skeleton
 
 Create the basic repository structure and development workflow.
 
+Status: mostly complete.
+
 ### Scope
 
-- Initialize a TypeScript package.
-- Add formatting, linting, typechecking, and tests.
-- Create the initial CLI entrypoint.
-- Define package boundaries for runtime, CLI, TUI, tools, providers, config, and sessions.
-- Add basic project docs and contribution instructions.
+- [x] Initialize a TypeScript package.
+- [x] Add typechecking and tests.
+- [x] Create the initial CLI entrypoint.
+- [x] Define initial package boundaries for CLI, UI, provider, config, and sessions.
+- [x] Add basic project docs and agent instructions.
+- [x] Add `.env.example`, `.gitignore`, and local state ignore rules.
 
 ### Validation Criteria
 
-- `npm install` completes cleanly.
-- `npm run typecheck` passes.
-- `npm test` runs at least one smoke test.
-- `furnace --help` prints CLI usage.
-- The package layout makes the runtime importable without importing the TUI.
+- [x] `npm install` completes cleanly.
+- [x] `npm run typecheck` passes.
+- [x] `npm test` runs smoke tests.
+- [x] `furnace --help` prints CLI usage.
+- [x] Session code is separate from terminal UI code.
 
 ## Phase 1: Runtime Event Protocol
 
 Define the contract that every interface will consume.
+
+Status: not started. Current runtime is still direct CLI orchestration, not event-stream based.
 
 ### Scope
 
@@ -44,41 +60,51 @@ Define the contract that every interface will consume.
 
 Connect the runtime to real LLM APIs through a normalized interface.
 
+Status: partially complete.
+
 ### Scope
 
-- Add provider interface for streaming responses and tool calls.
-- Implement Anthropic and OpenAI adapters.
-- Add model config, API key loading, retries, timeouts, and usage metadata.
-- Normalize provider-specific tool-call formats into internal events.
+- [x] Add a direct OpenRouter streaming chat completion path.
+- [x] Load model and API key from `.env`.
+- [ ] Add a provider interface for streaming responses and tool calls.
+- [ ] Implement Anthropic and OpenAI adapters directly or through OpenRouter-compatible adapters.
+- [ ] Add retries, timeouts, usage metadata, and provider-specific error handling.
+- [ ] Normalize provider-specific tool-call formats into internal events.
 
 ### Validation Criteria
 
-- A prompt streams assistant text from at least one real provider.
-- Provider adapters can be tested with fixture streams.
-- API keys are never written to transcripts.
-- Transient provider failures retry within configured limits.
-- Unsupported model/provider combinations fail with actionable errors.
+- [x] A prompt streams assistant text from OpenRouter.
+- [x] API keys are loaded from `.env` and `.env` is ignored by git.
+- [ ] Provider adapters can be tested with fixture streams.
+- [ ] Transient provider failures retry within configured limits.
+- [ ] Unsupported model/provider combinations fail with actionable errors.
 
 ## Phase 3: Agent Loop
 
 Implement the core agentic loop.
 
+Status: partially complete for chat-only multi-turn; no tools yet.
+
 ### Scope
 
-- Assemble prompts, instructions, conversation history, and available tools.
-- Stream model output.
-- Detect tool calls.
-- Execute tool calls through the tool registry.
-- Append tool results and continue until the model produces a final answer.
-- Add max-step limits, cancellation, and interruption handling.
+- [x] Assemble base system prompt plus active conversation history.
+- [x] Stream model output.
+- [x] Append user and assistant messages to local session history.
+- [x] Continue latest session or start a fresh session with `--new-session`.
+- [ ] Detect tool calls.
+- [ ] Execute tool calls through the tool registry.
+- [ ] Append tool results and continue until the model produces a final answer.
+- [ ] Add max-step limits, cancellation, and interruption handling.
 
 ### Validation Criteria
 
-- A model can call a mock tool and receive its result in a follow-up turn.
-- The loop stops at the configured max-step limit.
-- Cancellation records a complete transcript without dangling tool calls.
-- Errors become structured events instead of crashing the process.
-- Unit tests cover success, tool failure, provider failure, and max-step behavior.
+- [x] Multi-turn model context works across turns.
+- [x] Live two-turn smoke test verified the model remembered prior user context.
+- [ ] A model can call a mock tool and receive its result in a follow-up turn.
+- [ ] The loop stops at the configured max-step limit.
+- [ ] Cancellation records a complete transcript without dangling tool calls.
+- [ ] Errors become structured events instead of crashing the process.
+- [ ] Unit tests cover success, tool failure, provider failure, and max-step behavior.
 
 ## Phase 4: Core Coding Tools
 
@@ -123,40 +149,66 @@ Make tool execution safe enough for real repositories.
 
 Make sessions resumable and debuggable.
 
+Status: partially complete.
+
 ### Scope
 
-- Store sessions as JSONL event logs.
-- Add session metadata: id, name, cwd, created time, updated time, model, and status.
-- Implement resume-last and resume-by-id.
-- Add transcript replay for debugging.
+- [x] Store sessions locally in SQLite at `.furnace/furnace.sqlite`.
+- [x] Use Pi-style tree entries with `id`, `parent_entry_id`, and active leaf tracking.
+- [x] Add session metadata: id, title, cwd, active leaf, parent session, fork source, created time, updated time, archive time.
+- [x] Implement continue-latest for the current cwd.
+- [x] Start fresh by default and implement `--continue` for resuming the latest non-empty session.
+- [x] Implement `/new` for a fresh local session without accumulating empty sessions.
+- [x] Implement `/history` for saved non-empty sessions.
+- [x] Generate short session titles after the first user prompt.
+- [x] Add active-path reconstruction by walking parent links from the active leaf.
+- [ ] Implement resume-by-id.
+- [ ] Implement same-session branching from an entry.
+- [ ] Implement fork-to-new-session from an entry.
+- [ ] Add transcript replay/debug command.
+- [ ] Add compaction entries with `summary`, `firstKeptEntryId`, and `tokensBefore`.
 
 ### Validation Criteria
 
-- A completed session can be resumed and continued.
-- A replayed transcript reconstructs the same visible conversation.
-- Corrupt session files fail gracefully with a useful error.
-- Session files do not contain secrets from config or environment.
+- [x] A completed latest session can be resumed and continued.
+- [x] Active transcript reconstructs from the root-to-leaf path.
+- [x] Session-store tests verify Pi-style parent/leaf chaining.
+- [x] Empty placeholder sessions are hidden and cleaned up.
+- [x] Local SQLite state is ignored by git.
+- [ ] Resume-by-id works.
+- [ ] A replayed transcript reconstructs the same visible conversation from any selected leaf.
+- [ ] Corrupt database state fails gracefully with a useful error.
+- [ ] Session entries do not contain secrets from config or environment.
 
 ## Phase 7: Terminal UI
 
 Build the interactive CLI experience on top of the runtime.
 
+Status: partially complete.
+
 ### Scope
 
-- Add a streaming chat view.
-- Add multiline input.
-- Add approval prompts.
-- Add visible tool-call progress and results.
-- Add keyboard shortcuts for interrupt, submit, quit, and model selection.
-- Add markdown rendering and basic code highlighting.
+- [x] Add a streaming chat view.
+- [x] Add sticky bottom input area.
+- [x] Render visible user and assistant transcript blocks.
+- [x] Use Pi TUI for retained-mode interactive rendering.
+- [x] Show an assistant thinking loader while waiting for streamed tokens.
+- [x] Add arrow-key `/history` selection.
+- [x] Add `/exit` and `/quit`.
+- [x] Add piped multi-turn input support for testing/scripts.
+- [x] Add multiline-capable editor input through Pi TUI.
+- [ ] Add approval prompts.
+- [ ] Add visible tool-call progress and results.
+- [ ] Add keyboard shortcuts for interrupt, submit, quit, and model selection.
+- [ ] Add markdown rendering and basic code highlighting.
 
 ### Validation Criteria
 
-- The TUI can run the same prompts as headless mode.
-- Streaming text updates without flicker in common terminals.
-- Approval prompts block execution until answered.
-- Interrupting a run leaves the terminal usable and the transcript complete.
-- Basic flows work in macOS Terminal, iTerm2, and VS Code/Cursor integrated terminal.
+- [x] Interactive mode and `-p`/piped modes use the same session path.
+- [x] Streaming text works with the current terminal renderer.
+- [ ] Approval prompts block execution until answered.
+- [ ] Interrupting a run leaves the terminal usable and the transcript complete.
+- [ ] Basic flows work in macOS Terminal, iTerm2, and VS Code/Cursor integrated terminal.
 
 ## Phase 8: Config And Project Context
 

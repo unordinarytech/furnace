@@ -16,4 +16,5 @@ test("local secrets are ignored", async () => {
   assert.match(gitignore, /^\.env$/m)
   assert.match(gitignore, /^\.env\.\*$/m)
   assert.match(gitignore, /^!\.env\.example$/m)
+  assert.match(gitignore, /^\.furnace\/$/m)
 })

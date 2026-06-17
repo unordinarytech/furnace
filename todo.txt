@@ -1,0 +1,24 @@
+ToDo
+
+session management :
+	- compaction
+	- forking 
+	- duplicating / forking entire branch
+	- vault typeshi per session
+
+functionality :
+	- tools 
+	- skills
+	- memory long term of sorts
+
+- Plan mode
+- Ask question tool
+- Approval tool
+- Stresstesting to be bug free 
+- Auto doc structure (from harness engineering)
+
+Gimmicks : 
+	- /goal
+	- browser capability ? 
+	- test app itself capability ?
+
