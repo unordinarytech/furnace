@@ -22,8 +22,45 @@ function sleep(ms) {
 test("tool registry exposes the core primitives", () => {
   assert.deepEqual(
     toolDefinitions.map((tool) => tool.function.name),
-    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "websearch", "webfetch"],
+    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "websearch", "webfetch"],
   )
+})
+
+test("ask_question returns user answers from the prompt service", async () => {
+  await withWorkspace(async (cwd) => {
+    const result = await executeToolCall(
+      {
+        name: "ask_question",
+        arguments: JSON.stringify({
+          questions: [
+            {
+              id: "scope",
+              prompt: "Which scope?",
+              options: [{ id: "minimal", label: "Minimal" }],
+            },
+          ],
+        }),
+      },
+      {
+        cwd,
+        questionPrompt: async (request) => {
+          assert.equal(request.questions[0].id, "scope")
+          return {
+            answers: [
+              {
+                answer: "Minimal",
+                kind: "option",
+                optionId: "minimal",
+                questionId: "scope",
+              },
+            ],
+          }
+        },
+      },
+    )
+
+    assert.match(result.content, /scope: user selected "Minimal"/)
+  })
 })
 
 test("file tools read, write, list, find, glob, and grep inside the workspace", async () => {

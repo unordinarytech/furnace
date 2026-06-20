@@ -42,8 +42,9 @@ Current influences:
 
 - Pi: parent-linked session entries, `active_leaf_id`, future branching/forking semantics, and keeping the agent runtime independent of the terminal UI.
 - Pi-style apply patch: Furnace exposes one model-facing `edit` tool but implements it as a structured apply-patch envelope.
-- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, and the allow/ask/deny permission rule model.
-- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, and the future direction for SQLite FTS session search.
+- Pi-style questionnaire UX: Furnace's `ask_question` panel adapts Pi's multi-question tab navigation, option selection, custom answer, and cancellation/refusal direction.
+- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, and queued-prompt manager behavior.
+- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, and the future direction for SQLite FTS session search.
 
 ## Runtime Context Injection
 
@@ -120,3 +121,58 @@ Current implementation:
 - `src/agent/loop.ts` checks permission before calling `executeToolCall()`.
 - `src/ui/ink-terminal.tsx` renders the themed approval prompt and resolves the pending request.
 - `src/cli.ts` keeps one `SessionPermissionStore` for the interactive run and routes `/reset-perms` to the active conversation id.
+
+## Ask Questions
+
+Furnace exposes `ask_question` as a model-callable clarification tool.
+
+Reasoning:
+
+Clarifying questions are different from permission prompts. Permissions protect the user before side effects; `ask_question` is a normal agent capability for ambiguous requirements or meaningful tradeoffs. The model should be able to ask one or more structured questions, receive the answer as a tool result, and continue the same turn with that information.
+
+Harness provenance:
+
+- OpenCode influenced the runtime shape: the tool creates a pending question request, the UI resolves it, and the model receives the result as a tool response.
+- Pi influenced the terminal interaction: multiple questions, left/right navigation, selectable options, custom answers, and a focused question panel.
+- Hermes Agent influenced the user-answer semantics: an explicit "Other" custom answer path, refusal/dismissal handling, and the broader `interrupt | queue | steer` framing for busy input.
+
+Current behavior:
+
+- The tool accepts one or more questions with option arrays.
+- The UI adds custom-answer and refusal paths.
+- The input bar remains available while a question is open; pressing up from an empty input focuses the question panel.
+- Refusal is returned as answer data, not as a tool failure.
+
+Current implementation:
+
+- `src/questions.ts` owns request normalization and result formatting.
+- `src/tools/registry.ts` registers `ask_question`.
+- `src/agent/loop.ts` passes the question prompt callback into tool execution.
+- `src/ui/ink-terminal.tsx` renders the question panel and resolves the pending request.
+
+## Queued Prompts
+
+Interactive Furnace queues user prompts submitted while a turn is already running.
+
+Reasoning:
+
+The terminal should stay responsive during long agent turns. Users often think of the next instruction while tools are running; losing that text or forcing them to wait makes the TUI feel brittle. Queueing gives the user a visible backlog and lets Furnace drain prompts in order.
+
+Harness provenance:
+
+- Pi influenced the idea that mid-run input is first-class queue state rather than a blocked prompt box.
+- OpenCode CLI influenced the visible queued-prompt manager with truncated rows plus edit/remove/promote actions.
+- Hermes Agent influenced the future direction for busy input modes, especially distinguishing interrupt, queue, and steer semantics.
+
+Current behavior:
+
+- Submitting while Furnace is busy appends a conversation-local queued prompt.
+- Queued prompts render in a compact panel.
+- Queue focus supports up/down selection, `e` to edit by restoring the prompt into the input, `d` to remove, and Enter to promote/run next.
+- Furnace attempts to interrupt the current model request when a queued prompt is promoted, but full hard interruption of already-running tools depends on future `AbortSignal` plumbing through every tool.
+
+Current implementation:
+
+- `src/cli.ts` owns the interactive queue and drains it FIFO.
+- `src/ui/ink-terminal.tsx` renders the queue panel and input focus switching.
+- `src/ui/components/prompt-input.tsx` supports controlled drafts so queued prompts can be restored for editing.

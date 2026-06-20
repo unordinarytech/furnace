@@ -10,7 +10,7 @@ import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
-import { createFurnaceTerminal, type FurnaceTerminal, type ToolActivity } from "./ui/ink-terminal.js"
+import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -75,15 +75,30 @@ async function runInteractive(input: {
   if (input.shouldClear) process.stdout.write("\x1b[2J\x1b[H")
   let sessionId = input.sessionId
   const permissions = new SessionPermissionStore()
+  const queuedPrompts: QueuedPrompt[] = []
+  let queueCounter = 0
+  let running = false
+  let activeAbortController: AbortController | undefined
   const initialSession = input.store.getSession(sessionId)
   const terminal = createFurnaceTerminal({
     cwd: input.cwd,
     model: input.config.model,
     modelSettings: input.config.modelSettings,
+    onQueueEdit: (id) => {
+      removeQueuedPrompt(id)
+    },
+    onQueuePromote: (id) => {
+      promoteQueuedPrompt(id)
+    },
+    onQueueRemove: (id) => {
+      removeQueuedPrompt(id)
+    },
     themeName: input.config.theme,
     title: initialSession.title,
     onSubmit: (prompt) => {
       void handleInteractiveSubmit(prompt).catch((error) => {
+        running = false
+        activeAbortController = undefined
         terminal.setBusy(false)
         terminal.setThinking(false)
         terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
@@ -98,7 +113,12 @@ async function runInteractive(input: {
     const command = parseSlashCommand(prompt)
 
     if (command.name === "/exit" || command.name === "/quit") {
+      activeAbortController?.abort()
       terminal.stop()
+      return
+    }
+    if (running) {
+      enqueuePrompt(prompt)
       return
     }
     if (command.name === "/new") {
@@ -185,11 +205,74 @@ async function runInteractive(input: {
       return
     }
 
+    await runPromptQueue(prompt)
+  }
+
+  function enqueuePrompt(text: string): void {
+    queuedPrompts.push({
+      createdAt: Date.now(),
+      id: `queue-${Date.now()}-${queueCounter++}`,
+      text,
+    })
+    syncQueuedPrompts()
+  }
+
+  function removeQueuedPrompt(id: string): QueuedPrompt | undefined {
+    const index = queuedPrompts.findIndex((prompt) => prompt.id === id)
+    if (index < 0) return undefined
+    const [removed] = queuedPrompts.splice(index, 1)
+    syncQueuedPrompts()
+    return removed
+  }
+
+  function promoteQueuedPrompt(id: string): void {
+    const prompt = removeQueuedPrompt(id)
+    if (!prompt) return
+    queuedPrompts.unshift(prompt)
+    syncQueuedPrompts()
+    activeAbortController?.abort()
+  }
+
+  function syncQueuedPrompts(): void {
+    terminal.setQueuedPrompts([...queuedPrompts])
+  }
+
+  async function runPromptQueue(firstPrompt: string): Promise<void> {
+    queuedPrompts.unshift({
+      createdAt: Date.now(),
+      id: `active-${Date.now()}-${queueCounter++}`,
+      text: firstPrompt,
+    })
+    if (running) return
+
+    running = true
     terminal.setBusy(true)
     try {
-      await runSingleTurn({ config: input.config, cwd: input.cwd, permissions, prompt, sessionId, store: input.store, terminal })
+      let firstPrompt = true
+      while (queuedPrompts.length > 0) {
+        if (!firstPrompt) await terminal.waitForInputFocus()
+        firstPrompt = false
+        const next = queuedPrompts.shift()
+        syncQueuedPrompts()
+        if (!next) continue
+        const controller = new AbortController()
+        activeAbortController = controller
+        try {
+          await runSingleTurn({ config: input.config, cwd: input.cwd, permissions, prompt: next.text, sessionId, signal: controller.signal, store: input.store, terminal })
+        } catch (error) {
+          if (!isAbortError(error)) throw error
+          input.store.appendMessage(sessionId, "assistant", "Interrupted by queued prompt.", input.config.model)
+          terminal.setThinking(false)
+          terminal.setTranscript(entriesToTranscript(input.store.getActivePath(sessionId)))
+        } finally {
+          if (activeAbortController === controller) activeAbortController = undefined
+        }
+      }
     } finally {
+      running = false
+      activeAbortController = undefined
       terminal.setBusy(false)
+      syncQueuedPrompts()
     }
   }
 }
@@ -263,6 +346,7 @@ async function runSingleTurn(input: {
   permissions?: SessionPermissionStore
   prompt: string
   sessionId: string
+  signal?: AbortSignal
   store: SessionStore
   terminal?: FurnaceTerminal
 }): Promise<void> {
@@ -297,8 +381,17 @@ async function runSingleTurn(input: {
           return decision
         }
       : undefined,
+    onQuestionRequest: terminal
+      ? async (request) => {
+          terminal.setThinking(true, "waiting for your answer")
+          const response = await terminal.requestQuestions(request)
+          terminal.setThinking(true, "thinking")
+          return response
+        }
+      : undefined,
     permissions: input.permissions || new SessionPermissionStore(),
     sessionId: input.sessionId,
+    signal: input.signal,
     onToolStart: (call) => {
       input.store.appendToolCall(input.sessionId, {
         arguments: call.arguments,
@@ -369,6 +462,12 @@ function isHistoryCommand(command: string): boolean {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && (error.name === "AbortError" || /aborted|interrupted/i.test(error.message))
 }
 
 function formatRelativeTime(timestamp: number): string {

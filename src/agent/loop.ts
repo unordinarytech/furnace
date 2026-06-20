@@ -1,6 +1,7 @@
 import type { FurnaceConfig } from "../config.js"
 import { completeOpenRouterToolResponse, type OpenRouterMessage, type OpenRouterToolChoice } from "../openrouter.js"
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
+import type { AskQuestionPrompt } from "../questions.js"
 import { executeToolCall, toolDefinitions, type ToolFileReadStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
@@ -9,7 +10,9 @@ export type RunAgentTurnInput = {
   fileReadStore?: ToolFileReadStore
   messages: OpenRouterMessage[]
   onPermissionRequest?: PermissionPrompt
+  onQuestionRequest?: AskQuestionPrompt
   sessionId?: string
+  signal?: AbortSignal
   permissions?: SessionPermissionStore
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
   onToolResult?: (call: { arguments: string; id: string; name: string }, content: string) => void
@@ -19,14 +22,15 @@ export type RunAgentTurnResult = {
   content: string
 }
 
-const maxToolIterations = 8
-
 export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTurnResult> {
   const messages = [...input.messages]
+  let iteration = 0
 
-  for (let iteration = 0; iteration < maxToolIterations; iteration += 1) {
+  while (true) {
     const toolChoice: OpenRouterToolChoice = iteration === 0 && shouldForceWebSearch(messages) ? { type: "function", function: { name: "websearch" } } : "auto"
-    const response = await completeOpenRouterToolResponse(input.config, messages, toolDefinitions, { toolChoice })
+    iteration += 1
+    if (input.signal?.aborted) throw abortError()
+    const response = await completeOpenRouterToolResponse(input.config, messages, toolDefinitions, { toolChoice }, input.signal)
 
     if (response.toolCalls.length === 0) {
       return { content: response.content }
@@ -64,12 +68,13 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         })
         continue
       }
+      if (input.signal?.aborted) throw abortError()
       const result = await executeToolCall(
         {
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
         },
-        { cwd: input.cwd, fileReadStore: input.fileReadStore, sessionId: input.sessionId },
+        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId },
       )
       input.onToolResult?.(call, result.content)
       messages.push({
@@ -80,10 +85,10 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       })
     }
   }
+}
 
-  return {
-    content: `Stopped after ${maxToolIterations} tool iterations. Please narrow the task or continue from the current state.`,
-  }
+function abortError(): DOMException {
+  return new DOMException("The current turn was interrupted.", "AbortError")
 }
 
 export function shouldForceWebSearch(messages: OpenRouterMessage[]): boolean {

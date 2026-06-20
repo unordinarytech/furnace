@@ -101,7 +101,7 @@ export function createToolPermissionRequest(input: {
 }
 
 export function defaultPermissionAction(permission: string): PermissionAction {
-  if (["read", "ls", "find", "glob", "grep", "websearch", "webfetch"].includes(permission)) return "allow"
+  if (["read", "ls", "find", "glob", "grep", "ask_question", "websearch", "webfetch"].includes(permission)) return "allow"
   if (["write", "edit", "bash"].includes(permission)) return "ask"
   return "ask"
 }

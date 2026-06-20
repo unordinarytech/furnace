@@ -4,22 +4,62 @@ import * as React from "react"
 import { useTheme } from "./theme-provider.js"
 
 export type PromptInputProps = {
+  active?: boolean
   busy?: boolean
   disabled?: boolean
+  onChange?: (value: string) => void
+  onEmptyUp?: () => void
   onSubmit: (value: string) => void
   placeholder?: string
   prefix?: string
+  value?: string
 }
 
-export function PromptInput({ busy = false, disabled = false, onSubmit, placeholder = "Ask Furnace...", prefix = ">" }: PromptInputProps): React.ReactNode {
+export function PromptInput({
+  active = true,
+  busy = false,
+  disabled = false,
+  onChange,
+  onEmptyUp,
+  onSubmit,
+  placeholder = "Ask Furnace...",
+  prefix = ">",
+  value: controlledValue,
+}: PromptInputProps): React.ReactNode {
   const theme = useTheme()
-  const [value, setValue] = React.useState("")
+  const [localValue, setLocalValue] = React.useState("")
   const [cursorOffset, setCursorOffset] = React.useState(0)
-  const enabled = !disabled && !busy
+  const previousControlledValue = React.useRef(controlledValue)
+  const value = controlledValue ?? localValue
+  const enabled = active && !disabled
+
+  const setValue = React.useCallback(
+    (next: string | ((current: string) => string)) => {
+      const resolved = typeof next === "function" ? next(value) : next
+      if (controlledValue === undefined) setLocalValue(resolved)
+      onChange?.(resolved)
+    },
+    [controlledValue, onChange, value],
+  )
+
+  React.useEffect(() => {
+    setCursorOffset((current) => Math.min(current, value.length))
+  }, [value.length])
+
+  React.useEffect(() => {
+    if (controlledValue === undefined || previousControlledValue.current === controlledValue) return
+    previousControlledValue.current = controlledValue
+    setCursorOffset(controlledValue.length)
+  }, [controlledValue])
 
   useInput((input, key) => {
     if (!enabled) return
     if (key.ctrl || key.meta) return
+
+    if (key.upArrow && value.length === 0) {
+      onEmptyUp?.()
+      return
+    }
 
     if (key.return) {
       const submitted = value.trim()

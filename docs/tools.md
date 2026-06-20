@@ -8,9 +8,9 @@ Current implementation lives in `src/tools/registry.ts`.
 
 Several tool-system choices were informed by other coding harnesses:
 
-- Pi influenced the small primitive-tool shape and the decision to expose one edit primitive. Furnace presents it as `edit`, but the implementation behaves like an apply-patch envelope.
-- OpenCode influenced the web tooling shape, bounded tool-output behavior, and allow/ask/deny permission model. Furnace's `websearch`, `webfetch`, `.furnace/tool-output/` previews, and first approval layer follow that direction.
-- Hermes Agent influenced file read deduplication, stale-write warnings, session-scoped broad approval, and richer tool history for debugging/resume. Furnace implements a smaller version of those ideas in the local TypeScript tool runtime and session store.
+- Pi influenced the small primitive-tool shape, the decision to expose one edit primitive, and the multi-question terminal UX for `ask_question`.
+- OpenCode influenced the web tooling shape, bounded tool-output behavior, allow/ask/deny permission model, pending question-request architecture, and queued prompt manager behavior. Furnace's `websearch`, `webfetch`, `.furnace/tool-output/` previews, first approval layer, `ask_question` runtime shape, and queued prompt UI follow that direction.
+- Hermes Agent influenced file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool answer semantics, busy-input modes, and richer tool history for debugging/resume. Furnace implements smaller versions of those ideas in the local TypeScript runtime and session store.
 
 ## Runtime Shape
 
@@ -68,7 +68,7 @@ Flow:
 6. Persist each result as a `tool_result` session entry.
 7. Append each result as a `role: "tool"` message with the matching `tool_call_id`.
 8. Ask the model again.
-9. Stop after 8 tool iterations to avoid runaway loops.
+9. Continue until the model returns a normal assistant response or the user interrupts the turn.
 
 The TUI receives `onToolStart` and `onToolResult` callbacks so calls render inline in the conversation timeline:
 
@@ -136,6 +136,7 @@ Current safety behavior:
 - Explicit absolute paths and parent paths are allowed when they are relevant to the user's request.
 - Reads of `.env` and `.env.*` are denied, except `.env.example`.
 - Interactive sessions ask before `write`, `edit`, and `bash` tool calls. Denying a request blocks only that specific tool call.
+- `ask_question` is allowed by default because it is a clarification tool, not a side-effecting operation.
 - `write` refuses to overwrite existing files unless `overwrite: true`.
 - Tool output is bounded to 2,000 lines and 50 KB before returning to the model.
 - When tool output exceeds those limits, the full text is saved under `.furnace/tool-output/` and the model receives a head/tail preview plus the saved path.
@@ -158,6 +159,14 @@ Approval prompt choices:
 Use `/reset-perms` to clear permission grants for the current conversation.
 
 `bash` is intentionally an escape hatch. The model prompt tells the agent to prefer structured tools before shell commands.
+
+Queued prompt behavior:
+
+- In the interactive TUI, prompts submitted while Furnace is busy are queued for the current conversation.
+- Queued prompts render in a compact panel and can be selected.
+- Press `e` on a selected queued prompt to remove it from the queue and restore it into the input for editing.
+- Press `d` to remove it.
+- Press Enter to promote it to run next. Furnace attempts to interrupt the current model request, but already-running tools may still finish until all tool execution supports abort signals.
 
 ## Built-In Tools
 
@@ -523,6 +532,114 @@ stdout:
 stderr:
 ...
 ```
+
+### `ask_question`
+
+Ask the user one or more clarification questions when the task is vague or a decision has meaningful tradeoffs. The answer returns to the model as a normal tool result, so the agent can continue the same turn with the user's choices.
+
+Use cases:
+
+- Requirements are ambiguous and multiple valid implementations exist.
+- The user needs to choose between mutually exclusive approaches.
+- The agent needs a preference that cannot be inferred safely.
+
+Do not use `ask_question` for low-stakes details where a sensible default is enough.
+
+Schema:
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["questions"],
+  "properties": {
+    "questions": {
+      "type": "array",
+      "description": "One or more questions to ask before continuing.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "prompt", "options"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable question id, for example scope or style."
+          },
+          "prompt": {
+            "type": "string",
+            "description": "The complete question to ask. Do not embed option numbers here."
+          },
+          "options": {
+            "type": "array",
+            "description": "Available choices. The UI also offers custom answer and refusal when enabled.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "label"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Stable option id."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Short option label shown to the user."
+                },
+                "description": {
+                  "type": "string",
+                  "description": "Optional one-line explanation of the option."
+                }
+              }
+            }
+          },
+          "allowMultiple": {
+            "type": "boolean",
+            "description": "Allow selecting more than one option. Defaults to false."
+          },
+          "allowCustom": {
+            "type": "boolean",
+            "description": "Allow the user to type their own answer. Defaults to true."
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Example:
+
+```json
+{
+  "questions": [
+    {
+      "id": "scope",
+      "prompt": "Which version should I implement first?",
+      "options": [
+        {
+          "id": "minimal",
+          "label": "Minimal",
+          "description": "Smallest useful version"
+        },
+        {
+          "id": "complete",
+          "label": "Complete",
+          "description": "All requested behavior"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Output format:
+
+```text
+User answered the questions:
+scope: user selected "Minimal"
+```
+
+The UI always offers `Refuse to answer` for each question. Refusal is returned as answer data, not treated as a tool failure.
 
 ### `websearch`
 

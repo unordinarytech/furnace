@@ -3,6 +3,7 @@ import * as React from "react"
 
 import type { PermissionDecision, PermissionRequest } from "../permissions.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
+import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
 import { AppShell } from "./components/app-shell.js"
 import { PromptInput } from "./components/prompt-input.js"
@@ -13,11 +14,15 @@ import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
+  requestQuestions(request: AskQuestionRequest): Promise<AskQuestionResponse>
   requestApproval(request: PermissionRequest): Promise<PermissionDecision>
   run(): Promise<void>
   stop(): void
+  waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
+  setInputDraft(value: string): void
   setThinking(thinking: boolean, message?: string): void
+  setQueuedPrompts(prompts: QueuedPrompt[]): void
   showHistory(choices: HistoryChoice[], currentSessionId: string | null, onSelect: (sessionId: string) => void, onCancel: () => void): void
   showModelPicker(
     choices: ModelChoice[],
@@ -55,10 +60,19 @@ export type ToolActivity = {
   status: "running" | "done" | "failed"
 }
 
+export type QueuedPrompt = {
+  createdAt: number
+  id: string
+  text: string
+}
+
 type CreateFurnaceTerminalOptions = {
   cwd: string
   model: string
   modelSettings: ModelSettings
+  onQueueEdit?: (id: string) => void
+  onQueuePromote?: (id: string) => void
+  onQueueRemove?: (id: string) => void
   themeName: string
   title: string
   onSubmit: (text: string) => void
@@ -81,12 +95,22 @@ type ApprovalPromptState = PermissionRequest & {
   resolve: (decision: PermissionDecision) => void
 }
 
+type QuestionPromptState = AskQuestionRequest & {
+  resolve: (response: AskQuestionResponse) => void
+}
+
+type UiFocus = "input" | "question" | "queue"
+
 type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
   cwd: string
+  focus: UiFocus
+  inputDraft: string
   model: string
   modelSettings: ModelSettings
+  question?: QuestionPromptState
+  queuedPrompts: QueuedPrompt[]
   screen: UiScreen
   theme: Theme
   themeName: string
@@ -98,17 +122,32 @@ type UiState = {
 }
 
 class UiStore {
+  private inputFocusWaiters = new Set<() => void>()
   private listeners = new Set<() => void>()
   private state: UiState
+  readonly queueHandlers: {
+    onEdit?: (id: string) => void
+    onPromote?: (id: string) => void
+    onRemove?: (id: string) => void
+  }
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
+    this.queueHandlers = {
+      onEdit: options.onQueueEdit,
+      onPromote: options.onQueuePromote,
+      onRemove: options.onQueueRemove,
+    }
     this.state = {
       approval: undefined,
       busy: false,
       cwd: options.cwd,
+      focus: "input",
+      inputDraft: "",
       model: options.model,
       modelSettings: options.modelSettings,
+      question: undefined,
+      queuedPrompts: [],
       screen: { kind: "chat" },
       theme: themeChoice.theme,
       themeName: themeChoice.name,
@@ -128,9 +167,34 @@ class UiStore {
   }
 
   update(updater: Partial<UiState> | ((state: UiState) => UiState)): void {
-    this.state = typeof updater === "function" ? updater(this.state) : { ...this.state, ...updater }
+    this.state = normalizeUiState(typeof updater === "function" ? updater(this.state) : { ...this.state, ...updater })
     for (const listener of this.listeners) listener()
+    this.resolveInputFocusWaiters()
   }
+
+  waitForInputFocus(): Promise<void> {
+    if (canDrainQueuedPrompt(this.state)) return Promise.resolve()
+    return new Promise((resolve) => {
+      this.inputFocusWaiters.add(resolve)
+    })
+  }
+
+  private resolveInputFocusWaiters(): void {
+    if (!canDrainQueuedPrompt(this.state)) return
+    const waiters = [...this.inputFocusWaiters]
+    this.inputFocusWaiters.clear()
+    for (const resolve of waiters) resolve()
+  }
+}
+
+function canDrainQueuedPrompt(state: UiState): boolean {
+  return state.screen.kind === "chat" && state.focus === "input" && state.inputDraft.trim() === "" && !state.approval && !state.question
+}
+
+function normalizeUiState(state: UiState): UiState {
+  if (state.focus === "queue" && state.queuedPrompts.length === 0) return { ...state, focus: "input" }
+  if (state.focus === "question" && !state.question) return { ...state, focus: "input" }
+  return state
 }
 
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
@@ -144,6 +208,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   return {
     clearToolActivities() {
       store.update({ toolActivities: [] })
+    },
+    requestQuestions(request) {
+      return new Promise<AskQuestionResponse>((resolve) => {
+        store.update((state) => ({ ...state, focus: "input", question: { ...request, resolve } }))
+      })
     },
     requestApproval(request) {
       return new Promise<PermissionDecision>((resolve) => {
@@ -159,11 +228,20 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       return instance.waitUntilExit().then(() => undefined)
     },
     stop,
+    waitForInputFocus() {
+      return store.waitForInputFocus()
+    },
     setBusy(busy) {
       store.update({ busy })
     },
+    setInputDraft(value) {
+      store.update({ focus: "input", inputDraft: value })
+    },
     setThinking(thinking, message = "thinking") {
       store.update({ thinking, thinkingMessage: message })
+    },
+    setQueuedPrompts(prompts) {
+      store.update({ queuedPrompts: prompts })
     },
     showHistory(choices, currentSessionId, onSelect, onCancel) {
       store.update({ screen: { kind: "history", choices, currentSessionId, onCancel, onSelect }, title: "History" })
@@ -244,24 +322,78 @@ function FurnaceApp({
         ) : (
           <>
             <ChatScreen
-              approvalActive={Boolean(state.approval)}
+              interactionActive={Boolean(state.approval) || state.focus === "question" || state.focus === "queue"}
               thinking={state.thinking}
               thinkingMessage={state.thinkingMessage}
+              reservedRows={reservedInteractionRows(state)}
               toolActivities={state.toolActivities}
               transcript={state.transcript}
             />
             {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
+            {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
+            {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
           </>
         )}
       </AppShell.Content>
-      <PromptInput busy={state.busy} disabled={state.screen.kind !== "chat" || Boolean(state.approval)} onSubmit={onSubmit} placeholder={state.approval ? "Resolve the permission prompt..." : state.busy ? "Furnace is working..." : "Ask Furnace or type /theme"} />
-      <AppShell.Hints items={state.approval ? approvalHintItems() : hintItems(state.screen.kind)} />
+      <PromptInput
+        active={state.focus === "input"}
+        busy={state.busy}
+        disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
+        onChange={(value) => store.update({ inputDraft: value })}
+        onEmptyUp={() => focusInteractivePanel(store, state)}
+        onSubmit={onSubmit}
+        placeholder={promptPlaceholder(state)}
+        value={state.inputDraft}
+      />
+      <AppShell.Hints items={hintItemsForState(state)} />
     </AppShell>
   )
+
 }
 
 function approvalHintItems(): string[] {
   return ["up/down navigate", "enter select", "esc deny"]
+}
+
+function questionHintItems(): string[] {
+  return ["left/right question", "up/down option", "enter select", "esc input"]
+}
+
+function queueHintItems(): string[] {
+  return ["up/down select", "e edit", "d remove", "enter run next", "esc input"]
+}
+
+function hintItemsForState(state: UiState): string[] {
+  if (state.approval) return approvalHintItems()
+  if (state.focus === "question" && state.question) return questionHintItems()
+  if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
+  const extras: string[] = []
+  if (state.question) extras.push("up answer question")
+  if (state.queuedPrompts.length > 0) extras.push("up manage queue")
+  return [...extras, ...hintItems(state.screen.kind)]
+}
+
+function promptPlaceholder(state: UiState): string {
+  if (state.approval) return "Resolve the permission prompt..."
+  if (state.question) return state.busy ? "Type a follow-up to queue, or press up to answer..." : "Type a reply, or press up to answer..."
+  if (state.busy) return "Furnace is working; submit to queue..."
+  return "Ask Furnace or type /theme"
+}
+
+function reservedInteractionRows(state: UiState): number {
+  if (state.approval) return 8
+  let rows = 0
+  if (state.question) rows += 9
+  if (state.queuedPrompts.length > 0) rows += Math.min(5, state.queuedPrompts.length + 2)
+  return rows
+}
+
+function focusInteractivePanel(store: UiStore, state: UiState): void {
+  if (state.question) {
+    store.update({ focus: "question" })
+    return
+  }
+  if (state.queuedPrompts.length > 0) store.update({ focus: "queue" })
 }
 
 function ApprovalPrompt({ request, store }: { request: ApprovalPromptState; store: UiStore }): React.ReactNode {
@@ -292,6 +424,298 @@ function ApprovalPrompt({ request, store }: { request: ApprovalPromptState; stor
       />
     </Box>
   )
+}
+
+type QuestionChoiceValue = `option:${number}` | "continue" | "custom" | "refuse" | "submit"
+
+type QuestionDraftAnswer = AskQuestionAnswer & {
+  label: string
+}
+
+function QuestionPrompt({ request, store }: { request: QuestionPromptState; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const [questionIndex, setQuestionIndex] = React.useState(0)
+  const [answers, setAnswers] = React.useState<Record<string, QuestionDraftAnswer[]>>({})
+  const [customEditing, setCustomEditing] = React.useState(false)
+  const [customDraft, setCustomDraft] = React.useState("")
+  const active = store.getSnapshot().focus === "question"
+  const questions = request.questions
+  const reviewIndex = questions.length
+  const isReview = questions.length > 1 && questionIndex === reviewIndex
+  const question = isReview ? undefined : questions[questionIndex]
+  const allAnswered = questions.every((item) => (answers[item.id]?.length ?? 0) > 0)
+  const choices = React.useMemo(() => question ? questionChoiceItems(question, answers[question.id] || []) : [], [answers, question])
+
+  const resolve = React.useCallback(
+    (response: AskQuestionResponse) => {
+      request.resolve(response)
+      store.update((state) => ({ ...state, focus: "input", question: undefined }))
+    },
+    [request, store],
+  )
+
+  const submitAnswers = React.useCallback(() => {
+    const flattened = questions.flatMap((item) => answers[item.id] || [])
+    resolve({ answers: flattened })
+  }, [answers, questions, resolve])
+
+  function moveQuestion(delta: number): void {
+    setCustomEditing(false)
+    setQuestionIndex((current) => {
+      const max = questions.length > 1 ? questions.length : questions.length - 1
+      return (current + delta + max + 1) % (max + 1)
+    })
+  }
+
+  function selectChoice(value: QuestionChoiceValue): void {
+    if (!question) {
+      if (value === "submit" && allAnswered) submitAnswers()
+      return
+    }
+    if (value === "continue") {
+      if ((answers[question.id]?.length ?? 0) === 0) return
+      if (questions.length === 1) {
+        resolve({ answers: answers[question.id] || [] })
+        return
+      }
+      advanceAfterAnswer()
+      return
+    }
+    if (value === "custom") {
+      setCustomEditing(true)
+      setCustomDraft("")
+      return
+    }
+    if (value === "refuse") {
+      const answer = { answer: "Refuse to answer", kind: "refuse", label: "Refuse to answer", questionId: question.id } satisfies QuestionDraftAnswer
+      if (questions.length === 1) {
+        resolve({ answers: [answer] })
+        return
+      }
+      setQuestionAnswer(question, [answer])
+      advanceAfterAnswer()
+      return
+    }
+    const index = Number(value.slice("option:".length))
+    const option = question.options[index]
+    if (!option) return
+    const answer = { answer: option.label, kind: "option", label: option.label, optionId: option.id, questionId: question.id } satisfies QuestionDraftAnswer
+    if (question.allowMultiple) {
+      setAnswers((current) => {
+        const existing = current[question.id] || []
+        const present = existing.some((item) => item.kind === "option" && item.optionId === option.id)
+        return {
+          ...current,
+          [question.id]: present ? existing.filter((item) => item.optionId !== option.id) : [...existing, answer],
+        }
+      })
+      return
+    }
+    if (questions.length === 1) {
+      resolve({ answers: [answer] })
+      return
+    }
+    setQuestionAnswer(question, [answer])
+    advanceAfterAnswer()
+  }
+
+  function setQuestionAnswer(question: AskQuestionItem, next: QuestionDraftAnswer[]): void {
+    setAnswers((current) => ({ ...current, [question.id]: next }))
+  }
+
+  function advanceAfterAnswer(): void {
+    setQuestionIndex((current) => Math.min(current + 1, reviewIndex))
+  }
+
+  useInput((input, key) => {
+    if (!active) return
+    if (customEditing && question) {
+      if (key.escape) {
+        setCustomEditing(false)
+        setCustomDraft("")
+        return
+      }
+      if (key.return) {
+        const trimmed = customDraft.trim()
+        if (trimmed) {
+          const answer = { answer: trimmed, kind: "custom", label: trimmed, questionId: question.id } satisfies QuestionDraftAnswer
+          if (!question.allowMultiple && questions.length === 1) {
+            resolve({ answers: [answer] })
+            return
+          }
+          setQuestionAnswer(question, question.allowMultiple ? [...(answers[question.id] || []).filter((item) => item.kind !== "custom"), answer] : [answer])
+          setCustomEditing(false)
+          setCustomDraft("")
+          advanceAfterAnswer()
+        }
+        return
+      }
+      if (key.backspace || key.delete) {
+        setCustomDraft((current) => current.slice(0, -1))
+        return
+      }
+      if (!key.ctrl && !key.meta && input) setCustomDraft((current) => current + input)
+      return
+    }
+
+    if (key.escape) {
+      store.update({ focus: "input" })
+      return
+    }
+    if (key.leftArrow) {
+      moveQuestion(-1)
+      return
+    }
+    if (key.rightArrow) {
+      moveQuestion(1)
+      return
+    }
+    if (isReview && key.return && allAnswered) submitAnswers()
+  }, { isActive: active })
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Questions</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up to answer"}</Text>
+      </Box>
+      {questions.length > 1 ? (
+        <Text color={theme.colors.mutedForeground}>
+          {questions.map((item, index) => `${index === questionIndex ? ">" : answers[item.id]?.length ? "*" : "-"} ${item.id}`).join("  ")}
+          {`  ${isReview ? "> " : ""}review`}
+        </Text>
+      ) : null}
+      {isReview ? (
+        <Box flexDirection="column">
+          <Text color={theme.colors.foreground}>Review answers</Text>
+          {questions.map((item) => (
+            <Text key={item.id} color={answers[item.id]?.length ? theme.colors.foreground : theme.colors.error}>
+              {item.id}: {answers[item.id]?.map((answer) => answer.label).join(", ") || "(not answered)"}
+            </Text>
+          ))}
+          <SelectList
+            active={active && !customEditing}
+            items={[{ label: "Submit answers", value: "submit" as const, description: allAnswered ? "send to agent" : "answer all first", disabled: !allAnswered }]}
+            maxRows={1}
+            onCancel={() => store.update({ focus: "input" })}
+            onSelect={(item) => selectChoice(item.value)}
+          />
+        </Box>
+      ) : question ? (
+        <Box flexDirection="column">
+          <Text color={theme.colors.foreground}>{question.prompt}{question.allowMultiple ? " (select all that apply)" : ""}</Text>
+          {customEditing ? (
+            <Box flexDirection="column">
+              <Text color={theme.colors.mutedForeground}>Custom answer:</Text>
+              <Text color={theme.colors.foreground}>{customDraft || " "}</Text>
+              <Text color={theme.colors.mutedForeground}>enter save · esc cancel</Text>
+            </Box>
+          ) : (
+            <SelectList
+              active={active}
+              items={choices}
+              maxRows={6}
+              onCancel={() => store.update({ focus: "input" })}
+              onSelect={(item) => selectChoice(item.value)}
+            />
+          )}
+        </Box>
+      ) : null}
+    </Box>
+  )
+}
+
+export function questionChoiceItems(question: AskQuestionItem, answers: AskQuestionAnswer[] = []): SelectListItem<QuestionChoiceValue>[] {
+  const selectedOptionIds = new Set(answers.flatMap((answer) => (answer.optionId ? [answer.optionId] : [])))
+  const items: SelectListItem<QuestionChoiceValue>[] = question.options.map((option, index) => ({
+    label: `${selectedOptionIds.has(option.id) ? "[x] " : ""}${option.label}`,
+    value: `option:${index}`,
+    description: option.description,
+  }))
+  if (question.allowCustom) items.push({ label: "Other / type your own answer", value: "custom", description: "custom answer" })
+  if (question.allowMultiple) {
+    items.push({
+      label: "Continue",
+      value: "continue",
+      description: answers.length > 0 ? "next question" : "select at least one",
+      disabled: answers.length === 0,
+    })
+  }
+  items.push({ label: "Refuse to answer", value: "refuse", description: "continue without this answer" })
+  return items
+}
+
+function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const active = store.getSnapshot().focus === "queue"
+  const [selected, setSelected] = React.useState(0)
+  const selectedPrompt = prompts[Math.min(selected, Math.max(0, prompts.length - 1))]
+
+  React.useEffect(() => {
+    setSelected((current) => Math.min(current, Math.max(0, prompts.length - 1)))
+  }, [prompts.length])
+
+  useInput((input, key) => {
+    if (!active) return
+    if (key.escape) {
+      store.update({ focus: "input" })
+      return
+    }
+    if (key.upArrow) {
+      setSelected((current) => Math.max(0, current - 1))
+      return
+    }
+    if (key.downArrow) {
+      setSelected((current) => Math.min(prompts.length - 1, current + 1))
+      return
+    }
+    if (!selectedPrompt) return
+    if (input === "e") {
+      store.queueHandlers.onEdit?.(selectedPrompt.id)
+      store.update({ focus: "input", inputDraft: selectedPrompt.text })
+      return
+    }
+    if (input === "d") {
+      store.queueHandlers.onRemove?.(selectedPrompt.id)
+      return
+    }
+    if (key.return) {
+      store.queueHandlers.onPromote?.(selectedPrompt.id)
+      store.update({ focus: "input" })
+    }
+  }, { isActive: active })
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Queued prompts</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up to manage"}</Text>
+      </Box>
+      {queuedPromptPreviewItems(prompts, selected).map((line) => (
+        <Text key={line.id} color={line.selected ? theme.colors.primary : theme.colors.mutedForeground}>
+          {line.selected ? "› " : "  "}{line.text}
+        </Text>
+      ))}
+      <Text color={theme.colors.mutedForeground}>
+        {active ? "up/down select · e edit · d remove · enter run next · esc input" : "press up from empty input to manage"}
+      </Text>
+    </Box>
+  )
+}
+
+export function queuedPromptPreviewItems(prompts: QueuedPrompt[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; text: string }> {
+  const clamped = Math.min(Math.max(0, selected), Math.max(0, prompts.length - 1))
+  const start = Math.min(Math.max(0, prompts.length - maxItems), Math.max(0, clamped - Math.floor(maxItems / 2)))
+  return prompts.slice(start, start + maxItems).map((prompt, index) => ({
+    id: prompt.id,
+    selected: start + index === clamped,
+    text: formatQueuedPromptPreview(prompt.text),
+  }))
+}
+
+export function formatQueuedPromptPreview(text: string, max = 72): string {
+  const normalized = text.replace(/\s+/g, " ").trim()
+  return normalized.length > max ? `${normalized.slice(0, Math.max(0, max - 1))}…` : normalized
 }
 
 export function approvalChoiceItems(toolName: string): SelectListItem<PermissionDecision>[] {
@@ -325,13 +749,15 @@ function hintItems(kind: UiScreen["kind"]): string[] {
 }
 
 function ChatScreen({
-  approvalActive,
+  interactionActive,
   thinking,
   thinkingMessage,
+  reservedRows,
   toolActivities,
   transcript,
 }: {
-  approvalActive?: boolean
+  interactionActive?: boolean
+  reservedRows?: number
   thinking: boolean
   thinkingMessage: string
   toolActivities: ToolActivity[]
@@ -340,7 +766,7 @@ function ChatScreen({
   const theme = useTheme()
   const { columns, rows } = useWindowSize()
   const [scrollOffset, setScrollOffset] = React.useState(0)
-  const viewportRows = chatViewportRows(rows, approvalActive ? 8 : 0)
+  const viewportRows = chatViewportRows(rows, reservedRows || 0)
   const activityKey = React.useMemo(
     () => toolActivities.map((activity) => `${activity.id}:${activity.status}`).join("|"),
     [toolActivities],
@@ -367,7 +793,7 @@ function ChatScreen({
   }, [activityKey, thinking, thinkingMessage, toolActivities.length])
 
   useInput((input, key) => {
-    if (approvalActive) return
+    if (interactionActive) return
     if (key.pageUp || (key.ctrl && input === "u")) {
       setScrollOffset((current) => Math.min(maxScrollOffset, current + pageScrollRows))
       return
@@ -666,6 +1092,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (writeLines.length > 0) return writeLines
   }
 
+  if (activity.name === "ask_question") {
+    const questionLines = formatAskQuestionActivity(activity, width)
+    if (questionLines.length > 0) return questionLines
+  }
+
   return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
 }
 
@@ -716,6 +1147,33 @@ function formatWriteActivity(activity: ToolActivity, width: number): RenderedToo
     lines.push({ text: `  +${truncateEnd(line, Math.max(24, width - 5))}`, tone: "addition" })
   }
   if (contentLines.length > 8) lines.push({ text: `  ... truncated ${contentLines.length - 8} more lines`, tone: "meta" })
+  return lines
+}
+
+function formatAskQuestionActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const questions = parseAskQuestionArgs(activity.args)
+  if (questions.length === 0) return []
+  const answerLines = parseAskQuestionAnswers(activity.result || "")
+  const lines: RenderedToolLine[] = [
+    {
+      text: `${statusSymbol(activity.status)} Asked ${questions.length} question${questions.length === 1 ? "" : "s"}`,
+      tone: "summary",
+    },
+  ]
+
+  for (const question of questions.slice(0, 4)) {
+    lines.push({ text: `  ? ${truncateEnd(question.prompt, Math.max(24, width - 6))}`, tone: "meta" })
+    const options = question.options.slice(0, 4).map((option) => option.label).join(" / ")
+    if (options) lines.push({ text: `    choices: ${truncateEnd(options, Math.max(24, width - 13))}`, tone: "context" })
+    const answer = answerLines.find((candidate) => candidate.questionId === question.id)
+    if (answer) {
+      const tone = answer.kind === "refused" ? "error" : "addition"
+      lines.push({ text: `    answer: ${truncateEnd(answer.text, Math.max(24, width - 12))}`, tone })
+    } else if (activity.status === "running") {
+      lines.push({ text: "    waiting for answer...", tone: "context" })
+    }
+  }
+  if (questions.length > 4) lines.push({ text: `  ... ${questions.length - 4} more question${questions.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
   return lines
 }
 
@@ -789,6 +1247,38 @@ function parseJsonStringField(args: string, key: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function parseAskQuestionArgs(args: string): Array<{ id: string; options: Array<{ label: string }>; prompt: string }> {
+  try {
+    const parsed = JSON.parse(args) as { questions?: unknown }
+    if (!Array.isArray(parsed.questions)) return []
+    return parsed.questions.flatMap((item, index) => {
+      if (!item || typeof item !== "object") return []
+      const record = item as Record<string, unknown>
+      const prompt = typeof record.prompt === "string" ? record.prompt : typeof record.question === "string" ? record.question : ""
+      if (!prompt) return []
+      const options = Array.isArray(record.options)
+        ? record.options.flatMap((option) => {
+            if (typeof option === "string") return [{ label: option }]
+            if (!option || typeof option !== "object") return []
+            const label = (option as Record<string, unknown>).label
+            return typeof label === "string" ? [{ label }] : []
+          })
+        : []
+      return [{ id: typeof record.id === "string" ? record.id : `q${index + 1}`, options, prompt }]
+    })
+  } catch {
+    return []
+  }
+}
+
+function parseAskQuestionAnswers(result: string): Array<{ kind: "refused" | "selected" | "wrote"; questionId: string; text: string }> {
+  return result.split(/\r?\n/).flatMap((line) => {
+    const match = line.match(/^([^:]+): user (selected|wrote|refused) "(.+)"$/)
+    if (!match) return []
+    return [{ questionId: match[1], kind: match[2] as "refused" | "selected" | "wrote", text: `${match[2]} "${match[3]}"` }]
+  })
 }
 
 function statusSymbol(status: ToolActivity["status"]): string {

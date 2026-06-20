@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { promisify } from "node:util"
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
+import { formatAskQuestionResult, normalizeAskQuestionRequest, type AskQuestionPrompt } from "../questions.js"
 import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot } from "../session/types.js"
 
 const execFileAsync = promisify(execFile)
@@ -16,6 +17,7 @@ export type ToolServices = {
 export type ToolContext = {
   cwd: string
   fileReadStore?: ToolFileReadStore
+  questionPrompt?: AskQuestionPrompt
   sessionId?: string
   services?: ToolServices
 }
@@ -187,6 +189,35 @@ export const registeredTools: RegisteredTool[] = [
       },
     },
     execute: bashTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "ask_question",
+        description: "Ask the user one or more clarification questions when the task is ambiguous or needs a user decision. Supports options, multiple questions, custom answers, and refusal.",
+        parameters: objectSchema({
+          questions: arraySchema(
+            objectSchema({
+              id: stringSchema("Stable question id, for example scope or style."),
+              prompt: stringSchema("The complete question to ask. Do not embed option numbers here."),
+              options: arraySchema(
+                objectSchema({
+                  id: stringSchema("Stable option id."),
+                  label: stringSchema("Short option label shown to the user."),
+                  description: stringSchema("Optional one-line explanation of the option."),
+                }, ["id", "label"]),
+                "Available choices. The UI also offers custom answer and refusal when enabled.",
+              ),
+              allowMultiple: booleanSchema("Allow selecting more than one option. Defaults to false."),
+              allowCustom: booleanSchema("Allow the user to type their own answer. Defaults to true."),
+            }, ["id", "prompt", "options"]),
+            "One or more questions to ask before continuing.",
+          ),
+        }, ["questions"]),
+      },
+    },
+    execute: askQuestionTool,
   },
   {
     definition: {
@@ -368,6 +399,14 @@ async function bashTool(args: unknown, context: ToolContext): Promise<string> {
     }
     throw error
   }
+}
+
+async function askQuestionTool(args: unknown, context: ToolContext): Promise<string> {
+  const request = normalizeAskQuestionRequest(args)
+  if (!context.questionPrompt) {
+    return "Question prompt UI is unavailable in this mode. Make a reasonable assumption or ask the user in the final response."
+  }
+  return formatAskQuestionResult(await context.questionPrompt(request))
 }
 
 async function websearchTool(args: unknown, context: ToolContext): Promise<string> {
@@ -879,6 +918,10 @@ function objectSchema(properties: Record<string, unknown>, required: string[] = 
     required,
     properties,
   }
+}
+
+function arraySchema(items: Record<string, unknown>, description: string): Record<string, unknown> {
+  return { type: "array", items, description }
 }
 
 function stringSchema(description: string): Record<string, unknown> {

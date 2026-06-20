@@ -71,6 +71,37 @@ test("edit tool activity renders as a diff preview", async () => {
   assert.equal(lines[4].text.trim(), "+new line")
 })
 
+test("ask_question tool activity renders questions and answers", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-question",
+      name: "ask_question",
+      status: "done",
+      args: JSON.stringify({
+        questions: [
+          {
+            id: "app_name",
+            prompt: "What should the app be called?",
+            options: [
+              { id: "default", label: "damn-bro-whatever" },
+              { id: "custom", label: "Custom" },
+            ],
+          },
+        ],
+      }),
+      result: 'User answered the questions:\napp_name: user selected "damn-bro-whatever"',
+    },
+    100,
+  )
+
+  assert.deepEqual(lines.map((line) => line.tone), ["summary", "meta", "context", "addition"])
+  assert.equal(lines[0].text, "ok Asked 1 question")
+  assert.match(lines[1].text, /What should the app be called/)
+  assert.match(lines[2].text, /damn-bro-whatever/)
+  assert.match(lines[3].text, /selected "damn-bro-whatever"/)
+})
+
 test("chat viewport reserves space above fixed input chrome", async () => {
   const { chatViewportRows } = await import("../dist/ui/ink-terminal.js")
 
@@ -89,4 +120,76 @@ test("approval prompt exposes scoped permission choices", async () => {
   )
   assert.equal(choices[1].label, "Allow bash for conversation")
   assert.equal(choices[2].label, "Allow all tools for conversation")
+})
+
+test("question prompt exposes option, custom, and refusal choices", async () => {
+  const { questionChoiceItems } = await import("../dist/ui/ink-terminal.js")
+  const choices = questionChoiceItems({
+    id: "scope",
+    prompt: "Which scope?",
+    allowCustom: true,
+    allowMultiple: false,
+    options: [{ id: "minimal", label: "Minimal", description: "smallest useful version" }],
+  })
+
+  assert.deepEqual(
+    choices.map((choice) => choice.value),
+    ["option:0", "custom", "refuse"],
+  )
+  assert.equal(choices[0].description, "smallest useful version")
+})
+
+test("multi-select question prompt exposes a guarded continue choice", async () => {
+  const { questionChoiceItems } = await import("../dist/ui/ink-terminal.js")
+  const unanswered = questionChoiceItems({
+    id: "powers",
+    prompt: "Which powers?",
+    allowCustom: true,
+    allowMultiple: true,
+    options: [{ id: "flight", label: "Flying" }],
+  })
+
+  assert.deepEqual(
+    unanswered.map((choice) => choice.value),
+    ["option:0", "custom", "continue", "refuse"],
+  )
+  assert.equal(unanswered[2].disabled, true)
+  assert.equal(unanswered[2].description, "select at least one")
+
+  const answered = questionChoiceItems(
+    {
+      id: "powers",
+      prompt: "Which powers?",
+      allowCustom: true,
+      allowMultiple: true,
+      options: [{ id: "flight", label: "Flying" }],
+    },
+    [{ questionId: "powers", kind: "option", optionId: "flight", answer: "Flying" }],
+  )
+
+  assert.equal(answered[2].disabled, false)
+  assert.equal(answered[2].description, "next question")
+})
+
+test("queued prompt previews truncate and track selected item", async () => {
+  const { formatQueuedPromptPreview, queuedPromptPreviewItems } = await import("../dist/ui/ink-terminal.js")
+
+  assert.equal(formatQueuedPromptPreview("one\n\n two   three", 20), "one two three")
+  assert.equal(formatQueuedPromptPreview("a".repeat(80), 10), "aaaaaaaaa…")
+
+  const previews = queuedPromptPreviewItems(
+    [
+      { id: "one", text: "first prompt", createdAt: 1 },
+      { id: "two", text: "second prompt", createdAt: 2 },
+      { id: "three", text: "third prompt", createdAt: 3 },
+      { id: "four", text: "fourth prompt", createdAt: 4 },
+    ],
+    3,
+    3,
+  )
+  assert.deepEqual(previews.map((item) => [item.id, item.selected]), [
+    ["two", false],
+    ["three", false],
+    ["four", true],
+  ])
 })
