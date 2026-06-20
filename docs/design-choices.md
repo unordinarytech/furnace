@@ -76,7 +76,7 @@ Current implementation:
 
 ## File Read Tracking
 
-File reads are tracked by active session, workspace, absolute path, file size, mtime, and requested line range.
+File reads are tracked by active session, workspace, absolute path, file size, mtime, and requested line range. In real sessions this state is persisted in SQLite so resume/restart keeps dedupe and stale-write behavior.
 
 Reasoning:
 
@@ -91,6 +91,7 @@ Current behavior:
 
 Current implementation:
 
-- Tracking lives in `src/tools/registry.ts` alongside the file tool handlers.
-- `src/cli.ts` and `src/agent/loop.ts` pass the active session id into tool execution. Direct tool calls without a session id fall back to workspace-scoped tracking for tests and simple harness usage.
+- Runtime checks live in `src/tools/registry.ts` alongside the file tool handlers.
+- Persisted state lives in `file_read_files` and `file_read_ranges` tables in `.furnace/furnace.sqlite`.
+- `src/cli.ts` and `src/agent/loop.ts` pass the active session id and `SessionStore` into tool execution. Direct tool calls without a session store fall back to workspace-scoped in-memory tracking for tests and simple harness usage.
 - Regression coverage lives in `test/tools.test.mjs`.

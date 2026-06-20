@@ -145,8 +145,8 @@ Current safety behavior:
 - `bash` has a default 30 second timeout and a max 120 second timeout.
 - `websearch` rejects raw provider responses larger than 256 KB.
 - `webfetch` rejects raw response bodies larger than 5 MB.
-- `read` tracks file size and mtime for each returned path/range within the active session. Re-reading the same unchanged range in that session returns an unchanged notice instead of repeating the file contents.
-- `write` and `edit` warn when a file changed after Furnace last read it in the active session. The write/edit is still applied today because approval/permission gates are not implemented yet.
+- `read` tracks file size and mtime for each returned path/range within the active session. In real sessions this is stored in SQLite, so re-reading the same unchanged range after resume/restart returns an unchanged notice instead of repeating the file contents.
+- `write` and `edit` warn when a file changed after Furnace last read it in the active session, including after resume/restart. The write/edit is still applied today because approval/permission gates are not implemented yet.
 
 `bash` is intentionally an escape hatch. The model prompt tells the agent to prefer structured tools before shell commands.
 

@@ -71,6 +71,8 @@ Interactive commands currently supported:
 - Codex CLI: Rust implementation with strong sandboxing and a reusable core.
 - Claude Code: product model with one engine across terminal, IDE, SDK, hooks, skills, and background agents.
 
+When adopting or adapting behavior from another harness, including Pi, OpenCode, Hermes Agent, Codex CLI, or Claude Code, document the source and Furnace-specific adaptation in `docs/design-choices.md`.
+
 When researching Pi or OpenCode behavior, use the local reference clones rather than relying on memory:
 
 - Pi: `/Users/nihal/code/test-repos/pi`

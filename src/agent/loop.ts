@@ -1,10 +1,11 @@
 import type { FurnaceConfig } from "../config.js"
 import { completeOpenRouterToolResponse, type OpenRouterMessage, type OpenRouterToolChoice } from "../openrouter.js"
-import { executeToolCall, toolDefinitions } from "../tools/registry.js"
+import { executeToolCall, toolDefinitions, type ToolFileReadStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
   config: FurnaceConfig
   cwd: string
+  fileReadStore?: ToolFileReadStore
   messages: OpenRouterMessage[]
   sessionId?: string
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
@@ -46,7 +47,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
         },
-        { cwd: input.cwd, sessionId: input.sessionId },
+        { cwd: input.cwd, fileReadStore: input.fileReadStore, sessionId: input.sessionId },
       )
       input.onToolResult?.(call, result.content)
       messages.push({

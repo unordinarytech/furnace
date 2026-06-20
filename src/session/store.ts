@@ -2,7 +2,20 @@ import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
 import Database from "better-sqlite3"
-import type { EntryRecord, EntryRole, EntryType, MessageEntryData, SessionRecord, ToolCallEntryData, ToolResultEntryData } from "./types.js"
+import type {
+  EntryRecord,
+  EntryRole,
+  EntryType,
+  FileReadFileKey,
+  FileReadRangeKey,
+  FileReadReceipt,
+  FileReadRecord,
+  FileReadSnapshot,
+  MessageEntryData,
+  SessionRecord,
+  ToolCallEntryData,
+  ToolResultEntryData,
+} from "./types.js"
 
 type SessionRow = {
   id: string
@@ -24,6 +37,21 @@ type EntryRow = {
   role: EntryRole
   created_at: number
   data: string
+}
+
+type FileReadFileRow = {
+  cwd: string
+  file_path: string
+  mtime_ms: number
+  session_id: string
+  size: number
+  updated_at: number
+}
+
+type FileReadRangeRow = FileReadFileRow & {
+  display_path: string
+  limit_key: string
+  offset_key: string
 }
 
 export class SessionStore {
@@ -138,6 +166,98 @@ export class SessionStore {
     return this.appendEntry<ToolResultEntryData>(sessionId, "tool_result", "tool", input)
   }
 
+  getFileReadReceipt(input: FileReadRangeKey): FileReadReceipt | undefined {
+    const row = this.db
+      .prepare(
+        `select * from file_read_ranges
+         where session_id = ? and cwd = ? and file_path = ? and offset_key = ? and limit_key = ?`,
+      )
+      .get(input.sessionId, input.cwd, input.file, rangePartKey(input.offset), rangePartKey(input.limit)) as FileReadRangeRow | undefined
+    if (!row) return undefined
+    return {
+      displayPath: row.display_path,
+      mtimeMs: row.mtime_ms,
+      size: row.size,
+    }
+  }
+
+  getFileReadSnapshot(input: FileReadFileKey): FileReadSnapshot | undefined {
+    const row = this.db
+      .prepare(
+        `select * from file_read_files
+         where session_id = ? and cwd = ? and file_path = ?`,
+      )
+      .get(input.sessionId, input.cwd, input.file) as FileReadFileRow | undefined
+    if (!row) return undefined
+    return {
+      mtimeMs: row.mtime_ms,
+      size: row.size,
+    }
+  }
+
+  recordFileRead(input: FileReadRecord): void {
+    const now = Date.now()
+    const transaction = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `insert into file_read_files (session_id, cwd, file_path, mtime_ms, size, updated_at)
+           values (?, ?, ?, ?, ?, ?)
+           on conflict(session_id, cwd, file_path) do update set
+             mtime_ms = excluded.mtime_ms,
+             size = excluded.size,
+             updated_at = excluded.updated_at`,
+        )
+        .run(input.sessionId, input.cwd, input.file, input.mtimeMs, input.size, now)
+
+      this.db
+        .prepare(
+          `insert into file_read_ranges (
+            session_id, cwd, file_path, offset_key, limit_key, mtime_ms, size, display_path, updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          on conflict(session_id, cwd, file_path, offset_key, limit_key) do update set
+            mtime_ms = excluded.mtime_ms,
+            size = excluded.size,
+            display_path = excluded.display_path,
+            updated_at = excluded.updated_at`,
+        )
+        .run(
+          input.sessionId,
+          input.cwd,
+          input.file,
+          rangePartKey(input.offset),
+          rangePartKey(input.limit),
+          input.mtimeMs,
+          input.size,
+          input.displayPath,
+          now,
+        )
+    })
+    transaction()
+  }
+
+  recordFileWrite(input: FileReadFileKey & { snapshot?: FileReadSnapshot }): void {
+    const now = Date.now()
+    const transaction = this.db.transaction(() => {
+      this.db.prepare("delete from file_read_ranges where session_id = ? and cwd = ? and file_path = ?").run(input.sessionId, input.cwd, input.file)
+
+      if (input.snapshot) {
+        this.db
+          .prepare(
+            `insert into file_read_files (session_id, cwd, file_path, mtime_ms, size, updated_at)
+             values (?, ?, ?, ?, ?, ?)
+             on conflict(session_id, cwd, file_path) do update set
+               mtime_ms = excluded.mtime_ms,
+               size = excluded.size,
+               updated_at = excluded.updated_at`,
+          )
+          .run(input.sessionId, input.cwd, input.file, input.snapshot.mtimeMs, input.snapshot.size, now)
+      } else {
+        this.db.prepare("delete from file_read_files where session_id = ? and cwd = ? and file_path = ?").run(input.sessionId, input.cwd, input.file)
+      }
+    })
+    transaction()
+  }
+
   appendEntry<TData>(sessionId: string, type: EntryType, role: EntryRole, data: TData): EntryRecord<TData> {
     const session = this.getSession(sessionId)
     const now = Date.now()
@@ -222,6 +342,31 @@ export class SessionStore {
 
       create index if not exists entries_session_created_idx on entries (session_id, created_at, id);
       create index if not exists entries_parent_idx on entries (session_id, parent_entry_id);
+
+      create table if not exists file_read_files (
+        session_id text not null references sessions(id) on delete cascade,
+        cwd text not null,
+        file_path text not null,
+        mtime_ms real not null,
+        size integer not null,
+        updated_at integer not null,
+        primary key (session_id, cwd, file_path)
+      );
+
+      create table if not exists file_read_ranges (
+        session_id text not null references sessions(id) on delete cascade,
+        cwd text not null,
+        file_path text not null,
+        offset_key text not null,
+        limit_key text not null,
+        mtime_ms real not null,
+        size integer not null,
+        display_path text not null,
+        updated_at integer not null,
+        primary key (session_id, cwd, file_path, offset_key, limit_key)
+      );
+
+      create index if not exists file_read_ranges_file_idx on file_read_ranges (session_id, cwd, file_path);
     `)
   }
 }
@@ -258,4 +403,8 @@ function mapEntry(row: EntryRow): EntryRecord {
 
 function makeId(prefix: string): string {
   return `${prefix}_${randomUUID()}`
+}
+
+function rangePartKey(value: number | null | undefined): string {
+  return typeof value === "number" ? String(value) : ""
 }

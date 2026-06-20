@@ -269,6 +269,7 @@ async function runSingleTurn(input: {
   const result = await runAgentTurn({
     config: input.config,
     cwd: input.cwd,
+    fileReadStore: input.store,
     messages,
     sessionId: input.sessionId,
     onToolStart: (call) => {

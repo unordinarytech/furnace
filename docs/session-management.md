@@ -14,6 +14,7 @@ Implemented:
 - Root-to-active-leaf transcript reconstruction.
 - Persisted tool-call and tool-result entries.
 - Replay of persisted tool calls/results back into model context.
+- Persisted per-session file read tracking for read dedupe and stale-write warnings.
 - Fresh sessions by default.
 - `--continue` for the latest non-empty session.
 - `/new` for a fresh chat.
@@ -96,6 +97,28 @@ type ToolResultEntryData = {
 ```
 
 This mirrors OpenRouter/OpenAI tool-call threading: an assistant message contains `tool_calls`, then a later `role: "tool"` message references the matching `tool_call_id`.
+
+### File Read Tracking Tables
+
+Furnace persists file read tracking per session so resume/restart does not forget what the agent already read.
+
+`file_read_files` stores the latest read snapshot per file:
+
+- `session_id`: owning session.
+- `cwd`: workspace where the tool ran.
+- `file_path`: absolute file path.
+- `mtime_ms`, `size`: snapshot used for stale-write checks.
+- `updated_at`: last time this snapshot was recorded.
+
+`file_read_ranges` stores returned read ranges:
+
+- `session_id`, `cwd`, `file_path`: same identity fields as `file_read_files`.
+- `offset_key`, `limit_key`: the requested read range, with empty strings representing omitted values.
+- `mtime_ms`, `size`: snapshot used to decide whether the returned range is unchanged.
+- `display_path`: user/model-facing path label for unchanged-read notices.
+- `updated_at`: last time this range was returned.
+
+`read` upserts both tables. `write` and `edit` clear returned ranges for modified files and update or remove the latest file snapshot.
 
 ## Active Leaf Flow
 

@@ -46,6 +46,32 @@ export type ToolResultEntryData = {
   toolCallId: string
 }
 
+export type FileReadSnapshot = {
+  mtimeMs: number
+  size: number
+}
+
+export type FileReadReceipt = FileReadSnapshot & {
+  displayPath: string
+}
+
+export type FileReadRangeKey = {
+  cwd: string
+  file: string
+  limit?: number | null
+  offset?: number | null
+  sessionId: string
+}
+
+export type FileReadRecord = FileReadRangeKey &
+  FileReadReceipt
+
+export type FileReadFileKey = {
+  cwd: string
+  file: string
+  sessionId: string
+}
+
 export type TranscriptMessage = {
   role: "user" | "assistant"
   content: string

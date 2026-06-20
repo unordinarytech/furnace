@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { promisify } from "node:util"
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
+import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot } from "../session/types.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -14,8 +15,16 @@ export type ToolServices = {
 
 export type ToolContext = {
   cwd: string
+  fileReadStore?: ToolFileReadStore
   sessionId?: string
   services?: ToolServices
+}
+
+export type ToolFileReadStore = {
+  getFileReadReceipt(input: FileReadFileKey & { limit?: number | null; offset?: number | null }): FileReadReceipt | undefined
+  getFileReadSnapshot(input: FileReadFileKey): FileReadSnapshot | undefined
+  recordFileRead(input: FileReadRecord): void
+  recordFileWrite(input: FileReadFileKey & { snapshot?: FileReadSnapshot }): void
 }
 
 export type ToolCallInput = {
@@ -44,17 +53,8 @@ type RegisteredTool = {
   execute: ToolHandler
 }
 
-type FileSnapshot = {
-  mtimeMs: number
-  size: number
-}
-
-type FileReadReceipt = FileSnapshot & {
-  displayPath: string
-}
-
 type FileReadTracker = {
-  latestByFile: Map<string, FileSnapshot>
+  latestByFile: Map<string, FileReadSnapshot>
   returnedRanges: Map<string, FileReadReceipt>
 }
 
@@ -247,7 +247,7 @@ async function readTool(args: unknown, context: ToolContext): Promise<string> {
   const offset = optionalNumber(args, "offset")
   const limit = optionalNumber(args, "limit")
   const rangeKey = readRangeKey(context, file, offset, limit)
-  const previousReceipt = getFileReadTracker(context).returnedRanges.get(rangeKey)
+  const previousReceipt = getFileReadReceipt(context, file, offset, limit, rangeKey)
   if (previousReceipt && sameSnapshot(previousReceipt, snapshot)) {
     const range = readRangeLabel(offset, limit)
     return `File unchanged since last read: ${previousReceipt.displayPath}${range ? ` (${range})` : ""}.\nUse the previously returned content unless you need a different line range.`
@@ -257,7 +257,7 @@ async function readTool(args: unknown, context: ToolContext): Promise<string> {
   const lines = contents.split(/\r?\n/)
   const start = Math.max(0, (offset || 1) - 1)
   const selected = typeof limit === "number" ? lines.slice(start, start + Math.max(0, limit)) : lines.slice(start)
-  recordFileRead(context, file, snapshot, rangeKey)
+  recordFileRead(context, file, snapshot, rangeKey, offset, limit)
   return truncate(selected.map((line, index) => `${start + index + 1}|${line}`).join("\n"), maxReadChars)
 }
 
@@ -749,14 +749,14 @@ function fileReadTrackerKey(context: ToolContext): string {
   return [resolve(context.cwd), context.sessionId || "workspace"].join("\0")
 }
 
-function fileSnapshot(info: Awaited<ReturnType<typeof stat>>): FileSnapshot {
+function fileSnapshot(info: Awaited<ReturnType<typeof stat>>): FileReadSnapshot {
   return {
     mtimeMs: Number(info.mtimeMs),
     size: Number(info.size),
   }
 }
 
-function sameSnapshot(left: FileSnapshot, right: FileSnapshot): boolean {
+function sameSnapshot(left: FileReadSnapshot, right: FileReadSnapshot): boolean {
   return left.mtimeMs === right.mtimeMs && left.size === right.size
 }
 
@@ -770,14 +770,41 @@ function readRangeLabel(offset: number | undefined, limit: number | undefined): 
   return `lines ${offset || 1}-${(offset || 1) + Math.max(0, limit) - 1}`
 }
 
-function recordFileRead(context: ToolContext, file: string, snapshot: FileSnapshot, rangeKey: string): void {
+function getFileReadReceipt(context: ToolContext, file: string, offset: number | undefined, limit: number | undefined, rangeKey: string): FileReadReceipt | undefined {
+  const normalizedFile = resolve(file)
+  if (context.sessionId && context.fileReadStore) {
+    return context.fileReadStore.getFileReadReceipt({
+      cwd: resolve(context.cwd),
+      file: normalizedFile,
+      limit: limit ?? null,
+      offset: offset ?? null,
+      sessionId: context.sessionId,
+    })
+  }
+
+  return getFileReadTracker(context).returnedRanges.get(rangeKey)
+}
+
+function recordFileRead(context: ToolContext, file: string, snapshot: FileReadSnapshot, rangeKey: string, offset: number | undefined, limit: number | undefined): void {
+  const normalizedCwd = resolve(context.cwd)
   const tracker = getFileReadTracker(context)
   const normalizedFile = resolve(file)
-  tracker.latestByFile.set(normalizedFile, snapshot)
-  tracker.returnedRanges.set(rangeKey, {
+  const receipt: FileReadReceipt = {
     ...snapshot,
-    displayPath: displayPath(context.cwd, normalizedFile),
-  })
+    displayPath: displayPath(normalizedCwd, normalizedFile),
+  }
+  if (context.sessionId && context.fileReadStore) {
+    context.fileReadStore.recordFileRead({
+      cwd: normalizedCwd,
+      file: normalizedFile,
+      limit: limit ?? null,
+      offset: offset ?? null,
+      sessionId: context.sessionId,
+      ...receipt,
+    })
+  }
+  tracker.latestByFile.set(normalizedFile, snapshot)
+  tracker.returnedRanges.set(rangeKey, receipt)
 }
 
 async function staleWriteWarnings(context: ToolContext, files: string[]): Promise<string[]> {
@@ -787,9 +814,15 @@ async function staleWriteWarnings(context: ToolContext, files: string[]): Promis
 }
 
 async function staleWriteWarning(context: ToolContext, file: string): Promise<string | undefined> {
-  const tracker = getFileReadTracker(context)
   const normalizedFile = resolve(file)
-  const previous = tracker.latestByFile.get(normalizedFile)
+  const previous =
+    context.sessionId && context.fileReadStore
+      ? context.fileReadStore.getFileReadSnapshot({
+          cwd: resolve(context.cwd),
+          file: normalizedFile,
+          sessionId: context.sessionId,
+        })
+      : getFileReadTracker(context).latestByFile.get(normalizedFile)
   if (!previous) return undefined
   try {
     const current = fileSnapshot(await stat(normalizedFile))
@@ -807,8 +840,24 @@ async function recordFileWrite(context: ToolContext, file: string): Promise<void
     if (key.includes(`\0${normalizedFile}\0`)) tracker.returnedRanges.delete(key)
   }
   try {
-    tracker.latestByFile.set(normalizedFile, fileSnapshot(await stat(normalizedFile)))
+    const snapshot = fileSnapshot(await stat(normalizedFile))
+    if (context.sessionId && context.fileReadStore) {
+      context.fileReadStore.recordFileWrite({
+        cwd: resolve(context.cwd),
+        file: normalizedFile,
+        sessionId: context.sessionId,
+        snapshot,
+      })
+    }
+    tracker.latestByFile.set(normalizedFile, snapshot)
   } catch {
+    if (context.sessionId && context.fileReadStore) {
+      context.fileReadStore.recordFileWrite({
+        cwd: resolve(context.cwd),
+        file: normalizedFile,
+        sessionId: context.sessionId,
+      })
+    }
     tracker.latestByFile.delete(normalizedFile)
   }
 }

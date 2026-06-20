@@ -2,6 +2,7 @@ ToDo
 
 session management :
 	- compaction [HEADROOM FORK BRO]
+		- clear / account for persisted file read state when compaction may summarize away read tool contents
 	- forking 
 	- duplicating / forking entire branch
 	- vault typeshi per session

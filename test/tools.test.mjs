@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import assert from "node:assert/strict"
+import { SessionStore } from "../dist/session/store.js"
 import { executeToolCall, toolDefinitions } from "../dist/tools/registry.js"
 
 async function withWorkspace(fn) {
@@ -104,6 +105,40 @@ test("file read tracking is isolated by session id", async () => {
       { cwd, sessionId: "session-one" },
     )
     assert.match(sessionOneWrite.content, /Warning: notes\.txt changed since Furnace last read it before this write/)
+  })
+})
+
+test("file read tracking persists through session store reopen", async () => {
+  await withWorkspace(async (cwd) => {
+    await writeFile(join(cwd, "notes.txt"), "alpha\nbeta\n", "utf8")
+
+    let store = SessionStore.open(cwd)
+    const session = store.createSession({ cwd, title: "Read tracking" })
+    const first = await executeToolCall(
+      { name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) },
+      { cwd, fileReadStore: store, sessionId: session.id },
+    )
+    assert.match(first.content, /1\|alpha/)
+    store.close()
+
+    store = SessionStore.open(cwd)
+    try {
+      const reread = await executeToolCall(
+        { name: "read", arguments: JSON.stringify({ path: "notes.txt", limit: 1 }) },
+        { cwd, fileReadStore: store, sessionId: session.id },
+      )
+      assert.match(reread.content, /File unchanged since last read: notes\.txt/)
+
+      await sleep(20)
+      await writeFile(join(cwd, "notes.txt"), "alpha\nexternal\n", "utf8")
+      const write = await executeToolCall(
+        { name: "write", arguments: JSON.stringify({ path: "notes.txt", content: "agent overwrite\n", overwrite: true }) },
+        { cwd, fileReadStore: store, sessionId: session.id },
+      )
+      assert.match(write.content, /Warning: notes\.txt changed since Furnace last read it before this write/)
+    } finally {
+      store.close()
+    }
   })
 })
 
