@@ -102,7 +102,7 @@ Furnace evaluates each model-requested tool call before execution through an all
 
 Reasoning:
 
-OpenCode has the cleanest general-purpose shape for tool permissions: policy evaluates to `allow`, `ask`, or `deny`, and the UI resolves asks with scoped choices. Hermes Agent adds a useful distinction between approving one dangerous operation and allowing broader session behavior. Furnace combines those ideas but keeps denial scoped to the specific pending request, so rejecting one tool call does not reject every other pending or future request.
+The approval design is intentionally a hybrid of the harnesses we inspected. OpenCode provides the general-purpose permission shape: policy evaluates to `allow`, `ask`, or `deny`, and the UI resolves asks with scoped choices. Hermes Agent contributes the distinction between one-off approval and broader session/conversation approval. Furnace combines those ideas but keeps denial scoped to the specific pending request, so rejecting one tool call does not reject every other pending or future request.
 
 Current behavior:
 
