@@ -9,9 +9,11 @@ import {
 test("default permissions allow low-risk tools and ask for modifying tools", () => {
   assert.equal(defaultPermissionAction("read"), "allow")
   assert.equal(defaultPermissionAction("grep"), "allow")
+  assert.equal(defaultPermissionAction("skill"), "allow")
   assert.equal(defaultPermissionAction("task"), "allow")
   assert.equal(defaultPermissionAction("task_status"), "allow")
   assert.equal(defaultPermissionAction("websearch"), "allow")
+  assert.equal(defaultPermissionAction("skill_manage"), "ask")
   assert.equal(defaultPermissionAction("write"), "ask")
   assert.equal(defaultPermissionAction("edit"), "ask")
   assert.equal(defaultPermissionAction("bash"), "ask")

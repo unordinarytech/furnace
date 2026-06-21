@@ -10,7 +10,7 @@ session management :
 	- session_search tool to search old sessions and scroll around matches
 
 functionality :
-	- skills [NEXT]	<- NEXT NEXT NEXT 
+	- Multi task like ghost tui <- NEXT NEXT NEXT
 	- memory long term of sorts
 
 - Plan mode

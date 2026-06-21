@@ -194,6 +194,57 @@ test("queued prompt previews truncate and track selected item", async () => {
   ])
 })
 
+test("slash autocomplete filters and inserts command text", async () => {
+  const { applySlashAutocomplete, slashAutocompleteMatches } = await import("../dist/ui/components/prompt-input.js")
+  const { isKnownSlashCommand } = await import("../dist/commands.js")
+  const items = [
+    { label: "/model", value: "/model", description: "Select model" },
+    { label: "/theme [name]", value: "/theme", insertText: "/theme ", description: "Select theme" },
+    { label: "/skills reload", value: "/skills reload", description: "Reload skills" },
+    { label: "/skills view <name>", value: "/skills view", insertText: "/skills view ", description: "View skill" },
+  ]
+
+  const rootMatches = slashAutocompleteMatches("/", 1, items)
+  assert.deepEqual(rootMatches.map((item) => item.value), ["/model", "/theme", "/skills reload", "/skills view"])
+
+  const filtered = slashAutocompleteMatches("/th", 3, items)
+  assert.deepEqual(filtered.map((item) => [item.value, item.selected]), [["/theme", true]])
+  assert.equal(applySlashAutocomplete("/th", 3, filtered[0]), "/theme ")
+  assert.deepEqual(slashAutocompleteMatches("/theme", 6, items), [])
+  assert.deepEqual(slashAutocompleteMatches("/theme flexoki", 14, items), [])
+  const skillsReload = slashAutocompleteMatches("/skills r", 9, items)
+  assert.deepEqual(skillsReload.map((item) => item.value), ["/skills reload"])
+  assert.equal(applySlashAutocomplete("/skills r", 9, skillsReload[0]), "/skills reload")
+  const skillsView = slashAutocompleteMatches("/skills v", 9, items)
+  assert.deepEqual(skillsView.map((item) => item.value), ["/skills view"])
+  assert.equal(applySlashAutocomplete("/skills v", 9, skillsView[0]), "/skills view ")
+  assert.equal(isKnownSlashCommand("/history"), true)
+  assert.equal(isKnownSlashCommand("/skills"), true)
+  assert.equal(isKnownSlashCommand("/quit"), true)
+  assert.equal(isKnownSlashCommand("/not-real"), false)
+})
+
+test("skill_manage tool activity renders proposed SKILL.md", async () => {
+  const { formatToolActivity } = await import("../dist/ui/ink-terminal.js")
+  const lines = formatToolActivity(
+    {
+      id: "call-skill-manage",
+      name: "skill_manage",
+      status: "running",
+      args: JSON.stringify({
+        name: "terminal-polish",
+        description: "Improves terminal interface spacing.",
+        body: "# Terminal Polish\n\nKeep panels readable.",
+      }),
+    },
+    100,
+  )
+
+  assert.equal(lines[0].text, "> Create skill terminal-polish")
+  assert.match(lines[1].text, /\.furnace\/skills\/terminal-polish\/SKILL\.md/)
+  assert.equal(lines.some((line) => line.text.includes("disable-model-invocation: true") && line.tone === "addition"), true)
+})
+
 test("task previews hide child session ids", async () => {
   const { taskPreviewItems } = await import("../dist/ui/ink-terminal.js")
   const previews = taskPreviewItems([

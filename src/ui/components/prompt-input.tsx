@@ -5,6 +5,7 @@ import { useTheme } from "./theme-provider.js"
 
 export type PromptInputProps = {
   active?: boolean
+  autocompleteItems?: PromptAutocompleteItem[]
   busy?: boolean
   disabled?: boolean
   onChange?: (value: string) => void
@@ -15,8 +16,20 @@ export type PromptInputProps = {
   value?: string
 }
 
+export type PromptAutocompleteItem = {
+  description?: string
+  insertText?: string
+  label: string
+  value: string
+}
+
+export type PromptAutocompleteMatch = PromptAutocompleteItem & {
+  selected: boolean
+}
+
 export function PromptInput({
   active = true,
+  autocompleteItems = [],
   busy = false,
   disabled = false,
   onChange,
@@ -29,9 +42,12 @@ export function PromptInput({
   const theme = useTheme()
   const [localValue, setLocalValue] = React.useState("")
   const [cursorOffset, setCursorOffset] = React.useState(0)
+  const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = React.useState(0)
   const previousControlledValue = React.useRef(controlledValue)
   const value = controlledValue ?? localValue
   const enabled = active && !disabled
+  const autocompleteMatches = slashAutocompleteMatches(value, cursorOffset, autocompleteItems, selectedAutocompleteIndex)
+  const autocompleteActive = enabled && autocompleteMatches.length > 0
 
   const setValue = React.useCallback(
     (next: string | ((current: string) => string)) => {
@@ -52,9 +68,36 @@ export function PromptInput({
     setCursorOffset(controlledValue.length)
   }, [controlledValue])
 
+  React.useEffect(() => {
+    setSelectedAutocompleteIndex(0)
+  }, [autocompleteItems, value])
+
   useInput((input, key) => {
     if (!enabled) return
     if (key.ctrl || key.meta) return
+
+    if (autocompleteActive) {
+      if (key.escape) {
+        setValue("")
+        setSelectedAutocompleteIndex(0)
+        setCursorOffset(0)
+        return
+      }
+      if (key.upArrow) {
+        setSelectedAutocompleteIndex((current) => Math.max(0, current - 1))
+        return
+      }
+      if (key.downArrow) {
+        setSelectedAutocompleteIndex((current) => Math.min(autocompleteMatches.length - 1, current + 1))
+        return
+      }
+      if (key.tab || key.return) {
+        const next = applySlashAutocomplete(value, cursorOffset, autocompleteMatches[selectedAutocompleteIndex])
+        setValue(next)
+        setCursorOffset(next.length)
+        return
+      }
+    }
 
     if (key.upArrow && value.length === 0) {
       onEmptyUp?.()
@@ -109,28 +152,87 @@ export function PromptInput({
   const after = value.slice(cursorOffset + 1)
 
   return (
-    <Box borderStyle="round" borderColor={enabled ? theme.colors.focusRing : theme.colors.border} paddingX={1}>
-      <Text color={enabled ? theme.colors.primary : theme.colors.mutedForeground} bold>
-        {prefix}{" "}
-      </Text>
-      {value ? (
-        <Text color={theme.colors.foreground}>
-          {before}
-          <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-            {cursor}
-          </Text>
-          {after}
+    <>
+      {autocompleteActive ? <PromptAutocompleteMenu items={autocompleteMatches} /> : null}
+      <Box borderStyle="round" borderColor={enabled ? theme.colors.focusRing : theme.colors.border} paddingX={1}>
+        <Text color={enabled ? theme.colors.primary : theme.colors.mutedForeground} bold>
+          {prefix}{" "}
         </Text>
-      ) : (
-        <Text color={theme.colors.mutedForeground}>
-          <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-            {display[0] ?? " "}
+        {value ? (
+          <Text color={theme.colors.foreground}>
+            {before}
+            <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+              {cursor}
+            </Text>
+            {after}
           </Text>
-          {display.slice(1)}
-        </Text>
-      )}
+        ) : (
+          <Text color={theme.colors.mutedForeground}>
+            <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+              {display[0] ?? " "}
+            </Text>
+            {display.slice(1)}
+          </Text>
+        )}
+      </Box>
+    </>
+  )
+}
+
+function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] }): React.ReactNode {
+  const theme = useTheme()
+  const visible = items.slice(0, 8)
+  return (
+    <Box borderStyle="round" borderColor={theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Commands</Text>
+        <Text color={theme.colors.mutedForeground}>tab/enter complete</Text>
+      </Box>
+      {visible.map((item) => (
+        <Box key={item.value} justifyContent="space-between">
+          <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected}>
+            {item.selected ? "› " : "  "}{item.label}
+          </Text>
+          {item.description ? <Text color={theme.colors.mutedForeground}> {item.description}</Text> : null}
+        </Box>
+      ))}
+      {items.length > visible.length ? <Text color={theme.colors.mutedForeground}>{items.length - visible.length} more below</Text> : null}
     </Box>
   )
+}
+
+export function slashAutocompleteMatches(
+  value: string,
+  cursorOffset: number,
+  items: PromptAutocompleteItem[],
+  selectedIndex = 0,
+): PromptAutocompleteMatch[] {
+  const token = slashAutocompleteToken(value, cursorOffset)
+  if (!token) return []
+  const normalized = token.toLowerCase()
+  const exact = items.some((item) => item.value.toLowerCase() === normalized)
+  if (exact) return []
+  const matches = items
+    .filter((item) => item.value.toLowerCase().startsWith(normalized))
+    .map((item) => ({ ...item, label: item.label || item.value }))
+  return matches.map((item, index) => ({ ...item, selected: index === Math.min(Math.max(0, selectedIndex), matches.length - 1) }))
+}
+
+export function applySlashAutocomplete(value: string, cursorOffset: number, item: PromptAutocompleteItem | undefined): string {
+  if (!item) return value
+  const token = slashAutocompleteToken(value, cursorOffset)
+  if (!token) return value
+  const insertText = item.insertText || item.value
+  return `${insertText}${value.slice(cursorOffset)}`
+}
+
+function slashAutocompleteToken(value: string, cursorOffset: number): string | undefined {
+  if (cursorOffset < 1) return undefined
+  const beforeCursor = value.slice(0, cursorOffset)
+  const afterCursor = value.slice(cursorOffset)
+  if (afterCursor.trim()) return undefined
+  if (!beforeCursor.startsWith("/")) return undefined
+  return beforeCursor
 }
 
 export function lofiChibiFrame(tick: number): string {

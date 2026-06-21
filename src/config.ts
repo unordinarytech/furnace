@@ -16,6 +16,7 @@ export type FurnaceConfig = {
   modelSettings: ModelSettings
   openRouterApiKey: string
   siteUrl: string
+  skillPaths: string[]
   subagentSystemPrompt: string
   systemPrompt: string
   theme: string
@@ -39,6 +40,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     modelSettings: preferences.modelSettings || {},
     openRouterApiKey,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
+    skillPaths: Array.isArray(preferences.skillPaths) ? preferences.skillPaths.filter((path) => typeof path === "string" && path.trim()).map((path) => path.trim()) : [],
     subagentSystemPrompt: await readFile(subagentPromptPath, "utf8"),
     systemPrompt: await readFile(promptPath, "utf8"),
     theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "flexoki",

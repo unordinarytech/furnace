@@ -43,8 +43,10 @@ Current influences:
 - Pi: parent-linked session entries, `active_leaf_id`, future branching/forking semantics, and keeping the agent runtime independent of the terminal UI.
 - Pi-style apply patch: Furnace exposes one model-facing `edit` tool but implements it as a structured apply-patch envelope.
 - Pi-style questionnaire UX: Furnace's `ask_question` panel adapts Pi's multi-question tab navigation, option selection, custom answer, and cancellation/refusal direction.
-- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, and the idea that subagents are launched through a normal model-callable task tool linked to child sessions.
-- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, subagent batching/fan-out, background completion re-entry, and the future direction for SQLite FTS session search.
+- Pi-style skills: Furnace uses `SKILL.md` directories, explicit `/skill:<name>` invocation, and `disable-model-invocation` manual-only behavior.
+- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, the idea that subagents are launched through a normal model-callable task tool linked to child sessions, and compact skill guidance plus a `skill` tool.
+- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, subagent batching/fan-out, background completion re-entry, hidden/scaffolded explicit skill invocation, guarded skill management, and the future direction for SQLite FTS session search.
+- Cursor and Claude Code: Furnace discovers their existing user, managed, and plugin-cache skill roots so installed skills can be reused locally.
 
 ## Runtime Context Injection
 
@@ -59,6 +61,41 @@ Current implementation:
 - `src/session/context.ts` builds the runtime context in `buildRuntimeContext()`.
 - `entriesToModelMessages()` injects the runtime-context system message after the base system prompt.
 - `src/cli.ts` passes the current workspace when building per-turn model messages.
+
+## Skills
+
+Furnace treats skills as progressive-disclosure instruction packages.
+
+Reasoning:
+
+Many useful workflows are too specific for the base prompt but too important to rediscover every session. Skills let Furnace keep a compact name/description index in context, then load full instructions only when a task needs them. This keeps token use controlled while still making specialized behavior reusable.
+
+Harness provenance:
+
+- Pi contributed the Agent Skills-compatible shape: `SKILL.md` directories, slash invocation as `/skill:<name>`, and `disable-model-invocation` for manual-only skills.
+- OpenCode contributed the split between compact skill guidance and a model-facing `skill` tool that loads full content with base-directory context and supporting-file samples.
+- Hermes Agent contributed the hidden/scaffolded explicit invocation pattern and the idea that agent-created skills need a dedicated guarded management flow instead of casual file writes.
+- Cursor and Claude Code contributed the practical discovery roots: Furnace reads their existing user, managed, and plugin-cache skill directories so installed skills are reusable.
+
+Current behavior:
+
+- Furnace discovers project, user, Cursor, Claude Code, plugin-cache, and configured extra skill roots.
+- Automatic model guidance includes only skills that are not marked `disable-model-invocation: true`.
+- `/skill:<name>` autocomplete includes every discovered skill, including manual-only skills.
+- `/skills`, `/skills view <name>`, and `/skills reload` expose inspection and reload controls.
+- The `skill` tool is read-only and allowed by default.
+- The `skill_manage` tool can create or update `SKILL.md` files only in approved writable roots and asks before writing.
+- Explicit skill invocation is hidden from the visible transcript but preserved for model replay.
+
+Current implementation:
+
+- `docs/skills.md` is the canonical skills design and behavior reference.
+- `report/skills.md` is the inspected-source research snapshot.
+- `src/skills/loader.ts` handles discovery, validation, provenance, and configured paths.
+- `src/skills/context.ts` renders guidance, loaded skill output, and hidden invocation messages.
+- `src/skills/manage.ts` constrains agent-created skill writes.
+- `src/tools/registry.ts` registers `skill` and `skill_manage`.
+- `src/cli.ts` wires slash commands, reload, and hidden invocation.
 
 ## Tool Call Persistence
 

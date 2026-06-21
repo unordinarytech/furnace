@@ -30,6 +30,8 @@ Avoid it when:
 - The task is already clear.
 - The question is really a safety approval for a side-effecting tool; permissions handle that.
 
+Question options should be concrete choices only. The model should not include meta-options such as `Let me specify`, `Type my own`, `Other`, `Skip`, or `Refuse`, because Furnace already renders custom input and refusal controls separately. If free-form input is acceptable, the tool should set `allowCustom: true`.
+
 Runtime flow:
 
 1. The model calls `ask_question` with one or more questions.
@@ -81,6 +83,54 @@ Current limitation:
 
 Furnace passes an `AbortSignal` into the model request path, so promoting a queued prompt can interrupt a waiting model call. Some already-running tools may still finish until every tool supports cancellation.
 
+## Slash Command Autocomplete
+
+Typing an incomplete slash command in the input opens a command autocomplete panel above the prompt.
+
+Behavior:
+
+- `/` shows the available built-in commands.
+- `/skill:` shows explicit skill commands for every discovered local skill, including manual-only skills.
+- Typing a prefix filters the list, for example `/mo` shows `/model`.
+- Up/down selects a command in the autocomplete panel.
+- Tab or Enter completes the selected command into the input.
+- Exact commands are submitted normally, so `/theme` followed by Enter still opens the theme picker instead of getting trapped in autocomplete.
+- Commands that commonly take an argument can insert a trailing space, for example `/theme `.
+- Slash commands submitted while Furnace is busy are handled as commands, not queued as model prompts. Safe commands like `/tasks`, `/reset-perms`, and `/theme <name>` run immediately; commands that would disrupt the active turn show a short status and can be retried after the turn finishes.
+
+## Skills
+
+Furnace discovers local skills from `SKILL.md` files under project roots like `.furnace/skills` and `.agents/skills`, user roots like `~/.furnace/skills` and `~/.agents/skills`, Cursor roots like `~/.cursor/skills-cursor`, `~/.cursor/skills`, and `~/.cursor/plugins/cache`, and Claude Code roots like `~/.claude/skills` and `~/.claude/plugins/cache`.
+
+Runtime behavior:
+
+1. Each model turn receives compact guidance listing skills that are available for automatic model invocation.
+2. The model can call the `skill` tool to load the full content for a matching skill.
+3. Skills with `disable-model-invocation: true` are excluded from automatic guidance.
+4. Explicit `/skill:<name>` slash commands still appear for every discovered skill.
+5. Extra roots can be configured in `.furnace/preferences.json` with `skillPaths: ["path/to/skills", "~/shared-skills"]`.
+
+Explicit slash invocation:
+
+- `/skill:name` loads that skill as a hidden user message and asks the model to proceed.
+- `/skill:name extra args` appends `User instruction: extra args` to the hidden message.
+- The hidden invocation is persisted for model context but omitted from the visible transcript.
+- If Furnace is busy, `/skill:name` is treated as a command and shows a transient retry message instead of becoming a queued prompt.
+
+Inspection and reload:
+
+- `/skills` or `/skills list` shows every discovered skill with provenance and whether it is auto-guided or manual-only.
+- `/skills view <name>` shows the description, provenance, file path, and full loaded `SKILL.md` content.
+- `/skills reload` refreshes discovery and slash autocomplete after files are added or changed.
+
+Agent-created skills:
+
+- The model can call `skill_manage` to create or update a `SKILL.md`.
+- This tool requires explicit approval and renders a diff-style preview before writing.
+- Writes are restricted to approved writable roots: project `.furnace/skills`, `~/.furnace/skills`, `~/.cursor/skills`, and `~/.claude/skills`.
+- Managed roots such as `~/.cursor/skills-cursor` and plugin caches are discoverable but not writable.
+- New skills default to `disable-model-invocation: true`; after approval, run `/skills reload` to refresh autocomplete/model guidance.
+
 ## Subagent Tasks
 
 Subagent tasks are model-callable through `task` and visible in the TUI as a task panel.
@@ -123,8 +173,8 @@ Permission policy uses three actions:
 
 Current defaults:
 
-- Low-risk tools are allowed by default: `read`, `ls`, `find`, `glob`, `grep`, `ask_question`, `task`, `task_status`, `websearch`, and `webfetch`.
-- Modifying or shell tools ask first: `write`, `edit`, and `bash`.
+- Low-risk tools are allowed by default: `read`, `ls`, `find`, `glob`, `grep`, `ask_question`, `skill`, `task`, `task_status`, `websearch`, and `webfetch`.
+- Modifying, shell, or persistent-skill authoring tools ask first: `write`, `edit`, `bash`, and `skill_manage`.
 - Unknown tools default to `ask`.
 
 Permission prompt choices:

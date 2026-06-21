@@ -137,6 +137,8 @@ Current safety behavior:
 - Reads of `.env` and `.env.*` are denied, except `.env.example`.
 - Interactive sessions ask before `write`, `edit`, and `bash` tool calls. Denying a request blocks only that specific tool call.
 - `ask_question` is allowed by default because it is a clarification tool, not a side-effecting operation.
+- `skill` is allowed by default. It only loads local `SKILL.md` instructions into the model context.
+- `skill_manage` asks by default because it creates or updates persistent agent instructions.
 - `task` and `task_status` are allowed by default. Subagents inherit parent conversation permission grants, but ungranted side-effecting tools inside children still prompt normally.
 - Child subagents receive the same tools as the parent except `task`, preventing recursive subagent creation.
 - `write` refuses to overwrite existing files unless `overwrite: true`.
@@ -545,7 +547,7 @@ Use cases:
 - The user needs to choose between mutually exclusive approaches.
 - The agent needs a preference that cannot be inferred safely.
 
-Do not use `ask_question` for low-stakes details where a sensible default is enough.
+Do not use `ask_question` for low-stakes details where a sensible default is enough. When asking, include only concrete choices in `options`; do not add choices like `Let me specify`, `Type my own`, `Other`, `Skip`, or `Refuse`. Furnace already provides custom input and refusal controls in the UI.
 
 Schema:
 
@@ -573,7 +575,7 @@ Schema:
           },
           "options": {
             "type": "array",
-            "description": "Available choices. The UI also offers custom answer and refusal when enabled.",
+              "description": "Concrete available choices only. The UI also offers custom answer and refusal when enabled.",
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -600,7 +602,7 @@ Schema:
           },
           "allowCustom": {
             "type": "boolean",
-            "description": "Allow the user to type their own answer. Defaults to true."
+              "description": "Allow the user to type their own answer. Defaults to true. Use this instead of adding a 'let me specify' option."
           }
         }
       }
@@ -641,7 +643,120 @@ User answered the questions:
 scope: user selected "Minimal"
 ```
 
-The UI always offers `Refuse to answer` for each question. Refusal is returned as answer data, not treated as a tool failure.
+The UI always offers `Refuse to answer` for each question. When `allowCustom` is enabled, it also offers a single custom-answer row. Refusal and custom answers are returned as answer data, not treated as tool failures.
+
+### `skill`
+
+Load a named local skill when the task matches the skill's description. Skill discovery scans local `SKILL.md` files under project roots like `.furnace/skills` and `.agents/skills`, user roots like `~/.furnace/skills` and `~/.agents/skills`, Cursor roots like `~/.cursor/skills-cursor`, `~/.cursor/skills`, and `~/.cursor/plugins/cache`, and Claude Code roots like `~/.claude/skills` and `~/.claude/plugins/cache`.
+
+Skills with `disable-model-invocation: true` are not listed in automatic model guidance, but they can still be loaded through explicit `/skill:<name>` slash commands.
+
+Extra skill roots can be configured in `.furnace/preferences.json`:
+
+```json
+{
+  "skillPaths": ["custom-skills", "~/shared-skills"]
+}
+```
+
+Schema:
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Name of the skill to load."
+    }
+  }
+}
+```
+
+Example:
+
+```json
+{
+  "name": "review-bugbot"
+}
+```
+
+Output format:
+
+```xml
+<skill_content name="review-bugbot">
+# Skill: review-bugbot
+
+...
+
+Base directory for this skill: file:///...
+Relative paths in this skill are relative to this base directory.
+</skill_content>
+```
+
+### `skill_manage`
+
+Create or update a local `SKILL.md` under an approved writable root. This tool is for agent-created reusable skills and always asks for approval before writing.
+
+Writable targets:
+
+- `project`: `.furnace/skills/<name>/SKILL.md`
+- `user`: `~/.furnace/skills/<name>/SKILL.md`
+- `cursor-user`: `~/.cursor/skills/<name>/SKILL.md`
+- `claude-user`: `~/.claude/skills/<name>/SKILL.md`
+
+Managed/plugin roots are intentionally not writable.
+
+Schema:
+
+```json
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "description", "body"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Skill name. Must use lowercase letters, numbers, and hyphens only."
+    },
+    "description": {
+      "type": "string",
+      "description": "Specific third-person description of what the skill does and when to use it."
+    },
+    "body": {
+      "type": "string",
+      "description": "Markdown body for SKILL.md after the frontmatter. Keep it concise and under 500 lines."
+    },
+    "target": {
+      "type": "string",
+      "enum": ["project", "user", "cursor-user", "claude-user"]
+    },
+    "disableModelInvocation": {
+      "type": "boolean",
+      "description": "Defaults to true for newly created skills."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Allow updating an existing skill. Defaults to false."
+    }
+  }
+}
+```
+
+Example:
+
+```json
+{
+  "name": "terminal-polish",
+  "description": "Improves terminal interface spacing and copy. Use when polishing terminal UI.",
+  "body": "# Terminal Polish\n\nKeep panels compact and readable.",
+  "target": "project"
+}
+```
+
+After a skill is created or updated in the interactive TUI, run `/skills reload` to refresh slash autocomplete and model guidance.
 
 ### `task`
 

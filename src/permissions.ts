@@ -108,8 +108,8 @@ export function createToolPermissionRequest(input: {
 }
 
 export function defaultPermissionAction(permission: string): PermissionAction {
-  if (["read", "ls", "find", "glob", "grep", "ask_question", "task", "task_status", "websearch", "webfetch"].includes(permission)) return "allow"
-  if (["write", "edit", "bash"].includes(permission)) return "ask"
+  if (["read", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "websearch", "webfetch"].includes(permission)) return "allow"
+  if (["write", "edit", "bash", "skill_manage"].includes(permission)) return "ask"
   return "ask"
 }
 
@@ -137,6 +137,8 @@ function permissionPattern(toolName: string, args: string): string {
   if (toolName === "bash") return stringArg(parsed, "command") || "*"
   if (toolName === "webfetch") return stringArg(parsed, "url") || "*"
   if (toolName === "websearch") return stringArg(parsed, "query") || "*"
+  if (toolName === "skill") return stringArg(parsed, "name") || "*"
+  if (toolName === "skill_manage") return stringArg(parsed, "name") || "*"
   if (toolName === "edit") return summarizePatchTargets(stringArg(parsed, "patch") || "") || "*"
   return stringArg(parsed, "path") || stringArg(parsed, "pattern") || "*"
 }
@@ -147,6 +149,7 @@ function permissionDescription(toolName: string, pattern: string): string {
   if (toolName === "write") return `Write file: ${pattern}`
   if (toolName === "webfetch") return `Fetch URL: ${pattern}`
   if (toolName === "websearch") return `Search web: ${pattern}`
+  if (toolName === "skill_manage") return `Create or update skill: ${pattern}`
   return `Use ${toolName}: ${pattern}`
 }
 

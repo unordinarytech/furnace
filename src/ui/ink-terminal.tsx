@@ -1,13 +1,14 @@
 import { Box, Text, render, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 
+import { slashCommandDefinitions } from "../commands.js"
 import type { PermissionDecision, PermissionRequest } from "../permissions.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import { AppShell } from "./components/app-shell.js"
-import { lofiChibiFrame, PromptInput } from "./components/prompt-input.js"
+import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
@@ -25,6 +26,7 @@ export type FurnaceTerminal = {
   setLofi(enabled: boolean): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
+  setSlashCommandItems(items: PromptAutocompleteItem[]): void
   setTasks(tasks: TaskRecord[]): void
   showHistory(choices: HistoryChoice[], currentSessionId: string | null, onSelect: (sessionId: string) => void, onCancel: () => void): void
   showModelPicker(
@@ -67,6 +69,7 @@ export type QueuedPrompt = {
   createdAt: number
   hidden?: boolean
   id: string
+  source?: string
   text: string
 }
 
@@ -119,6 +122,7 @@ type UiState = {
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
+  slashCommandItems: PromptAutocompleteItem[]
   theme: Theme
   themeName: string
   thinking: boolean
@@ -165,6 +169,7 @@ class UiStore {
       question: undefined,
       queuedPrompts: [],
       screen: { kind: "chat" },
+      slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
       theme: themeChoice.theme,
       themeName: themeChoice.name,
       thinking: false,
@@ -267,6 +272,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setQueuedPrompts(prompts) {
       store.update({ queuedPrompts: prompts })
+    },
+    setSlashCommandItems(items) {
+      store.update({ slashCommandItems: items })
     },
     setTasks(tasks) {
       store.update({ tasks: visibleTaskRecords(tasks) })
@@ -372,6 +380,7 @@ function FurnaceApp({
         active={state.focus === "input"}
         busy={state.busy}
         disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
+        autocompleteItems={state.slashCommandItems}
         onChange={(value) => store.update({ inputDraft: value })}
         onEmptyUp={() => {
           if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
@@ -445,7 +454,30 @@ function reservedInteractionRows(state: UiState): number {
   if (state.question) rows += 9
   if (state.tasks.length > 0) rows += taskPanelRows(state.tasks)
   if (state.queuedPrompts.length > 0) rows += queuedPromptPanelRows(state.queuedPrompts)
+  if (slashCommandAutocompleteVisible(state)) rows += slashCommandAutocompleteRows(state)
   return rows
+}
+
+function slashCommandAutocompleteVisible(state: UiState): boolean {
+  return state.screen.kind === "chat" && state.focus === "input" && !state.approval && slashCommandAutocompleteRows(state) > 0
+}
+
+function slashCommandAutocompleteRows(state: UiState): number {
+  const rows = slashAutocompleteMatches(
+    state.inputDraft,
+    state.inputDraft.length,
+    state.slashCommandItems,
+  ).length
+  return rows > 0 ? 3 + Math.min(8, rows) : 0
+}
+
+function slashCommandToAutocompleteItem(command: (typeof slashCommandDefinitions)[number]): PromptAutocompleteItem {
+  return {
+    description: command.description,
+    insertText: command.insertText,
+    label: command.usage || command.name,
+    value: command.name,
+  }
 }
 
 function taskPanelRows(tasks: TaskRecord[]): number {
@@ -1302,6 +1334,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (taskLines.length > 0) return taskLines
   }
 
+  if (activity.name === "skill_manage") {
+    const skillLines = formatSkillManageActivity(activity, width)
+    if (skillLines.length > 0) return skillLines
+  }
+
   return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
 }
 
@@ -1401,6 +1438,35 @@ function formatTaskActivity(activity: ToolActivity, width: number): RenderedTool
   return lines
 }
 
+function formatSkillManageActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const args = parseJsonRecord(activity.args)
+  const name = stringField(args, "name")
+  const description = stringField(args, "description")
+  const body = stringField(args, "body")
+  if (!name || !description || !body) return []
+  const target = stringField(args, "target") || "project"
+  const overwrite = booleanField(args, "overwrite")
+  const disableModelInvocation = booleanField(args, "disableModelInvocation")
+  const file = skillManageDisplayPath(name, target)
+  const contentLines = renderSkillManagePreview(name, description, body, disableModelInvocation).split(/\r?\n/)
+  const lines: RenderedToolLine[] = [
+    {
+      text: `${statusSymbol(activity.status)} ${overwrite ? "Update" : "Create"} skill ${name}`,
+      tone: activity.status === "failed" ? "error" : "summary",
+    },
+    { text: `  target ${target} -> ${truncateEnd(file, Math.max(24, width - 16))}`, tone: "meta" },
+  ]
+  for (const line of contentLines.slice(0, 10)) {
+    lines.push({ text: `  +${truncateEnd(line, Math.max(24, width - 5))}`, tone: "addition" })
+  }
+  if (contentLines.length > 10) lines.push({ text: `  ... truncated ${contentLines.length - 10} more lines`, tone: "meta" })
+  if (activity.result) {
+    const firstResult = activity.result.split(/\r?\n/)[0]
+    if (firstResult) lines.push({ text: `  ${truncateEnd(firstResult, Math.max(24, width - 4))}`, tone: "addition" })
+  }
+  return lines
+}
+
 type PatchPreviewOperation = {
   added: number
   file: string
@@ -1471,6 +1537,42 @@ function parseJsonStringField(args: string, key: string): string | undefined {
   } catch {
     return undefined
   }
+}
+
+function parseJsonRecord(args: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(args) as unknown
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function stringField(args: Record<string, unknown>, key: string): string | undefined {
+  const value = args[key]
+  return typeof value === "string" ? value : undefined
+}
+
+function booleanField(args: Record<string, unknown>, key: string): boolean | undefined {
+  const value = args[key]
+  return typeof value === "boolean" ? value : undefined
+}
+
+function skillManageDisplayPath(name: string, target: string): string {
+  const root = target === "user" ? "~/.furnace/skills" : target === "cursor-user" ? "~/.cursor/skills" : target === "claude-user" ? "~/.claude/skills" : ".furnace/skills"
+  return `${root}/${name}/SKILL.md`
+}
+
+function renderSkillManagePreview(name: string, description: string, body: string, disableModelInvocation?: boolean): string {
+  return [
+    "---",
+    `name: ${name}`,
+    `description: ${JSON.stringify(description)}`,
+    disableModelInvocation === false ? undefined : "disable-model-invocation: true",
+    "---",
+    "",
+    body.trim(),
+  ].filter((line) => line !== undefined).join("\n")
 }
 
 function parseAskQuestionArgs(args: string): Array<{ id: string; options: Array<{ label: string }>; prompt: string }> {

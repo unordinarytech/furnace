@@ -22,7 +22,7 @@ function sleep(ms) {
 test("tool registry exposes the core primitives", () => {
   assert.deepEqual(
     toolDefinitions.map((tool) => tool.function.name),
-    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "task", "task_status", "websearch", "webfetch"],
+    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "skill", "skill_manage", "task", "task_status", "websearch", "webfetch"],
   )
 })
 
@@ -153,6 +153,49 @@ test("ask_question returns user answers from the prompt service", async () => {
     )
 
     assert.match(result.content, /scope: user selected "Minimal"/)
+  })
+})
+
+test("ask_question filters duplicate custom and refusal meta-options", async () => {
+  await withWorkspace(async (cwd) => {
+    const result = await executeToolCall(
+      {
+        name: "ask_question",
+        arguments: JSON.stringify({
+          questions: [
+            {
+              id: "scope",
+              prompt: "Which scope?",
+              allowCustom: true,
+              options: [
+                { id: "minimal", label: "Minimal" },
+                { id: "specify", label: "Let me specify" },
+                { id: "own", label: "Type my own" },
+                { id: "refuse", label: "Refuse to answer" },
+              ],
+            },
+          ],
+        }),
+      },
+      {
+        cwd,
+        questionPrompt: async (request) => {
+          assert.deepEqual(request.questions[0].options.map((option) => option.label), ["Minimal"])
+          assert.equal(request.questions[0].allowCustom, true)
+          return {
+            answers: [
+              {
+                answer: "my own scope",
+                kind: "custom",
+                questionId: "scope",
+              },
+            ],
+          }
+        },
+      },
+    )
+
+    assert.match(result.content, /scope: user wrote "my own scope"/)
   })
 })
 

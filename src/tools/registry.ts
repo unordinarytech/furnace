@@ -7,6 +7,9 @@ import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
 import { formatAskQuestionResult, normalizeAskQuestionRequest, type AskQuestionPrompt } from "../questions.js"
 import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot } from "../session/types.js"
+import { renderSkillToolOutput } from "../skills/context.js"
+import { loadSkillByName } from "../skills/loader.js"
+import { writeManagedSkill, type SkillManageTarget } from "../skills/manage.js"
 import type { TaskRunner, TaskRunResult, TaskSpec } from "../tasks/types.js"
 
 const execFileAsync = promisify(execFile)
@@ -22,6 +25,7 @@ export type ToolContext = {
   sessionId?: string
   services?: ToolServices
   signal?: AbortSignal
+  skillPaths?: string[]
   taskRunner?: TaskRunner
 }
 
@@ -198,7 +202,7 @@ export const registeredTools: RegisteredTool[] = [
       type: "function",
       function: {
         name: "ask_question",
-        description: "Ask the user one or more clarification questions when the task is ambiguous or needs a user decision. Supports options, multiple questions, custom answers, and refusal.",
+        description: "Ask the user one or more clarification questions when the task is ambiguous or needs a user decision. Put only concrete answer choices in options. Do not include choices like 'let me specify', 'type my own', 'other', 'custom', 'skip', or 'refuse'; the UI already provides custom answer and refusal controls.",
         parameters: objectSchema({
           questions: arraySchema(
             objectSchema({
@@ -210,10 +214,10 @@ export const registeredTools: RegisteredTool[] = [
                   label: stringSchema("Short option label shown to the user."),
                   description: stringSchema("Optional one-line explanation of the option."),
                 }, ["id", "label"]),
-                "Available choices. The UI also offers custom answer and refusal when enabled.",
+                "Concrete available choices only. Do not include meta choices for custom input, other, skipping, or refusal; the UI provides those separately when enabled.",
               ),
               allowMultiple: booleanSchema("Allow selecting more than one option. Defaults to false."),
-              allowCustom: booleanSchema("Allow the user to type their own answer. Defaults to true."),
+              allowCustom: booleanSchema("Allow the user to type their own answer. Defaults to true. Use this instead of adding an option like 'let me specify' or 'type my own'."),
             }, ["id", "prompt", "options"]),
             "One or more questions to ask before continuing.",
           ),
@@ -221,6 +225,37 @@ export const registeredTools: RegisteredTool[] = [
       },
     },
     execute: askQuestionTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "skill",
+        description: "Load a specialized skill when the task matches one of the available skills in the system context. The name must match an available skill.",
+        parameters: objectSchema({
+          name: stringSchema("Name of the skill to load."),
+        }, ["name"]),
+      },
+    },
+    execute: skillTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "skill_manage",
+        description: "Create or update a local SKILL.md under an approved writable skill root. This is high-leverage and requires user approval. Prefer asking the user first unless they explicitly requested a reusable skill.",
+        parameters: objectSchema({
+          name: stringSchema("Skill name. Must use lowercase letters, numbers, and hyphens only."),
+          description: stringSchema("Specific third-person description of what the skill does and when to use it."),
+          body: stringSchema("Markdown body for SKILL.md after the frontmatter. Keep it concise and under 500 lines."),
+          target: enumSchema(["project", "user", "cursor-user", "claude-user"], "Writable root. Defaults to project (.furnace/skills). Managed/plugin cache roots are never writable."),
+          disableModelInvocation: booleanSchema("Whether to hide from automatic model guidance. Defaults to true for newly created skills."),
+          overwrite: booleanSchema("Allow updating an existing skill. Defaults to false."),
+        }, ["name", "description", "body"]),
+      },
+    },
+    execute: skillManageTool,
   },
   {
     definition: {
@@ -446,6 +481,37 @@ async function askQuestionTool(args: unknown, context: ToolContext): Promise<str
   return formatAskQuestionResult(await context.questionPrompt(request))
 }
 
+async function skillTool(args: unknown, context: ToolContext): Promise<string> {
+  const name = requiredString(args, "name")
+  const skill = await loadSkillByName(context.cwd, name, { extraPaths: context.skillPaths })
+  if (!skill) throw new Error(`Unable to load skill ${name}`)
+  const files = await sampleSkillFiles(skill.baseDir)
+  return renderSkillToolOutput(skill, files)
+}
+
+async function skillManageTool(args: unknown, context: ToolContext): Promise<string> {
+  const name = requiredString(args, "name")
+  const description = requiredString(args, "description")
+  const body = requiredString(args, "body")
+  const target = optionalEnum(args, "target", ["project", "user", "cursor-user", "claude-user"]) as SkillManageTarget | undefined
+  const disableModelInvocation = optionalBoolean(args, "disableModelInvocation")
+  const overwrite = optionalBoolean(args, "overwrite")
+  const result = await writeManagedSkill(context.cwd, {
+    body,
+    description,
+    disableModelInvocation,
+    name,
+    overwrite,
+    target,
+  })
+  return [
+    `${result.created ? "Created" : "Updated"} skill ${name}`,
+    `path: ${displayPath(context.cwd, result.filePath)}`,
+    `target: ${result.target}`,
+    "Run /skills reload to refresh autocomplete and model guidance in the TUI.",
+  ].join("\n")
+}
+
 async function taskTool(args: unknown, context: ToolContext): Promise<string> {
   if (!context.taskRunner || !context.sessionId) return "Task delegation is unavailable in this mode."
   const tasks = normalizeTaskSpecs(args)
@@ -457,6 +523,15 @@ async function taskTool(args: unknown, context: ToolContext): Promise<string> {
     tasks,
   })
   return formatTaskRunResult(result)
+}
+
+async function sampleSkillFiles(baseDir: string, maxFiles = 10): Promise<string[]> {
+  const files = await listFiles(baseDir, baseDir, 10_000, "", { skipNoisyDirs: true })
+  return files
+    .filter((file) => basename(file) !== "SKILL.md")
+    .sort((left, right) => left.localeCompare(right))
+    .slice(0, maxFiles)
+    .map((file) => displayPath(baseDir, file))
 }
 
 async function taskStatusTool(_args: unknown, context: ToolContext): Promise<string> {

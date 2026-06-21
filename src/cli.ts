@@ -3,6 +3,7 @@
 import { Command } from "commander"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
+import { isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { loadConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage } from "./openrouter.js"
@@ -11,10 +12,14 @@ import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
+import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
+import { loadSkillByName, loadSkills } from "./skills/loader.js"
+import type { Skill } from "./skills/types.js"
 import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { childToolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
+import type { PromptAutocompleteItem } from "./ui/components/prompt-input.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -83,6 +88,7 @@ async function runInteractive(input: {
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const queuedPrompts: QueuedPrompt[] = []
   const pendingBackgroundPrompts = new Map<string, string[]>()
+  let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
   let queueCounter = 0
   let running = false
   let activeAbortController: AbortController | undefined
@@ -155,6 +161,7 @@ async function runInteractive(input: {
       })
     },
   })
+  terminal.setSlashCommandItems(slashAutocompleteItems(skillCatalog.skills))
 
   refreshCurrentSession()
   try {
@@ -179,6 +186,34 @@ async function runInteractive(input: {
       showTransientStatus(result.message)
       return
     }
+    if (isSkillCommand(command.name)) {
+      if (running) {
+        showTransientStatus(`${command.name} is available after the current turn finishes.`)
+        return
+      }
+      await runSkillCommand(command.name, command.argument)
+      return
+    }
+    if (running && prompt.startsWith("/")) {
+      if (command.name === "/tasks") {
+        showTaskStatus()
+        return
+      }
+      if (command.name === "/skills") {
+        await handleSkillsCommand(command.argument)
+        return
+      }
+      if (command.name === "/reset-perms") {
+        resetCurrentSessionPermissions()
+        return
+      }
+      if (command.name === "/theme" && command.argument) {
+        await setThemeByName(command.argument)
+        return
+      }
+      showTransientStatus(isKnownSlashCommand(command.name) ? `${command.name} is available after the current turn finishes.` : `Unknown command while Furnace is working: ${command.name}`)
+      return
+    }
     if (running) {
       enqueuePrompt(prompt)
       return
@@ -193,8 +228,7 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/reset-perms") {
-      const removed = permissions.clearSession(sessionId)
-      showTransientStatus(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation.")
+      resetCurrentSessionPermissions()
       return
     }
     if (isHistoryCommand(command.name)) {
@@ -217,9 +251,11 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/tasks") {
-      const status = formatTaskStatusForUser(taskManager.status(sessionId).tasks)
-      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
-      terminal.setTasks(taskManager.status(sessionId).tasks)
+      showTaskStatus()
+      return
+    }
+    if (command.name === "/skills") {
+      await handleSkillsCommand(command.argument)
       return
     }
     if (command.name === "/model") {
@@ -245,15 +281,7 @@ async function runInteractive(input: {
     }
     if (command.name === "/theme") {
       if (command.argument) {
-        const choice = findTheme(command.argument)
-        if (!choice) {
-          terminal.setTranscript([{ role: "assistant", content: `Unknown theme: ${command.argument}\nAvailable themes: ${themeChoices.map((theme) => theme.name).join(", ")}` }])
-          return
-        }
-        input.config.theme = choice.name
-        terminal.setTheme(choice.name)
-        await saveThemePreference(input.cwd, choice.name)
-        showTransientStatus(`Theme set to ${choice.name}.`)
+        await setThemeByName(command.argument)
         return
       }
 
@@ -289,6 +317,68 @@ async function runInteractive(input: {
     transientStatusTimer.unref?.()
   }
 
+  function resetCurrentSessionPermissions(): void {
+    const removed = permissions.clearSession(sessionId)
+    showTransientStatus(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation.")
+  }
+
+  function showTaskStatus(): void {
+    const status = formatTaskStatusForUser(taskManager.status(sessionId).tasks)
+    terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
+    terminal.setTasks(taskManager.status(sessionId).tasks)
+  }
+
+  async function setThemeByName(name: string): Promise<void> {
+    const choice = findTheme(name)
+    if (!choice) {
+      terminal.setTranscript([{ role: "assistant", content: `Unknown theme: ${name}\nAvailable themes: ${themeChoices.map((theme) => theme.name).join(", ")}` }])
+      return
+    }
+    input.config.theme = choice.name
+    terminal.setTheme(choice.name)
+    await saveThemePreference(input.cwd, choice.name)
+    showTransientStatus(`Theme set to ${choice.name}.`)
+  }
+
+  async function runSkillCommand(commandName: string, userInstruction: string): Promise<void> {
+    const skillName = commandName.slice("/skill:".length)
+    const skill = skillCatalog.skills.find((candidate) => candidate.name === skillName)
+    if (!skill) {
+      showTransientStatus(`Unknown skill: ${skillName}`)
+      return
+    }
+    clearTransientStatus()
+    await runPromptQueue({
+      hidden: true,
+      source: "skill_invocation",
+      text: renderSkillInvocationMessage(skill, userInstruction),
+    })
+  }
+
+  async function handleSkillsCommand(argument: string): Promise<void> {
+    const [subcommand = "list", ...rest] = argument.trim().split(/\s+/).filter(Boolean)
+    if (subcommand === "reload") {
+      await reloadSkillCatalog()
+      showTransientStatus(`Reloaded ${skillCatalog.skills.length} skill${skillCatalog.skills.length === 1 ? "" : "s"}.`)
+      return
+    }
+    if (subcommand === "view") {
+      const name = rest.join(" ").trim()
+      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatSkillView(skillCatalog.skills, name) }])
+      return
+    }
+    if (subcommand !== "list") {
+      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: `Unknown /skills command: ${subcommand}\nUsage: /skills [list|view <name>|reload]` }])
+      return
+    }
+    terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatSkillsList(skillCatalog.skills) }])
+  }
+
+  async function reloadSkillCatalog(): Promise<void> {
+    skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
+    terminal.setSlashCommandItems(slashAutocompleteItems(skillCatalog.skills))
+  }
+
   function clearTransientStatus(): void {
     transientStatusToken += 1
     if (!transientStatusTimer) return
@@ -296,11 +386,12 @@ async function runInteractive(input: {
     transientStatusTimer = undefined
   }
 
-  function enqueuePrompt(text: string, options: { hidden?: boolean } = {}): void {
+  function enqueuePrompt(text: string, options: { hidden?: boolean; source?: string } = {}): void {
     queuedPrompts.push({
       createdAt: Date.now(),
       hidden: options.hidden,
       id: `queue-${Date.now()}-${queueCounter++}`,
+      source: options.hidden ? options.source || "hidden_prompt" : undefined,
       text,
     })
     syncQueuedPrompts()
@@ -333,33 +424,35 @@ async function runInteractive(input: {
 
   async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
     if (running) {
-      enqueuePrompt(text, { hidden: true })
+      enqueuePrompt(text, { hidden: true, source: "background_subagent_completion" })
       return
     }
-    await runPromptQueue({ hidden: true, text })
+    await runPromptQueue({ hidden: true, source: "background_subagent_completion", text })
   }
 
   function flushPendingBackgroundPrompts(): void {
     const prompts = pendingBackgroundPrompts.get(sessionId)
     if (!prompts || prompts.length === 0) return
     pendingBackgroundPrompts.delete(sessionId)
-    for (const prompt of prompts) enqueuePrompt(prompt, { hidden: true })
+    for (const prompt of prompts) enqueuePrompt(prompt, { hidden: true, source: "background_subagent_completion" })
     if (!running && queuedPrompts.length > 0) {
       const next = queuedPrompts.shift()
       syncQueuedPrompts()
-      if (next) void runPromptQueue(next.text).catch((error) => {
+      if (next) void runPromptQueue(next).catch((error) => {
         terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
       })
     }
   }
 
-  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; text: string }): Promise<void> {
+  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; source?: string; text: string }): Promise<void> {
     const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
     const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
+    const source = typeof firstPrompt === "string" ? undefined : firstPrompt.source
     queuedPrompts.unshift({
       createdAt: Date.now(),
       hidden,
       id: `active-${Date.now()}-${queueCounter++}`,
+      source,
       text: promptText,
     })
     if (running) return
@@ -381,6 +474,7 @@ async function runInteractive(input: {
             config: input.config,
             cwd: input.cwd,
             hiddenUserMessage: next.hidden,
+            hiddenUserMessageSource: next.hidden ? next.source || "hidden_prompt" : undefined,
             permissions,
             prompt: next.text,
             sessionId,
@@ -450,6 +544,20 @@ async function runPiped(input: {
       process.stdout.write(`${input.config.model}\n`)
       continue
     }
+    if (command.name === "/skills") {
+      const catalog = await loadSkills(process.cwd(), { extraPaths: input.config.skillPaths })
+      const [subcommand = "list", ...rest] = command.argument.trim().split(/\s+/).filter(Boolean)
+      if (subcommand === "reload") {
+        process.stdout.write(`Reloaded ${catalog.skills.length} skill${catalog.skills.length === 1 ? "" : "s"}.\n`)
+        continue
+      }
+      if (subcommand === "view") {
+        process.stdout.write(`${formatSkillView(catalog.skills, rest.join(" ").trim())}\n`)
+        continue
+      }
+      process.stdout.write(`${formatSkillsList(catalog.skills)}\n`)
+      continue
+    }
     if (command.name === "/theme") {
       if (!command.argument) {
         process.stdout.write(`${resolveTheme(input.config.theme).name}\n`)
@@ -470,6 +578,25 @@ async function runPiped(input: {
       process.stdout.write("Lofi mode is only available in the interactive TUI.\n")
       continue
     }
+    if (isSkillCommand(command.name)) {
+      const skillName = command.name.slice("/skill:".length)
+      const skill = await loadSkillByName(process.cwd(), skillName, { extraPaths: input.config.skillPaths })
+      if (!skill) {
+        process.stdout.write(`Unknown skill: ${skillName}\n`)
+        continue
+      }
+      await runSingleTurn({
+        config: input.config,
+        cwd: process.cwd(),
+        hiddenUserMessage: true,
+        hiddenUserMessageSource: "skill_invocation",
+        permissions,
+        prompt: renderSkillInvocationMessage(skill, command.argument),
+        sessionId,
+        store: input.store,
+      })
+      continue
+    }
     await runSingleTurn({ config: input.config, cwd: process.cwd(), permissions, prompt, sessionId, store: input.store })
   }
 }
@@ -478,6 +605,7 @@ async function runSingleTurn(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   cwd: string
   hiddenUserMessage?: boolean
+  hiddenUserMessageSource?: string
   permissions?: SessionPermissionStore
   prompt: string
   sessionId: string
@@ -507,7 +635,7 @@ async function runSingleTurn(input: {
       executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal: input.terminal }),
     })
 
-  input.store.appendMessage(input.sessionId, "user", input.prompt, input.hiddenUserMessage ? { hidden: true, source: "background_subagent_completion" } : undefined)
+  input.store.appendMessage(input.sessionId, "user", input.prompt, input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : undefined)
   if (input.terminal) {
     input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
@@ -518,7 +646,8 @@ async function runSingleTurn(input: {
 
   const activePath = input.store.getActivePath(input.sessionId)
   const transcript = entriesToTranscript(activePath)
-  const messages: OpenRouterMessage[] = entriesToModelMessages(input.config.systemPrompt, activePath, { cwd: input.cwd })
+  const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
+  const messages: OpenRouterMessage[] = entriesToModelMessages(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), activePath, { cwd: input.cwd })
 
   if (input.terminal) input.terminal.setTranscript(transcript)
   else renderAssistantStart(transcript)
@@ -598,7 +727,8 @@ async function runSubagentTask(input: {
 }): Promise<string> {
   const prompt = formatSubagentPrompt(input.record)
   input.store.appendMessage(input.record.childSessionId, "user", prompt)
-  const messages: OpenRouterMessage[] = entriesToModelMessages(input.config.subagentSystemPrompt, input.store.getActivePath(input.record.childSessionId), { cwd: input.cwd })
+  const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
+  const messages: OpenRouterMessage[] = entriesToModelMessages(appendSkillGuidance(input.config.subagentSystemPrompt, skillCatalog.skills), input.store.getActivePath(input.record.childSessionId), { cwd: input.cwd })
   const terminal = input.terminal
 
   const result = await runAgentTurn({
@@ -709,6 +839,57 @@ function formatTaskElapsed(ms: number): string {
   return `${minutes}m${(seconds % 60).toString().padStart(2, "0")}s`
 }
 
+function slashAutocompleteItems(skills: Skill[]): PromptAutocompleteItem[] {
+  return [
+    ...slashCommandDefinitions.map((command) => ({
+      description: command.description,
+      insertText: command.insertText,
+      label: command.usage || command.name,
+      value: command.name,
+    })),
+    ...skills.map((skill) => ({
+      description: skill.description,
+      insertText: `/skill:${skill.name} `,
+      label: `/skill:${skill.name}`,
+      value: `/skill:${skill.name}`,
+    })),
+  ]
+}
+
+function formatSkillsList(skills: Skill[]): string {
+  if (skills.length === 0) return "No skills discovered. Add SKILL.md files or configure skillPaths in .furnace/preferences.json, then run /skills reload."
+  return [
+    `Discovered ${skills.length} skill${skills.length === 1 ? "" : "s"}:`,
+    "",
+    ...skills.map((skill) => {
+      const mode = skill.disableModelInvocation ? "manual" : "auto"
+      return `- /skill:${skill.name} [${mode}, ${skill.provenance}] ${skill.description}`
+    }),
+    "",
+    "Use /skills view <name> to inspect a skill, or /skills reload after adding/editing skills.",
+  ].join("\n")
+}
+
+function formatSkillView(skills: Skill[], name: string): string {
+  if (!name) return "Usage: /skills view <name>"
+  const skill = skills.find((candidate) => candidate.name === name)
+  if (!skill) return `Unknown skill: ${name}\nUse /skills list to see available skills.`
+  return [
+    `# ${skill.name}`,
+    "",
+    `Description: ${skill.description}`,
+    `Invocation: ${skill.disableModelInvocation ? "manual only" : "automatic guidance + explicit /skill"}`,
+    `Provenance: ${skill.provenance}`,
+    `Path: ${skill.filePath}`,
+    "",
+    skill.content.trim(),
+  ].join("\n")
+}
+
+function isSkillCommand(commandName: string): boolean {
+  return commandName.startsWith("/skill:") && commandName.length > "/skill:".length
+}
+
 function indentBlock(value: string): string {
   return value
     .split(/\r?\n/)
@@ -730,21 +911,6 @@ async function maybeTitleSession(
   } catch {
     store.updateSessionTitle(sessionId, fallbackTitle(firstPrompt))
   }
-}
-
-type ParsedPrompt = {
-  argument: string
-  name: string
-}
-
-function parseSlashCommand(prompt: string): ParsedPrompt {
-  if (!prompt.startsWith("/")) return { argument: "", name: prompt }
-  const [name = "", ...rest] = prompt.slice(1).trim().split(/\s+/)
-  return { argument: rest.join(" ").trim(), name: `/${name.toLowerCase()}` }
-}
-
-function isHistoryCommand(command: string): boolean {
-  return command === "/history" || command === "/historu"
 }
 
 function formatError(error: unknown): string {

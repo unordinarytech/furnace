@@ -77,7 +77,7 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
         },
-        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, taskRunner: input.taskRunner },
+        { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner },
       )
       input.onToolResult?.(call, result.content)
       messages.push({

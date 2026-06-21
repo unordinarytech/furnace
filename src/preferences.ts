@@ -4,6 +4,7 @@ import { dirname, join } from "node:path"
 export type FurnacePreferences = {
   model?: string
   modelSettings?: ModelSettings
+  skillPaths?: string[]
   theme?: string
 }
 

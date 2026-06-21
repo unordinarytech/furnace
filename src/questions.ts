@@ -60,15 +60,37 @@ function normalizeQuestion(value: unknown, index: number): AskQuestionItem {
 
   const rawId = stringValue(record.id)
   const optionsValue = Array.isArray(record.options) ? record.options : []
-  const options = optionsValue.map((option, optionIndex) => normalizeOption(option, optionIndex)).filter((option) => option.label)
+  const allowCustom = record.allowCustom !== false && record.custom !== false
+  const options = optionsValue
+    .map((option, optionIndex) => normalizeOption(option, optionIndex))
+    .filter((option) => option.label && !isUiProvidedMetaOption(option, allowCustom))
 
   return {
-    allowCustom: record.allowCustom !== false && record.custom !== false,
+    allowCustom,
     allowMultiple: record.allowMultiple === true || record.multiple === true,
     id: rawId || `q${index + 1}`,
     options,
     prompt,
   }
+}
+
+function isUiProvidedMetaOption(option: AskQuestionOption, allowCustom: boolean): boolean {
+  const values = [option.id, option.label, option.description || ""].map((value) => value.toLowerCase().trim()).filter(Boolean)
+  return values.some((value) => isRefusalMetaOption(value) || (allowCustom && isCustomMetaOption(value)))
+}
+
+function isCustomMetaOption(value: string): boolean {
+  const normalized = value.replace(/['’]/g, "").replace(/\s+/g, " ").trim()
+  return (
+    /^(other|custom|custom answer|something else|let me specify|let me decide|ill specify|i will specify|specify|type my own|write my own|enter my own|provide my own)$/.test(normalized) ||
+    /^(let me|ill|i will|user can|user should) (specify|choose|decide|type|write|enter|provide)\b/.test(normalized) ||
+    /^(type|write|enter|provide) (my|your|their) own\b/.test(normalized)
+  )
+}
+
+function isRefusalMetaOption(value: string): boolean {
+  const normalized = value.replace(/['’]/g, "").replace(/\s+/g, " ").trim()
+  return /^(refuse|refuse to answer|skip|skip this|dismiss|cancel|continue without this answer|dont answer|do not answer)$/.test(normalized)
 }
 
 function normalizeOption(value: unknown, index: number): AskQuestionOption {
