@@ -9,7 +9,7 @@ Furnace intentionally combines a few proven patterns from other coding harnesses
 - OpenCode influenced the pending request architecture for `ask_question`: the model calls a tool, runtime creates a pending UI request, the user replies or rejects it, and the answer returns to the model as a normal tool result.
 - Pi influenced the `ask_question` terminal UX: multiple questions, left/right navigation, option selection, custom answers, cancellation/refusal, and a compact focused panel.
 - OpenCode CLI influenced queued prompt management: queued prompts are visible, selectable, editable, removable, and promotable.
-- Hermes Agent influenced clarify semantics and busy-input framing: "Other" custom answers, explicit refusal/dismissal handling, and the future `interrupt | queue | steer` distinction.
+- Hermes Agent influenced clarify semantics, busy-input framing, and subagent batching/background completion: "Other" custom answers, explicit refusal/dismissal handling, the future `interrupt | queue | steer` distinction, and grouped task completion re-entry.
 - OpenCode and Hermes Agent both influenced permissions: OpenCode's `allow | ask | deny` policy shape plus Hermes-style conversation-scoped broad approval.
 
 The design-specific credit trail is also recorded in `docs/design-choices.md`.
@@ -68,6 +68,8 @@ Queue panel controls:
 up/down select · e edit · d remove · enter run next · esc input
 ```
 
+When multiple lower panels are visible, focus moves layer by layer. Up from the input focuses the closest panel first, so queued prompts are focused before the subagent task panel. If the transcript can still scroll upward, Up keeps scrolling the chat instead of focusing a panel. Arrowing past the top or bottom of a focused panel moves to the adjacent panel instead of jumping over it.
+
 Behavior:
 
 - `e` removes the selected queued prompt and restores it into the input for editing.
@@ -78,6 +80,36 @@ Behavior:
 Current limitation:
 
 Furnace passes an `AbortSignal` into the model request path, so promoting a queued prompt can interrupt a waiting model call. Some already-running tools may still finish until every tool supports cancellation.
+
+## Subagent Tasks
+
+Subagent tasks are model-callable through `task` and visible in the TUI as a task panel.
+
+Runtime flow:
+
+1. The parent model calls `task` with one or more delegated prompts in `tasks`.
+2. Furnace creates one child session per task and links each child to the parent session id.
+3. Each child runs with the same model and runtime context shape as the parent, including date/time, current year, and workspace path.
+4. Each child gets the same tools except `task`.
+5. Foreground tasks block the parent until every child finishes.
+6. The parent receives one combined tool result in the same order as the input tasks.
+
+Task panel controls:
+
+```text
+up/down select · ctrl+b background · esc input
+```
+
+Background behavior:
+
+- Press Up from an empty input to focus the task panel when tasks are visible.
+- Press `Ctrl+B` to move the active foreground task group to background.
+- Completed tasks disappear from the task panel. If the focused task panel becomes empty, focus returns to the input.
+- Backgrounded groups show as `Subagents (backgrounded)` with their task titles underneath, instead of repeating `backgrounded` on every row.
+- Once backgrounded, the parent model can continue.
+- When every active/backgrounded child for the parent session finishes, Furnace queues one grouped completion prompt for the original parent session.
+- That grouped completion prompt is a hidden session message: the parent model sees it, but the TUI transcript does not render it as a visible `user` message.
+- If the user switched chats, the completion waits for the original parent session instead of entering the current chat.
 
 ## Tool Permissions
 
@@ -91,7 +123,7 @@ Permission policy uses three actions:
 
 Current defaults:
 
-- Low-risk tools are allowed by default: `read`, `ls`, `find`, `glob`, `grep`, `ask_question`, `websearch`, and `webfetch`.
+- Low-risk tools are allowed by default: `read`, `ls`, `find`, `glob`, `grep`, `ask_question`, `task`, `task_status`, `websearch`, and `webfetch`.
 - Modifying or shell tools ask first: `write`, `edit`, and `bash`.
 - Unknown tools default to `ask`.
 
@@ -106,6 +138,7 @@ Conversation scope:
 
 - "Conversation" means the active Furnace session id.
 - Grants do not carry to other conversations.
+- Child subagent sessions explicitly inherit the parent conversation's current grants.
 - Grants are held in memory for the interactive run.
 - `/reset-perms` clears permission grants for the current conversation only.
 

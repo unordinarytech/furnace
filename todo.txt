@@ -16,11 +16,9 @@ functionality :
 - Plan mode
 - Stresstesting to be bug free 
 - Auto doc structure (from harness engineering)
-- Background Tasks support [Delegation]
 
 Gimmicks : 
 	- /goal
-	- /lofi
 	- browser capability ? 
 	- test app itself capability ?
 

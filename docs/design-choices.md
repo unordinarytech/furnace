@@ -43,8 +43,8 @@ Current influences:
 - Pi: parent-linked session entries, `active_leaf_id`, future branching/forking semantics, and keeping the agent runtime independent of the terminal UI.
 - Pi-style apply patch: Furnace exposes one model-facing `edit` tool but implements it as a structured apply-patch envelope.
 - Pi-style questionnaire UX: Furnace's `ask_question` panel adapts Pi's multi-question tab navigation, option selection, custom answer, and cancellation/refusal direction.
-- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, and queued-prompt manager behavior.
-- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, and the future direction for SQLite FTS session search.
+- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, and the idea that subagents are launched through a normal model-callable task tool linked to child sessions.
+- Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, subagent batching/fan-out, background completion re-entry, and the future direction for SQLite FTS session search.
 
 ## Runtime Context Injection
 
@@ -176,3 +176,33 @@ Current implementation:
 - `src/cli.ts` owns the interactive queue and drains it FIFO.
 - `src/ui/ink-terminal.tsx` renders the queue panel and input focus switching.
 - `src/ui/components/prompt-input.tsx` supports controlled drafts so queued prompts can be restored for editing.
+
+## Subagent Delegation
+
+Furnace exposes subagent delegation through a normal `task` tool.
+
+Reasoning:
+
+Delegation should not be a hidden side channel. If the model creates child agents through a normal tool call, the parent transcript keeps valid tool ordering and replay remains understandable after resume. Child sessions use `parentSessionId` so background completions can return to the correct conversation even if the user switches chats.
+
+Harness provenance:
+
+- OpenCode influenced the core shape: a `task` tool creates child sessions and returns compact task results to the parent.
+- Hermes Agent influenced the batch-first design, active task tracking, explicit background promotion, and grouped completion re-entry after all children for a parent session finish.
+- Pi influenced the local adaptation: keep the runtime reusable outside the TUI, use session primitives rather than a gateway-specific scheduler, and keep UI panels as thin views over runtime state.
+
+Local changes:
+
+- Furnace does not expose `subagent_type` in the first version. Children are prompt-only and use one default subagent runtime.
+- Children use the same model as the parent and the same tools except `task`, which prevents recursive subagent spawning.
+- Permission grants are inherited from the parent conversation through an explicit child-to-parent session link, not copied globally.
+- Background promotion is user-driven from the TUI (`Ctrl+B` in the task panel). The model can start background tasks, but the expected default is synchronous execution.
+
+Current implementation:
+
+- `src/tasks/manager.ts` owns process-local task groups, foreground/background state, and completion callbacks.
+- `src/tasks/types.ts` defines task records and runner interfaces.
+- `src/tools/registry.ts` registers `task` and `task_status`.
+- `src/cli.ts` wires child session creation, inherited permissions, child `runAgentTurn()` execution, and background completion prompts.
+- `src/ui/ink-terminal.tsx` renders the subagent panel and background-promotion hints.
+- `src/prompts/subagent-system.md` is the child system prompt.

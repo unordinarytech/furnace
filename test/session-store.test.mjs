@@ -58,3 +58,20 @@ test("session store hides and cleans up empty sessions", async () => {
     await rm(dir, { recursive: true, force: true })
   }
 })
+
+test("session store records parent-linked child sessions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+
+  try {
+    const store = SessionStore.open(dir)
+    const parent = store.createSession({ cwd: dir, title: "Parent" })
+    const child = store.createSession({ cwd: dir, title: "Child", parentSessionId: parent.id })
+
+    assert.equal(store.getSession(child.id).parentSessionId, parent.id)
+    assert.equal(store.getSession(child.id).forkedFromEntryId, null)
+
+    store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})

@@ -11,6 +11,9 @@ import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
+import { TaskManager, makeTaskId } from "./tasks/manager.js"
+import type { TaskRecord } from "./tasks/types.js"
+import { childToolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
@@ -77,14 +80,53 @@ async function runInteractive(input: {
   let sessionId = input.sessionId
   const permissions = new SessionPermissionStore()
   const lofi = new LofiPlayer()
+  const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const queuedPrompts: QueuedPrompt[] = []
+  const pendingBackgroundPrompts = new Map<string, string[]>()
   let queueCounter = 0
   let running = false
   let activeAbortController: AbortController | undefined
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
   const initialSession = input.store.getSession(sessionId)
-  const terminal = createFurnaceTerminal({
+  let terminal!: FurnaceTerminal
+  const taskManager = new TaskManager({
+    createChildTask: ({ description, parentSessionId, prompt }) => {
+      const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
+      permissions.inheritSession(child.id, parentSessionId)
+      return {
+        background: false,
+        childSessionId: child.id,
+        description,
+        id: makeTaskId("task"),
+        parentSessionId,
+        prompt,
+        startedAt: Date.now(),
+        status: "running",
+      } satisfies TaskRecord
+    },
+    executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal }),
+    onGroupComplete: ({ backgrounded, parentSessionId, records }) => {
+      if (!backgrounded) return
+      const pendingRecords = [...(pendingBackgroundRecords.get(parentSessionId) || []), ...records]
+      pendingBackgroundRecords.set(parentSessionId, pendingRecords)
+      if (hasActiveSubagentTasks(taskManager.status(parentSessionId).tasks)) return
+      pendingBackgroundRecords.delete(parentSessionId)
+      const prompt = formatBackgroundTaskCompletion(pendingRecords)
+      if (parentSessionId === sessionId) {
+        void enqueueOrRunSyntheticPrompt(prompt)
+        return
+      }
+      const pending = pendingBackgroundPrompts.get(parentSessionId) || []
+      pending.push(prompt)
+      pendingBackgroundPrompts.set(parentSessionId, pending)
+    },
+    onUpdate: (snapshot) => {
+      if (snapshot.parentSessionId !== sessionId) return
+      terminal.setTasks(snapshot.tasks)
+    },
+  })
+  terminal = createFurnaceTerminal({
     cwd: input.cwd,
     model: input.config.model,
     modelSettings: input.config.modelSettings,
@@ -96,6 +138,10 @@ async function runInteractive(input: {
     },
     onQueueRemove: (id) => {
       removeQueuedPrompt(id)
+    },
+    onTaskBackground: () => {
+      const promoted = taskManager.promoteActiveGroup(sessionId)
+      showTransientStatus(promoted ? "Subagents moved to background. Furnace will continue once the task tool returns." : "No active foreground subagents to background.")
     },
     themeName: input.config.theme,
     title: initialSession.title,
@@ -110,7 +156,7 @@ async function runInteractive(input: {
     },
   })
 
-  refreshInteractive(terminal, input.store, sessionId)
+  refreshCurrentSession()
   try {
     await terminal.run()
   } finally {
@@ -142,7 +188,8 @@ async function runInteractive(input: {
       const session = input.store.getSession(sessionId)
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
-      refreshInteractive(terminal, input.store, sessionId)
+      refreshCurrentSession()
+      flushPendingBackgroundPrompts()
       return
     }
     if (command.name === "/reset-perms") {
@@ -162,10 +209,17 @@ async function runInteractive(input: {
         sessionId,
         (selectedSessionId) => {
           sessionId = selectedSessionId
-          refreshInteractive(terminal, input.store, sessionId)
+          refreshCurrentSession()
+          flushPendingBackgroundPrompts()
         },
-        () => refreshInteractive(terminal, input.store, sessionId),
+        () => refreshCurrentSession(),
       )
+      return
+    }
+    if (command.name === "/tasks") {
+      const status = formatTaskStatusForUser(taskManager.status(sessionId).tasks)
+      terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
+      terminal.setTasks(taskManager.status(sessionId).tasks)
       return
     }
     if (command.name === "/model") {
@@ -183,9 +237,9 @@ async function runInteractive(input: {
           void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
             terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
           })
-          if (done) refreshInteractive(terminal, input.store, sessionId)
+          if (done) refreshCurrentSession()
         },
-        () => refreshInteractive(terminal, input.store, sessionId),
+        () => refreshCurrentSession(),
       )
       return
     }
@@ -212,9 +266,9 @@ async function runInteractive(input: {
           void saveThemePreference(input.cwd, theme).catch((error) => {
             terminal.setTranscript([{ role: "assistant", content: `Failed to save theme preference: ${formatError(error)}` }])
           })
-          if (done) refreshInteractive(terminal, input.store, sessionId)
+          if (done) refreshCurrentSession()
         },
-        () => refreshInteractive(terminal, input.store, sessionId),
+        () => refreshCurrentSession(),
       )
       return
     }
@@ -242,9 +296,10 @@ async function runInteractive(input: {
     transientStatusTimer = undefined
   }
 
-  function enqueuePrompt(text: string): void {
+  function enqueuePrompt(text: string, options: { hidden?: boolean } = {}): void {
     queuedPrompts.push({
       createdAt: Date.now(),
+      hidden: options.hidden,
       id: `queue-${Date.now()}-${queueCounter++}`,
       text,
     })
@@ -268,14 +323,44 @@ async function runInteractive(input: {
   }
 
   function syncQueuedPrompts(): void {
-    terminal.setQueuedPrompts([...queuedPrompts])
+    terminal.setQueuedPrompts(queuedPrompts.filter((prompt) => !prompt.hidden))
   }
 
-  async function runPromptQueue(firstPrompt: string): Promise<void> {
+  function refreshCurrentSession(): void {
+    refreshInteractive(terminal, input.store, sessionId)
+    terminal.setTasks(taskManager.status(sessionId).tasks)
+  }
+
+  async function enqueueOrRunSyntheticPrompt(text: string): Promise<void> {
+    if (running) {
+      enqueuePrompt(text, { hidden: true })
+      return
+    }
+    await runPromptQueue({ hidden: true, text })
+  }
+
+  function flushPendingBackgroundPrompts(): void {
+    const prompts = pendingBackgroundPrompts.get(sessionId)
+    if (!prompts || prompts.length === 0) return
+    pendingBackgroundPrompts.delete(sessionId)
+    for (const prompt of prompts) enqueuePrompt(prompt, { hidden: true })
+    if (!running && queuedPrompts.length > 0) {
+      const next = queuedPrompts.shift()
+      syncQueuedPrompts()
+      if (next) void runPromptQueue(next.text).catch((error) => {
+        terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
+      })
+    }
+  }
+
+  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; text: string }): Promise<void> {
+    const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
+    const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
     queuedPrompts.unshift({
       createdAt: Date.now(),
+      hidden,
       id: `active-${Date.now()}-${queueCounter++}`,
-      text: firstPrompt,
+      text: promptText,
     })
     if (running) return
 
@@ -292,7 +377,18 @@ async function runInteractive(input: {
         const controller = new AbortController()
         activeAbortController = controller
         try {
-          await runSingleTurn({ config: input.config, cwd: input.cwd, permissions, prompt: next.text, sessionId, signal: controller.signal, store: input.store, terminal })
+          await runSingleTurn({
+            config: input.config,
+            cwd: input.cwd,
+            hiddenUserMessage: next.hidden,
+            permissions,
+            prompt: next.text,
+            sessionId,
+            signal: controller.signal,
+            store: input.store,
+            taskRunner: taskManager,
+            terminal,
+          })
         } catch (error) {
           if (!isAbortError(error)) throw error
           input.store.appendMessage(sessionId, "assistant", "Interrupted by queued prompt.", input.config.model)
@@ -381,20 +477,43 @@ async function runPiped(input: {
 async function runSingleTurn(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   cwd: string
+  hiddenUserMessage?: boolean
   permissions?: SessionPermissionStore
   prompt: string
   sessionId: string
   signal?: AbortSignal
   store: SessionStore
+  taskRunner?: TaskManager
   terminal?: FurnaceTerminal
 }): Promise<void> {
-  input.store.appendMessage(input.sessionId, "user", input.prompt)
+  const permissions = input.permissions || new SessionPermissionStore()
+  const taskRunner =
+    input.taskRunner ||
+    new TaskManager({
+      createChildTask: ({ description, parentSessionId, prompt }) => {
+        const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
+        permissions.inheritSession(child.id, parentSessionId)
+        return {
+          background: false,
+          childSessionId: child.id,
+          description,
+          id: makeTaskId("task"),
+          parentSessionId,
+          prompt,
+          startedAt: Date.now(),
+          status: "running",
+        } satisfies TaskRecord
+      },
+      executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal: input.terminal }),
+    })
+
+  input.store.appendMessage(input.sessionId, "user", input.prompt, input.hiddenUserMessage ? { hidden: true, source: "background_subagent_completion" } : undefined)
   if (input.terminal) {
     input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     input.terminal.setThinking(true, "thinking")
   }
-  await maybeTitleSession(input.store, input.sessionId, input.config, input.prompt)
+  if (!input.hiddenUserMessage) await maybeTitleSession(input.store, input.sessionId, input.config, input.prompt)
   input.terminal?.setTitle(input.store.getSession(input.sessionId).title)
 
   const activePath = input.store.getActivePath(input.sessionId)
@@ -427,9 +546,10 @@ async function runSingleTurn(input: {
           return response
         }
       : undefined,
-    permissions: input.permissions || new SessionPermissionStore(),
+    permissions,
     sessionId: input.sessionId,
     signal: input.signal,
+    taskRunner,
     onToolStart: (call) => {
       input.store.appendToolCall(input.sessionId, {
         arguments: call.arguments,
@@ -465,6 +585,135 @@ async function runSingleTurn(input: {
     renderConversation(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     renderDone()
   }
+}
+
+async function runSubagentTask(input: {
+  config: Awaited<ReturnType<typeof loadConfig>>
+  cwd: string
+  permissions: SessionPermissionStore
+  record: TaskRecord
+  signal: AbortSignal
+  store: SessionStore
+  terminal?: FurnaceTerminal
+}): Promise<string> {
+  const prompt = formatSubagentPrompt(input.record)
+  input.store.appendMessage(input.record.childSessionId, "user", prompt)
+  const messages: OpenRouterMessage[] = entriesToModelMessages(input.config.subagentSystemPrompt, input.store.getActivePath(input.record.childSessionId), { cwd: input.cwd })
+  const terminal = input.terminal
+
+  const result = await runAgentTurn({
+    config: input.config,
+    cwd: input.cwd,
+    fileReadStore: input.store,
+    messages,
+    onPermissionRequest: terminal
+      ? async (request) => {
+          terminal.setThinking(true, `waiting for subagent ${request.toolName} approval`)
+          const decision = await terminal.requestApproval(request)
+          terminal.setThinking(true, "thinking")
+          return decision
+        }
+      : undefined,
+    onQuestionRequest: terminal
+      ? async (request) => {
+          terminal.setThinking(true, "waiting for your subagent answer")
+          const response = await terminal.requestQuestions(request)
+          terminal.setThinking(true, "thinking")
+          return response
+        }
+      : undefined,
+    permissions: input.permissions,
+    sessionId: input.record.childSessionId,
+    signal: input.signal,
+    tools: childToolDefinitions,
+    onToolStart: (call) => {
+      input.store.appendToolCall(input.record.childSessionId, {
+        arguments: call.arguments,
+        name: call.name,
+        toolCallId: call.id,
+      })
+    },
+    onToolResult: (call, content) => {
+      input.store.appendToolResult(input.record.childSessionId, {
+        content,
+        name: call.name,
+        toolCallId: call.id,
+      })
+    },
+  })
+
+  input.store.appendMessage(input.record.childSessionId, "assistant", result.content, input.config.model)
+  return result.content
+}
+
+function formatSubagentPrompt(record: TaskRecord): string {
+  return [
+    `Delegated task: ${record.description}`,
+    "",
+    "You are running in a child session linked to a parent Furnace conversation.",
+    "Use only the context below; if something is missing, make a conservative assumption and mention it in your final summary.",
+    "",
+    "<task_prompt>",
+    record.prompt,
+    "</task_prompt>",
+    "",
+    "Final response requirements:",
+    "- Start with a concise outcome summary.",
+    "- Include files changed, commands run, and verification results when applicable.",
+    "- If blocked, state the blocker and the next action the parent agent should take.",
+  ].join("\n")
+}
+
+function formatBackgroundTaskCompletion(records: TaskRecord[]): string {
+  const lines = [
+    "Background subagent group completed. Use these results to continue the user's work.",
+    "",
+    ...records.flatMap((record, index) => [
+      `Task ${index + 1}: ${record.description}`,
+      `- task_id: ${record.id}`,
+      `- status: ${record.status}`,
+      ...(record.error ? [`- error: ${record.error}`] : []),
+      ...(record.result ? [`- result:\n${indentBlock(record.result)}`] : []),
+      "",
+    ]),
+  ]
+  return lines.join("\n").trim()
+}
+
+function hasActiveSubagentTasks(records: TaskRecord[]): boolean {
+  return records.some((record) => record.status === "running" || record.status === "backgrounded")
+}
+
+function formatTaskStatusForUser(records: TaskRecord[]): string {
+  const visible = records.filter((record) => record.status === "running" || record.status === "backgrounded")
+  if (visible.length === 0) return "No active subagent tasks for this conversation."
+  return visible
+    .map((record) => {
+      const elapsed = formatTaskElapsed((record.completedAt || Date.now()) - record.startedAt)
+      return [
+        `${record.status}: ${record.description}`,
+        `task_id: ${record.id}`,
+        `elapsed: ${elapsed}`,
+        record.error ? `error: ${record.error}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    })
+    .join("\n\n")
+}
+
+function formatTaskElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m${(seconds % 60).toString().padStart(2, "0")}s`
+}
+
+function indentBlock(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => `  ${line}`)
+    .join("\n")
 }
 
 async function maybeTitleSession(

@@ -7,6 +7,7 @@ import { loadPreferences, type ModelSettings } from "./preferences.js"
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const promptsDir = join(currentDir, "prompts")
 const promptPath = join(promptsDir, "base-system.md")
+const subagentPromptPath = join(promptsDir, "subagent-system.md")
 const titlePromptPath = join(promptsDir, "title-system.md")
 
 export type FurnaceConfig = {
@@ -15,6 +16,7 @@ export type FurnaceConfig = {
   modelSettings: ModelSettings
   openRouterApiKey: string
   siteUrl: string
+  subagentSystemPrompt: string
   systemPrompt: string
   theme: string
   titleModel: string
@@ -37,6 +39,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
     modelSettings: preferences.modelSettings || {},
     openRouterApiKey,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
+    subagentSystemPrompt: await readFile(subagentPromptPath, "utf8"),
     systemPrompt: await readFile(promptPath, "utf8"),
     theme: preferences.theme?.trim() || process.env.FURNACE_THEME?.trim() || "flexoki",
     titleModel: process.env.OPENROUTER_TITLE_MODEL?.trim() || "openai/gpt-4o-mini",

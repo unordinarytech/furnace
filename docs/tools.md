@@ -9,8 +9,8 @@ Current implementation lives in `src/tools/registry.ts`.
 Several tool-system choices were informed by other coding harnesses:
 
 - Pi influenced the small primitive-tool shape, the decision to expose one edit primitive, and the multi-question terminal UX for `ask_question`.
-- OpenCode influenced the web tooling shape, bounded tool-output behavior, allow/ask/deny permission model, pending question-request architecture, and queued prompt manager behavior. Furnace's `websearch`, `webfetch`, `.furnace/tool-output/` previews, first approval layer, `ask_question` runtime shape, and queued prompt UI follow that direction.
-- Hermes Agent influenced file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool answer semantics, busy-input modes, and richer tool history for debugging/resume. Furnace implements smaller versions of those ideas in the local TypeScript runtime and session store.
+- OpenCode influenced the web tooling shape, bounded tool-output behavior, allow/ask/deny permission model, pending question-request architecture, queued prompt manager behavior, and session-linked `task` tool direction. Furnace's `websearch`, `webfetch`, `.furnace/tool-output/` previews, first approval layer, `ask_question` runtime shape, queued prompt UI, and task delegation spine follow that direction.
+- Hermes Agent influenced file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool answer semantics, busy-input modes, richer tool history for debugging/resume, batch subagent fan-out, and grouped background completion. Furnace implements smaller versions of those ideas in the local TypeScript runtime and session store.
 
 ## Runtime Shape
 
@@ -137,6 +137,8 @@ Current safety behavior:
 - Reads of `.env` and `.env.*` are denied, except `.env.example`.
 - Interactive sessions ask before `write`, `edit`, and `bash` tool calls. Denying a request blocks only that specific tool call.
 - `ask_question` is allowed by default because it is a clarification tool, not a side-effecting operation.
+- `task` and `task_status` are allowed by default. Subagents inherit parent conversation permission grants, but ungranted side-effecting tools inside children still prompt normally.
+- Child subagents receive the same tools as the parent except `task`, preventing recursive subagent creation.
 - `write` refuses to overwrite existing files unless `overwrite: true`.
 - Tool output is bounded to 2,000 lines and 50 KB before returning to the model.
 - When tool output exceeds those limits, the full text is saved under `.furnace/tool-output/` and the model receives a head/tail preview plus the saved path.
@@ -640,6 +642,57 @@ scope: user selected "Minimal"
 ```
 
 The UI always offers `Refuse to answer` for each question. Refusal is returned as answer data, not treated as a tool failure.
+
+### `task`
+
+Delegate one or more independent multi-step prompts to child Furnace subagents. Use this when fresh context or fan-out helps more than direct local tools.
+
+Schema:
+
+```json
+{
+  "tasks": [
+    {
+      "prompt": "Inspect src/session/store.ts for parent/child session risks and return findings.",
+      "description": "Review session linking"
+    }
+  ],
+  "background": false
+}
+```
+
+Only `prompt` is required for each task. `description` is an optional short label for the UI and child session title. Furnace derives a label from the prompt when it is omitted.
+
+Behavior:
+
+- Creates one child session per task with `parentSessionId` set to the parent conversation.
+- Uses the same model and runtime context shape as the parent agent, including current date/time, current year, and workspace path.
+- Uses the same tool set as the parent except `task` is removed.
+- Runs synchronously by default and returns one combined tool result in input order.
+- Can be promoted to background from the TUI task panel with `Ctrl+B`.
+- When a background group finishes, Furnace queues one grouped completion prompt for the original parent session.
+- Child session ids are kept internal and are not shown in task results.
+
+Convenience single-task shape is also accepted:
+
+```json
+{
+  "prompt": "Research the current API behavior and summarize it.",
+  "description": "Research API behavior"
+}
+```
+
+### `task_status`
+
+Inspect active and backgrounded subagent tasks for the current parent conversation.
+
+Schema:
+
+```json
+{}
+```
+
+The result includes task id, status, elapsed time, and errors if any.
 
 ### `websearch`
 

@@ -22,11 +22,16 @@ export type PermissionRequest = {
 export type PermissionPrompt = (request: PermissionRequest) => Promise<PermissionDecision>
 
 export class SessionPermissionStore {
+  private readonly inheritedSessionIds = new Map<string, string>()
   private readonly rules: PermissionRule[] = []
   private readonly allowAllSessionIds = new Set<string>()
 
   constructor(initialRules: PermissionRule[] = []) {
     this.rules.push(...initialRules)
+  }
+
+  inheritSession(childSessionId: string, parentSessionId: string): void {
+    if (childSessionId !== parentSessionId) this.inheritedSessionIds.set(childSessionId, parentSessionId)
   }
 
   async authorize(request: PermissionRequest, prompt?: PermissionPrompt): Promise<PermissionDecision> {
@@ -57,6 +62,7 @@ export class SessionPermissionStore {
 
   clearSession(sessionId: string): number {
     let removed = 0
+    if (this.inheritedSessionIds.delete(sessionId)) removed += 1
     if (this.allowAllSessionIds.delete(sessionId)) removed += 1
     for (let index = this.rules.length - 1; index >= 0; index -= 1) {
       if (this.rules[index].sessionId !== sessionId) continue
@@ -67,11 +73,12 @@ export class SessionPermissionStore {
   }
 
   evaluate(request: PermissionRequest): PermissionAction {
-    if (request.sessionId && this.allowAllSessionIds.has(request.sessionId)) return "allow"
+    const sessionIds = permissionSessionLineage(request.sessionId, this.inheritedSessionIds)
+    if (sessionIds.some((sessionId) => this.allowAllSessionIds.has(sessionId))) return "allow"
 
     for (let index = this.rules.length - 1; index >= 0; index -= 1) {
       const rule = this.rules[index]
-      if (rule.sessionId && rule.sessionId !== request.sessionId) continue
+      if (rule.sessionId && !sessionIds.includes(rule.sessionId)) continue
       if (!wildcardMatch(rule.permission, request.permission)) continue
       if (!wildcardMatch(rule.pattern, request.pattern)) continue
       return rule.action
@@ -101,9 +108,23 @@ export function createToolPermissionRequest(input: {
 }
 
 export function defaultPermissionAction(permission: string): PermissionAction {
-  if (["read", "ls", "find", "glob", "grep", "ask_question", "websearch", "webfetch"].includes(permission)) return "allow"
+  if (["read", "ls", "find", "glob", "grep", "ask_question", "task", "task_status", "websearch", "webfetch"].includes(permission)) return "allow"
   if (["write", "edit", "bash"].includes(permission)) return "ask"
   return "ask"
+}
+
+function permissionSessionLineage(sessionId: string | undefined, inheritedSessionIds: Map<string, string>): string[] {
+  if (!sessionId) return []
+  const lineage = [sessionId]
+  const seen = new Set(lineage)
+  let current = sessionId
+  while (true) {
+    const parent = inheritedSessionIds.get(current)
+    if (!parent || seen.has(parent)) return lineage
+    lineage.push(parent)
+    seen.add(parent)
+    current = parent
+  }
 }
 
 function permissionName(toolName: string): string {

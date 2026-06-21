@@ -15,6 +15,7 @@ export type SelectListProps<TValue extends string> = {
   emptyLabel?: string
   items: SelectListItem<TValue>[]
   maxRows?: number
+  onBoundary?: (direction: "up" | "down") => void
   onCancel?: () => void
   onHighlight?: (item: SelectListItem<TValue>) => void
   onSelect?: (item: SelectListItem<TValue>) => void
@@ -26,6 +27,7 @@ export function SelectList<TValue extends string>({
   emptyLabel = "No matches",
   items,
   maxRows = 10,
+  onBoundary,
   onCancel,
   onHighlight,
   onSelect,
@@ -51,11 +53,19 @@ export function SelectList<TValue extends string>({
       return
     }
     if (key.upArrow) {
-      setActiveIndex((current) => previousEnabled(items, current))
+      setActiveIndex((current) => {
+        const next = previousEnabled(items, current)
+        if (next === current) onBoundary?.("up")
+        return next
+      })
       return
     }
     if (key.downArrow) {
-      setActiveIndex((current) => nextEnabled(items, current))
+      setActiveIndex((current) => {
+        const next = nextEnabled(items, current)
+        if (next === current) onBoundary?.("down")
+        return next
+      })
       return
     }
     if (key.return) {

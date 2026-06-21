@@ -12,6 +12,7 @@ export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[]
     if (entry.role !== "user" && entry.role !== "assistant") return []
 
     const data = entry.data as MessageEntryData
+    if (data.hidden) return []
     return [{ role: entry.role, content: data.content }]
   })
 }

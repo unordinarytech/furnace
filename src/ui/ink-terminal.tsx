@@ -5,6 +5,7 @@ import type { PermissionDecision, PermissionRequest } from "../permissions.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
+import type { TaskRecord } from "../tasks/types.js"
 import { AppShell } from "./components/app-shell.js"
 import { lofiChibiFrame, PromptInput } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
@@ -24,6 +25,7 @@ export type FurnaceTerminal = {
   setLofi(enabled: boolean): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
+  setTasks(tasks: TaskRecord[]): void
   showHistory(choices: HistoryChoice[], currentSessionId: string | null, onSelect: (sessionId: string) => void, onCancel: () => void): void
   showModelPicker(
     choices: ModelChoice[],
@@ -63,6 +65,7 @@ export type ToolActivity = {
 
 export type QueuedPrompt = {
   createdAt: number
+  hidden?: boolean
   id: string
   text: string
 }
@@ -74,6 +77,7 @@ type CreateFurnaceTerminalOptions = {
   onQueueEdit?: (id: string) => void
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
+  onTaskBackground?: () => void
   themeName: string
   title: string
   onSubmit: (text: string) => void
@@ -100,11 +104,12 @@ type QuestionPromptState = AskQuestionRequest & {
   resolve: (response: AskQuestionResponse) => void
 }
 
-type UiFocus = "input" | "question" | "queue"
+type UiFocus = "input" | "question" | "queue" | "tasks"
 
 type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
+  chatCanScrollUp: boolean
   cwd: string
   focus: UiFocus
   inputDraft: string
@@ -119,6 +124,7 @@ type UiState = {
   thinking: boolean
   thinkingMessage: string
   title: string
+  tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
 }
@@ -132,6 +138,9 @@ class UiStore {
     onPromote?: (id: string) => void
     onRemove?: (id: string) => void
   }
+  readonly taskHandlers: {
+    onBackground?: () => void
+  }
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -140,9 +149,13 @@ class UiStore {
       onPromote: options.onQueuePromote,
       onRemove: options.onQueueRemove,
     }
+    this.taskHandlers = {
+      onBackground: options.onTaskBackground,
+    }
     this.state = {
       approval: undefined,
       busy: false,
+      chatCanScrollUp: false,
       cwd: options.cwd,
       focus: "input",
       inputDraft: "",
@@ -157,6 +170,7 @@ class UiStore {
       thinking: false,
       thinkingMessage: "thinking",
       title: options.title,
+      tasks: [],
       toolActivities: [],
       transcript: [],
     }
@@ -196,8 +210,13 @@ function canDrainQueuedPrompt(state: UiState): boolean {
 
 function normalizeUiState(state: UiState): UiState {
   if (state.focus === "queue" && state.queuedPrompts.length === 0) return { ...state, focus: "input" }
+  if (state.focus === "tasks" && state.tasks.length === 0) return { ...state, focus: "input" }
   if (state.focus === "question" && !state.question) return { ...state, focus: "input" }
   return state
+}
+
+function visibleTaskRecords(tasks: TaskRecord[]): TaskRecord[] {
+  return tasks.filter((task) => task.status !== "completed")
 }
 
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
@@ -248,6 +267,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setQueuedPrompts(prompts) {
       store.update({ queuedPrompts: prompts })
+    },
+    setTasks(tasks) {
+      store.update({ tasks: visibleTaskRecords(tasks) })
     },
     showHistory(choices, currentSessionId, onSelect, onCancel) {
       store.update({ screen: { kind: "history", choices, currentSessionId, onCancel, onSelect }, title: "History" })
@@ -328,7 +350,10 @@ function FurnaceApp({
         ) : (
           <>
             <ChatScreen
-              interactionActive={Boolean(state.approval) || state.focus === "question" || state.focus === "queue"}
+              interactionActive={Boolean(state.approval) || state.focus === "question" || state.focus === "queue" || state.focus === "tasks"}
+              onScrollStateChange={(canScrollUp) => {
+                if (store.getSnapshot().chatCanScrollUp !== canScrollUp) store.update({ chatCanScrollUp: canScrollUp })
+              }}
               thinking={state.thinking}
               thinkingMessage={state.thinkingMessage}
               reservedRows={reservedInteractionRows(state)}
@@ -337,6 +362,7 @@ function FurnaceApp({
             />
             {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
             {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
+            {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
             {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
           </>
         )}
@@ -347,7 +373,9 @@ function FurnaceApp({
         busy={state.busy}
         disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
         onChange={(value) => store.update({ inputDraft: value })}
-        onEmptyUp={() => focusInteractivePanel(store, state)}
+        onEmptyUp={() => {
+          if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
+        }}
         onSubmit={onSubmit}
         placeholder={promptPlaceholder(state)}
         value={state.inputDraft}
@@ -386,12 +414,20 @@ function queueHintItems(): string[] {
   return ["up/down select", "e edit", "d remove", "enter run next", "esc input"]
 }
 
+function taskHintItems(state: UiState): string[] {
+  const hasForeground = state.tasks.some((task) => task.status === "running")
+  const hasBackground = state.tasks.some((task) => task.status === "backgrounded")
+  return ["up/down select", hasForeground ? "ctrl+b background" : hasBackground ? "working in background" : "task status", "esc input"]
+}
+
 function hintItemsForState(state: UiState): string[] {
   if (state.approval) return approvalHintItems()
   if (state.focus === "question" && state.question) return questionHintItems()
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
+  if (state.focus === "tasks" && state.tasks.length > 0) return taskHintItems(state)
   const extras: string[] = []
   if (state.question) extras.push("up answer question")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("up task status")
   if (state.queuedPrompts.length > 0) extras.push("up manage queue")
   return [...extras, ...hintItems(state.screen.kind)]
 }
@@ -407,16 +443,47 @@ function reservedInteractionRows(state: UiState): number {
   if (state.approval) return 8
   let rows = 0
   if (state.question) rows += 9
-  if (state.queuedPrompts.length > 0) rows += Math.min(5, state.queuedPrompts.length + 2)
+  if (state.tasks.length > 0) rows += taskPanelRows(state.tasks)
+  if (state.queuedPrompts.length > 0) rows += queuedPromptPanelRows(state.queuedPrompts)
   return rows
 }
 
-function focusInteractivePanel(store: UiStore, state: UiState): void {
-  if (state.question) {
-    store.update({ focus: "question" })
+function taskPanelRows(tasks: TaskRecord[]): number {
+  const hasError = tasks.some((task) => task.error)
+  return 4 + Math.min(3, tasks.length) + (hasError ? 1 : 0)
+}
+
+function queuedPromptPanelRows(prompts: QueuedPrompt[]): number {
+  return 4 + Math.min(3, prompts.length)
+}
+
+function panelFocusOrder(state: UiState): UiFocus[] {
+  const order: UiFocus[] = []
+  if (state.question) order.push("question")
+  if (state.tasks.length > 0) order.push("tasks")
+  if (state.queuedPrompts.length > 0) order.push("queue")
+  order.push("input")
+  return order
+}
+
+function focusPanelAboveInput(store: UiStore, state: UiState): void {
+  const order = panelFocusOrder(state)
+  const inputIndex = order.indexOf("input")
+  const next = inputIndex > 0 ? order[inputIndex - 1] : undefined
+  if (next && next !== "input") store.update({ focus: next })
+}
+
+function focusAdjacentPanel(store: UiStore, direction: "up" | "down"): void {
+  const state = store.getSnapshot()
+  const order = panelFocusOrder(state)
+  const currentIndex = order.indexOf(state.focus)
+  if (currentIndex < 0) return
+  const next = order[currentIndex + (direction === "up" ? -1 : 1)]
+  if (next) {
+    store.update({ focus: next })
     return
   }
-  if (state.queuedPrompts.length > 0) store.update({ focus: "queue" })
+  if (direction === "up") store.update({ focus: "input" })
 }
 
 function ApprovalPrompt({ request, store }: { request: ApprovalPromptState; store: UiStore }): React.ReactNode {
@@ -620,6 +687,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
             active={active && !customEditing}
             items={[{ label: "Submit answers", value: "submit" as const, description: allAnswered ? "send to agent" : "answer all first", disabled: !allAnswered }]}
             maxRows={1}
+            onBoundary={(direction) => focusAdjacentPanel(store, direction)}
             onCancel={() => store.update({ focus: "input" })}
             onSelect={(item) => selectChoice(item.value)}
           />
@@ -638,6 +706,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
               active={active}
               items={choices}
               maxRows={6}
+              onBoundary={(direction) => focusAdjacentPanel(store, direction)}
               onCancel={() => store.update({ focus: "input" })}
               onSelect={(item) => selectChoice(item.value)}
             />
@@ -685,10 +754,18 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
       return
     }
     if (key.upArrow) {
+      if (selected <= 0) {
+        focusAdjacentPanel(store, "up")
+        return
+      }
       setSelected((current) => Math.max(0, current - 1))
       return
     }
     if (key.downArrow) {
+      if (selected >= prompts.length - 1) {
+        focusAdjacentPanel(store, "down")
+        return
+      }
       setSelected((current) => Math.min(prompts.length - 1, current + 1))
       return
     }
@@ -724,6 +801,100 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
       </Text>
     </Box>
   )
+}
+
+function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const active = store.getSnapshot().focus === "tasks"
+  const [selected, setSelected] = React.useState(0)
+  const selectedTask = tasks[Math.min(selected, Math.max(0, tasks.length - 1))]
+  const canBackground = tasks.some((task) => task.status === "running")
+  const hasBackgrounded = tasks.some((task) => task.status === "backgrounded")
+  const title = hasBackgrounded && !canBackground ? "Subagents (backgrounded)" : "Subagents"
+
+  React.useEffect(() => {
+    setSelected((current) => Math.min(current, Math.max(0, tasks.length - 1)))
+  }, [tasks.length])
+
+  useInput((input, key) => {
+    if (!active) return
+    if (key.escape) {
+      store.update({ focus: "input" })
+      return
+    }
+    if (key.upArrow) {
+      if (selected <= 0) {
+        focusAdjacentPanel(store, "up")
+        return
+      }
+      setSelected((current) => Math.max(0, current - 1))
+      return
+    }
+    if (key.downArrow) {
+      if (selected >= tasks.length - 1) {
+        focusAdjacentPanel(store, "down")
+        return
+      }
+      setSelected((current) => Math.min(tasks.length - 1, current + 1))
+      return
+    }
+    if (key.ctrl && input === "b" && canBackground) {
+      store.taskHandlers.onBackground?.()
+      store.update({ focus: "input" })
+    }
+  }, { isActive: active })
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>{title}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up for tasks"}</Text>
+      </Box>
+      {taskPreviewItems(tasks, selected).map((line) => (
+        <Text key={line.id} color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
+          {line.selected ? "› " : "  "}{line.text}
+        </Text>
+      ))}
+      <Text color={theme.colors.mutedForeground}>
+        {active ? `up/down select · ${canBackground ? "ctrl+b background group" : hasBackgrounded ? "working in background" : "task status"} · esc input` : taskPanelSummary(tasks)}
+      </Text>
+      {selectedTask?.error ? <Text color={theme.colors.error}>{truncateEnd(selectedTask.error, 100)}</Text> : null}
+    </Box>
+  )
+}
+
+export function taskPreviewItems(tasks: TaskRecord[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; status: TaskRecord["status"]; text: string }> {
+  const clamped = Math.min(Math.max(0, selected), Math.max(0, tasks.length - 1))
+  const start = Math.min(Math.max(0, tasks.length - maxItems), Math.max(0, clamped - Math.floor(maxItems / 2)))
+  return tasks.slice(start, start + maxItems).map((task, index) => ({
+    id: task.id,
+    selected: start + index === clamped,
+    status: task.status,
+    text: formatTaskPreviewText(task),
+  }))
+}
+
+function formatTaskPreviewText(task: TaskRecord): string {
+  const description = formatQueuedPromptPreview(task.description, 72)
+  if (task.status === "running" || task.status === "backgrounded") return description
+  return `${task.status.padEnd(10)} ${description}`
+}
+
+function taskStatusColor(theme: Theme, status: TaskRecord["status"]): string {
+  if (status === "completed") return theme.colors.success
+  if (status === "failed" || status === "cancelled") return theme.colors.error
+  if (status === "backgrounded") return theme.colors.warning
+  return theme.colors.mutedForeground
+}
+
+function taskPanelSummary(tasks: TaskRecord[]): string {
+  const running = tasks.filter((task) => task.status === "running").length
+  const backgrounded = tasks.filter((task) => task.status === "backgrounded").length
+  const parts = [
+    running ? `${running} running` : "",
+    backgrounded ? `${backgrounded} working in background` : "",
+  ].filter(Boolean)
+  return parts.join(" · ") || "recent task history"
 }
 
 export function queuedPromptPreviewItems(prompts: QueuedPrompt[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; text: string }> {
@@ -768,11 +939,12 @@ function hintItems(kind: UiScreen["kind"]): string[] {
   if (kind === "model") return ["type to filter", "enter select", "tab edit", "esc cancel"]
   if (kind === "theme") return ["up/down navigate", "enter preview", "esc cancel"]
   if (kind === "history") return ["up/down navigate", "enter open", "esc cancel"]
-  return ["/new", "/history", "/model", "/theme", "/lofi", "/reset-perms", "/exit"]
+  return ["/new", "/history", "/model", "/theme", "/tasks", "/lofi", "/reset-perms", "/exit"]
 }
 
 function ChatScreen({
   interactionActive,
+  onScrollStateChange,
   thinking,
   thinkingMessage,
   reservedRows,
@@ -780,6 +952,7 @@ function ChatScreen({
   transcript,
 }: {
   interactionActive?: boolean
+  onScrollStateChange?: (canScrollUp: boolean) => void
   reservedRows?: number
   thinking: boolean
   thinkingMessage: string
@@ -814,6 +987,10 @@ function ChatScreen({
   React.useEffect(() => {
     if (thinking || toolActivities.length > 0) setScrollOffset(0)
   }, [activityKey, thinking, thinkingMessage, toolActivities.length])
+
+  React.useEffect(() => {
+    onScrollStateChange?.(maxScrollOffset > scrollOffset)
+  }, [maxScrollOffset, onScrollStateChange, scrollOffset])
 
   useInput((input, key) => {
     if (interactionActive) return
@@ -1120,6 +1297,11 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
     if (questionLines.length > 0) return questionLines
   }
 
+  if (activity.name === "task") {
+    const taskLines = formatTaskActivity(activity, width)
+    if (taskLines.length > 0) return taskLines
+  }
+
   return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
 }
 
@@ -1197,6 +1379,25 @@ function formatAskQuestionActivity(activity: ToolActivity, width: number): Rende
     }
   }
   if (questions.length > 4) lines.push({ text: `  ... ${questions.length - 4} more question${questions.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
+  return lines
+}
+
+function formatTaskActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
+  const tasks = parseTaskArgs(activity.args)
+  if (tasks.length === 0) return []
+  const backgrounded = /backgrounded/i.test(activity.result || "")
+  const lines: RenderedToolLine[] = [
+    {
+      text: `${statusSymbol(activity.status)} ${backgrounded ? "Backgrounded" : activity.status === "running" ? "Running" : "Finished"} ${tasks.length} subagent${tasks.length === 1 ? "" : "s"}`,
+      tone: "summary",
+    },
+  ]
+  for (const task of tasks.slice(0, 4)) {
+    lines.push({ text: `  - ${truncateEnd(task.description || task.prompt, Math.max(24, width - 6))}`, tone: "meta" })
+  }
+  if (tasks.length > 4) lines.push({ text: `  ... ${tasks.length - 4} more subagent${tasks.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
+  const firstResult = activity.result?.split(/\r?\n/).find((line) => /^Task group /.test(line))
+  if (firstResult) lines.push({ text: `  ${truncateEnd(firstResult, Math.max(24, width - 4))}`, tone: backgrounded ? "context" : "addition" })
   return lines
 }
 
@@ -1304,6 +1505,22 @@ function parseAskQuestionAnswers(result: string): Array<{ kind: "refused" | "sel
   })
 }
 
+function parseTaskArgs(args: string): Array<{ description?: string; prompt: string }> {
+  try {
+    const parsed = JSON.parse(args) as Record<string, unknown>
+    if (Array.isArray(parsed.tasks)) {
+      return parsed.tasks.flatMap((item) => {
+        if (!item || typeof item !== "object") return []
+        const record = item as Record<string, unknown>
+        return typeof record.prompt === "string" ? [{ description: typeof record.description === "string" ? record.description : undefined, prompt: record.prompt }] : []
+      })
+    }
+    return typeof parsed.prompt === "string" ? [{ description: typeof parsed.description === "string" ? parsed.description : undefined, prompt: parsed.prompt }] : []
+  } catch {
+    return []
+  }
+}
+
 function statusSymbol(status: ToolActivity["status"]): string {
   if (status === "running") return ">"
   if (status === "failed") return "x"
@@ -1328,6 +1545,8 @@ function formatToolResult(result: string | undefined, width: number): string {
 function compactToolArgs(args: string): string {
   try {
     const parsed = JSON.parse(args) as Record<string, unknown>
+    if (Array.isArray(parsed.tasks)) return `tasks: ${parsed.tasks.length}`
+    if (typeof parsed.prompt === "string") return `prompt: ${JSON.stringify(parsed.prompt)}`
     const summary = ["path", "pattern", "query", "command", "patch"]
       .flatMap((key) => (typeof parsed[key] === "string" ? [`${key}: ${JSON.stringify(parsed[key])}`] : []))
       .slice(0, 2)

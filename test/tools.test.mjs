@@ -22,8 +22,101 @@ function sleep(ms) {
 test("tool registry exposes the core primitives", () => {
   assert.deepEqual(
     toolDefinitions.map((tool) => tool.function.name),
-    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "websearch", "webfetch"],
+    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "task", "task_status", "websearch", "webfetch"],
   )
+})
+
+test("task delegates batched prompts through the task runner", async () => {
+  await withWorkspace(async (cwd) => {
+    const calls = []
+    const taskRunner = {
+      promoteActiveGroup() {
+        return false
+      },
+      status() {
+        return { parentSessionId: "parent", tasks: [] }
+      },
+      async runTasks(input) {
+        calls.push(input)
+        return {
+          backgrounded: false,
+          groupId: "group_1",
+          tasks: input.tasks.map((task, index) => ({
+            background: false,
+            childSessionId: `child_${index + 1}`,
+            completedAt: 20,
+            description: task.description || task.prompt,
+            id: `task_${index + 1}`,
+            parentSessionId: input.parentSessionId,
+            prompt: task.prompt,
+            result: `done ${index + 1}`,
+            startedAt: 10,
+            status: "completed",
+          })),
+        }
+      },
+    }
+
+    const result = await executeToolCall(
+      {
+        name: "task",
+        arguments: JSON.stringify({
+          tasks: [
+            { prompt: "Research A", description: "A" },
+            { prompt: "Research B" },
+          ],
+        }),
+      },
+      { cwd, sessionId: "parent", taskRunner },
+    )
+
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].parentSessionId, "parent")
+    assert.deepEqual(calls[0].tasks, [{ prompt: "Research A", description: "A" }, { prompt: "Research B" }])
+    assert.match(result.content, /Task group group_1 completed/)
+    assert.doesNotMatch(result.content, /child_session/)
+    assert.match(result.content, /done 2/)
+  })
+})
+
+test("task_status returns current task runner status", async () => {
+  await withWorkspace(async (cwd) => {
+    const result = await executeToolCall(
+      { name: "task_status", arguments: "{}" },
+      {
+        cwd,
+        sessionId: "parent",
+        taskRunner: {
+          promoteActiveGroup() {
+            return false
+          },
+          runTasks() {
+            throw new Error("not used")
+          },
+          status() {
+            return {
+              parentSessionId: "parent",
+              tasks: [
+                {
+                  background: true,
+                  childSessionId: "child_1",
+                  description: "Background research",
+                  id: "task_1",
+                  parentSessionId: "parent",
+                  prompt: "Research",
+                  startedAt: Date.now(),
+                  status: "backgrounded",
+                },
+              ],
+            }
+          },
+        },
+      },
+    )
+
+    assert.match(result.content, /backgrounded: Background research/)
+    assert.doesNotMatch(result.content, /child_session/)
+  })
 })
 
 test("ask_question returns user answers from the prompt service", async () => {

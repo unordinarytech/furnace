@@ -7,6 +7,7 @@ import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
 import { formatAskQuestionResult, normalizeAskQuestionRequest, type AskQuestionPrompt } from "../questions.js"
 import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot } from "../session/types.js"
+import type { TaskRunner, TaskRunResult, TaskSpec } from "../tasks/types.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -20,6 +21,8 @@ export type ToolContext = {
   questionPrompt?: AskQuestionPrompt
   sessionId?: string
   services?: ToolServices
+  signal?: AbortSignal
+  taskRunner?: TaskRunner
 }
 
 export type ToolFileReadStore = {
@@ -223,6 +226,39 @@ export const registeredTools: RegisteredTool[] = [
     definition: {
       type: "function",
       function: {
+        name: "task",
+        description: "Delegate one or more independent multi-step coding, research, review, or exploration tasks to child Furnace subagents for parallel fan-out. Children use the same model/runtime context as the parent and the same tools except task. The parent waits by default unless the user promotes the active task group to background.",
+        parameters: objectSchema({
+          tasks: arraySchema(
+            objectSchema({
+              prompt: stringSchema("Detailed autonomous prompt for the child subagent. Include all context it needs; it cannot see hidden parent history."),
+              description: stringSchema("Optional short UI/session label. If omitted, Furnace derives it from the prompt."),
+            }, ["prompt"]),
+            "One or more independent tasks to run as a batch. Results are returned in input order.",
+          ),
+          prompt: stringSchema("Convenience single-task prompt. Use tasks[] for batching."),
+          description: stringSchema("Optional short label for the convenience single-task prompt."),
+          background: booleanSchema("Start in background immediately. Normally leave false; the user can promote active tasks from the UI."),
+        }),
+      },
+    },
+    execute: taskTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "task_status",
+        description: "Check active and backgrounded subagent tasks for the current parent conversation.",
+        parameters: objectSchema({}),
+      },
+    },
+    execute: taskStatusTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
         name: "websearch",
         description: "Search the web for current information using an Exa or Parallel MCP-style provider. Returns model-optimized text and bounds large responses.",
         parameters: objectSchema({
@@ -255,6 +291,7 @@ export const registeredTools: RegisteredTool[] = [
 ]
 
 export const toolDefinitions: ToolDefinition[] = registeredTools.map((tool) => tool.definition)
+export const childToolDefinitions: ToolDefinition[] = registeredTools.filter((tool) => tool.definition.function.name !== "task").map((tool) => tool.definition)
 
 export async function executeToolCall(call: ToolCallInput, context: ToolContext): Promise<ToolExecution> {
   const tool = registeredTools.find((candidate) => candidate.definition.function.name === call.name)
@@ -409,6 +446,38 @@ async function askQuestionTool(args: unknown, context: ToolContext): Promise<str
   return formatAskQuestionResult(await context.questionPrompt(request))
 }
 
+async function taskTool(args: unknown, context: ToolContext): Promise<string> {
+  if (!context.taskRunner || !context.sessionId) return "Task delegation is unavailable in this mode."
+  const tasks = normalizeTaskSpecs(args)
+  if (tasks.length === 0) throw new Error("Expected at least one task prompt")
+  const result = await context.taskRunner.runTasks({
+    background: optionalBoolean(args, "background") || false,
+    parentSessionId: context.sessionId,
+    signal: context.signal,
+    tasks,
+  })
+  return formatTaskRunResult(result)
+}
+
+async function taskStatusTool(_args: unknown, context: ToolContext): Promise<string> {
+  if (!context.taskRunner || !context.sessionId) return "Task status is unavailable in this mode."
+  const snapshot = context.taskRunner.status(context.sessionId)
+  const visible = snapshot.tasks.filter((task) => task.status !== "completed")
+  if (visible.length === 0) return "No active subagent tasks for this conversation."
+  return visible
+    .map((task) => {
+      const elapsed = Math.max(0, (task.completedAt || Date.now()) - task.startedAt)
+      const parts = [
+        `${task.status}: ${task.description}`,
+        `task_id=${task.id}`,
+        `elapsed=${formatDuration(elapsed)}`,
+      ]
+      if (task.error) parts.push(`error=${task.error}`)
+      return parts.join(" | ")
+    })
+    .join("\n")
+}
+
 async function websearchTool(args: unknown, context: ToolContext): Promise<string> {
   const query = requiredString(args, "query")
   const numResults = clamp(optionalNumber(args, "numResults") || 8, 1, 20)
@@ -441,6 +510,58 @@ async function websearchTool(args: unknown, context: ToolContext): Promise<strin
         })
 
   return result || "No search results found. Please try a different query."
+}
+
+function normalizeTaskSpecs(args: unknown): TaskSpec[] {
+  const tasksValue = getArg(args, "tasks")
+  if (Array.isArray(tasksValue)) {
+    return tasksValue.flatMap((item) => {
+      if (!item || typeof item !== "object") return []
+      const record = item as Record<string, unknown>
+      const prompt = typeof record.prompt === "string" ? record.prompt.trim() : ""
+      if (!prompt) return []
+      const description = typeof record.description === "string" && record.description.trim() ? record.description.trim() : undefined
+      return [description ? { description, prompt } : { prompt }]
+    })
+  }
+
+  const prompt = optionalString(args, "prompt")?.trim()
+  if (!prompt) return []
+  const description = optionalString(args, "description")?.trim()
+  return [description ? { description, prompt } : { prompt }]
+}
+
+function formatTaskRunResult(result: TaskRunResult): string {
+  const state = result.backgrounded ? "backgrounded" : "completed"
+  const lines = [`Task group ${result.groupId} ${state}.`]
+  for (const [index, task] of result.tasks.entries()) {
+    lines.push("")
+    lines.push(`Task ${index + 1}: ${task.description}`)
+    lines.push(`- task_id: ${task.id}`)
+    lines.push(`- status: ${task.status}`)
+    if (task.error) lines.push(`- error: ${task.error}`)
+    if (task.result) lines.push(`- result:\n${indent(task.result)}`)
+  }
+  if (result.backgrounded) {
+    lines.push("")
+    lines.push("The subagent task group is now running in the background. Do not poll or duplicate its work; Furnace will notify the parent conversation when every task in the group finishes.")
+  }
+  return lines.join("\n")
+}
+
+function indent(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => `  ${line}`)
+    .join("\n")
+}
+
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return `${minutes}m${remainder.toString().padStart(2, "0")}s`
 }
 
 async function webfetchTool(args: unknown, context: ToolContext): Promise<string> {

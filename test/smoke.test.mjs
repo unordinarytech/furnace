@@ -194,6 +194,25 @@ test("queued prompt previews truncate and track selected item", async () => {
   ])
 })
 
+test("task previews hide child session ids", async () => {
+  const { taskPreviewItems } = await import("../dist/ui/ink-terminal.js")
+  const previews = taskPreviewItems([
+    {
+      background: false,
+      childSessionId: "ses_hidden",
+      description: "Research quantum computing developments",
+      id: "task_1",
+      parentSessionId: "parent",
+      prompt: "Research quantum computing developments",
+      startedAt: 1,
+      status: "running",
+    },
+  ])
+
+  assert.equal(previews[0].text, "Research quantum computing developments")
+  assert.doesNotMatch(previews[0].text, /ses_hidden/)
+})
+
 test("lofi mode exposes a terminal chibi animation and stream default", async () => {
   const { lofiChibiFrame } = await import("../dist/ui/components/prompt-input.js")
   const { defaultLofiStreamUrl } = await import("../dist/lofi.js")

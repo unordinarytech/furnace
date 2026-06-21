@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { buildRuntimeContext, entriesToModelMessages } from "../dist/session/context.js"
+import { buildRuntimeContext, entriesToModelMessages, entriesToTranscript } from "../dist/session/context.js"
 
 test("runtime context includes current date and workspace", () => {
   const context = buildRuntimeContext({
@@ -38,6 +38,36 @@ test("model messages include transient runtime context", () => {
   assert.equal(messages[1].role, "system")
   assert.match(messages[1].content, /Current year: 2026/)
   assert.deepEqual(messages[2], { role: "user", content: "latest FIFA news" })
+})
+
+test("hidden messages are replayed to the model but omitted from transcript", () => {
+  const entries = [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "visible user prompt" },
+      createdAt: 0,
+    },
+    {
+      id: "entry-2",
+      parentEntryId: "entry-1",
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "background subagent completion", hidden: true, source: "background_subagent_completion" },
+      createdAt: 1,
+    },
+  ]
+
+  assert.deepEqual(entriesToTranscript(entries), [{ role: "user", content: "visible user prompt" }])
+  assert.deepEqual(entriesToModelMessages("base system", entries), [
+    { role: "system", content: "base system" },
+    { role: "user", content: "visible user prompt" },
+    { role: "user", content: "background subagent completion" },
+  ])
 })
 
 test("model messages replay persisted tool calls and results", () => {

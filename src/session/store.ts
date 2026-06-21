@@ -154,8 +154,14 @@ export class SessionStore {
       .run(cleanTitle, Date.now(), sessionId)
   }
 
-  appendMessage(sessionId: string, role: "user" | "assistant", content: string, model?: string): EntryRecord<MessageEntryData> {
-    return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, model })
+  appendMessage(
+    sessionId: string,
+    role: "user" | "assistant",
+    content: string,
+    modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string },
+  ): EntryRecord<MessageEntryData> {
+    const options = typeof modelOrOptions === "string" ? { model: modelOrOptions } : modelOrOptions || {}
+    return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, ...options })
   }
 
   appendToolCall(sessionId: string, input: ToolCallEntryData): EntryRecord<ToolCallEntryData> {

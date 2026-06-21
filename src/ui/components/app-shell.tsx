@@ -59,9 +59,11 @@ function Content({ children }: AppShellContentProps): React.ReactNode {
 
 function Hints({ items }: AppShellHintsProps): React.ReactNode {
   const theme = useTheme()
+  const { columns } = useWindowSize()
+  const text = truncateEnd(items.join("  ·  "), Math.max(1, columns - 4))
   return (
     <Box borderStyle="single" borderColor={theme.colors.mutedForeground} paddingX={1}>
-      <Text color={theme.colors.mutedForeground}>{items.join("  ·  ")}</Text>
+      <Text color={theme.colors.mutedForeground}>{text}</Text>
     </Box>
   )
 }
@@ -77,4 +79,10 @@ function truncateMiddle(value: string, maxLength: number): string {
   const left = Math.ceil(keep / 2)
   const right = Math.floor(keep / 2)
   return `${value.slice(0, left)}…${value.slice(value.length - right)}`
+}
+
+function truncateEnd(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value
+  if (maxLength <= 3) return value.slice(0, maxLength)
+  return `${value.slice(0, maxLength - 3)}...`
 }

@@ -30,7 +30,9 @@ export type EntryRecord<TData = unknown> = {
 
 export type MessageEntryData = {
   content: string
+  hidden?: boolean
   model?: string
+  source?: string
 }
 
 export type ToolCallEntryData = {

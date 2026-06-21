@@ -9,10 +9,31 @@ import {
 test("default permissions allow low-risk tools and ask for modifying tools", () => {
   assert.equal(defaultPermissionAction("read"), "allow")
   assert.equal(defaultPermissionAction("grep"), "allow")
+  assert.equal(defaultPermissionAction("task"), "allow")
+  assert.equal(defaultPermissionAction("task_status"), "allow")
   assert.equal(defaultPermissionAction("websearch"), "allow")
   assert.equal(defaultPermissionAction("write"), "ask")
   assert.equal(defaultPermissionAction("edit"), "ask")
   assert.equal(defaultPermissionAction("bash"), "ask")
+})
+
+test("child sessions inherit parent conversation grants", async () => {
+  const store = new SessionPermissionStore()
+  const parentBash = createToolPermissionRequest({
+    args: JSON.stringify({ command: "npm test" }),
+    callId: "call-1",
+    cwd: "/tmp/project",
+    sessionId: "parent",
+    toolName: "bash",
+  })
+  const childBash = { ...parentBash, callId: "call-2", sessionId: "child" }
+  const unrelatedBash = { ...parentBash, callId: "call-3", sessionId: "other" }
+
+  assert.equal(await store.authorize(parentBash, async () => "allow_tool_session"), "allow_tool_session")
+  store.inheritSession("child", "parent")
+
+  assert.equal(store.evaluate(childBash), "allow")
+  assert.equal(store.evaluate(unrelatedBash), "ask")
 })
 
 test("deny only applies to the current permission request", async () => {
