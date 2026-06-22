@@ -1,7 +1,7 @@
 ToDo
 
 session management :
-	- compaction [HEADROOM FORK BRO]
+	- compaction [HEADROOM FORK BRO] [NEEDED RIGHT FUCKING NOW]
 		- clear / account for persisted file read state when compaction may summarize away read tool contents
 	- forking 
 	- duplicating / forking entire branch
@@ -10,10 +10,9 @@ session management :
 	- session_search tool to search old sessions and scroll around matches
 
 functionality :
-	- Multi task like ghost tui <- NEXT NEXT NEXT
+	- Multi task like ghost tui 
 	- memory long term of sorts
 
-- Plan mode
 - Stresstesting to be bug free 
 - Auto doc structure (from harness engineering)
 
