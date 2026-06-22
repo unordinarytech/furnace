@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from "commander"
+import { readFile } from "node:fs/promises"
+import { resolve } from "node:path"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
@@ -8,6 +10,7 @@ import { loadConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage } from "./openrouter.js"
 import { SessionPermissionStore } from "./permissions.js"
+import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveModelPreferences, saveThemePreference } from "./preferences.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
@@ -100,6 +103,7 @@ async function runInteractive(input: {
     createChildTask: ({ description, parentSessionId, prompt }) => {
       const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
       permissions.inheritSession(child.id, parentSessionId)
+      inheritPlanMode(parentSessionId, child.id)
       return {
         background: false,
         childSessionId: child.id,
@@ -148,6 +152,14 @@ async function runInteractive(input: {
     onTaskBackground: () => {
       const promoted = taskManager.promoteActiveGroup(sessionId)
       showTransientStatus(promoted ? "Subagents moved to background. Furnace will continue once the task tool returns." : "No active foreground subagents to background.")
+    },
+    onModeCycle: (direction) => {
+      if (running) {
+        showTransientStatus("Mode switching is available after the current turn finishes.")
+        return
+      }
+      const current = currentPlanModeState(input.store.getActivePath(sessionId)).mode
+      void switchMode(current === "plan" ? "agent" : "plan", { reason: "user", seed: direction > 0 ? "plan" : "agent" }).catch((error) => showTransientStatus(formatError(error)))
     },
     themeName: input.config.theme,
     title: initialSession.title,
@@ -203,6 +215,10 @@ async function runInteractive(input: {
         await handleSkillsCommand(command.argument)
         return
       }
+      if (command.name === "/plan" || command.name === "/agent" || command.name === "/mode") {
+        showTransientStatus(`${command.name} is available after the current turn finishes.`)
+        return
+      }
       if (command.name === "/reset-perms") {
         resetCurrentSessionPermissions()
         return
@@ -216,6 +232,19 @@ async function runInteractive(input: {
     }
     if (running) {
       enqueuePrompt(prompt)
+      return
+    }
+    if (command.name === "/plan") {
+      await switchMode("plan", { reason: "user", seed: command.argument || "plan" })
+      if (command.argument) await runPromptQueue(command.argument)
+      return
+    }
+    if (command.name === "/agent") {
+      await switchMode("agent", { reason: "user" })
+      return
+    }
+    if (command.name === "/mode") {
+      await handleModeCommand(command.argument)
       return
     }
     if (command.name === "/new") {
@@ -340,6 +369,70 @@ async function runInteractive(input: {
     showTransientStatus(`Theme set to ${choice.name}.`)
   }
 
+  async function handleModeCommand(argument: string): Promise<void> {
+    const requested = argument.trim().toLowerCase()
+    if (!requested) {
+      const state = currentPlanModeState(input.store.getActivePath(sessionId))
+      const detail = state.mode === "plan" && state.planPath ? ` (${state.planPath})` : ""
+      showTransientStatus(`Current mode: ${state.mode}${detail}`)
+      return
+    }
+    if (requested !== "agent" && requested !== "plan") {
+      showTransientStatus("Usage: /mode [agent|plan]")
+      return
+    }
+    await switchMode(requested, { reason: "user", seed: requested })
+  }
+
+  async function switchMode(mode: AgentMode, options: { reason: PlanModeEntryData["reason"]; seed?: string }): Promise<void> {
+    clearTransientStatus()
+    const current = currentPlanModeState(input.store.getActivePath(sessionId))
+    const planPath = mode === "plan" ? current.planPath || createPlanPath(input.cwd, options.seed || input.store.getSession(sessionId).title) : undefined
+    input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, {
+      kind: "mode_change",
+      mode,
+      planPath,
+      reason: options.reason,
+    })
+    permissions.setSessionMode(sessionId, mode, planPath)
+    terminal.setMode(mode, planPath)
+    if (mode === "agent") terminal.clearPlanActions()
+    showTransientStatus(mode === "plan" ? `Plan mode active. Plan artifact: ${planPath}` : "Agent mode active.")
+  }
+
+  function inheritPlanMode(parentSessionId: string, childSessionId: string): void {
+    const state = currentPlanModeState(input.store.getActivePath(parentSessionId))
+    if (state.mode !== "plan") return
+    input.store.appendEntry<PlanModeEntryData>(childSessionId, "custom", null, {
+      kind: "mode_change",
+      mode: "plan",
+      planPath: state.planPath,
+      reason: "inherited",
+    })
+    permissions.setSessionMode(childSessionId, "plan", state.planPath)
+  }
+
+  async function handlePlanAction(action: "execute" | "refine" | "stay", planPath: string): Promise<void> {
+    if (action === "stay") {
+      terminal.clearPlanActions()
+      terminal.setInputDraft("")
+      return
+    }
+    if (action === "refine") {
+      terminal.clearPlanActions()
+      terminal.setInputDraft(`Refine the plan in ${planPath}: `)
+      return
+    }
+
+    terminal.clearPlanActions()
+    await switchMode("agent", { reason: "tool" })
+    await runPromptQueue({
+      hidden: true,
+      source: "plan_execute",
+      text: renderPlanExecutionPrompt(planPath),
+    })
+  }
+
   async function runSkillCommand(commandName: string, userInstruction: string): Promise<void> {
     const skillName = commandName.slice("/skill:".length)
     const skill = skillCatalog.skills.find((candidate) => candidate.name === skillName)
@@ -419,6 +512,10 @@ async function runInteractive(input: {
 
   function refreshCurrentSession(): void {
     refreshInteractive(terminal, input.store, sessionId)
+    const state = currentPlanModeState(input.store.getActivePath(sessionId))
+    permissions.setSessionMode(sessionId, state.mode, state.planPath)
+    terminal.setMode(state.mode, state.planPath)
+    if (state.mode !== "plan") terminal.clearPlanActions()
     terminal.setTasks(taskManager.status(sessionId).tasks)
   }
 
@@ -479,6 +576,11 @@ async function runInteractive(input: {
             prompt: next.text,
             sessionId,
             signal: controller.signal,
+            onPlanReady: (planPath) => {
+              terminal.showPlanActions(planPath, (action) => {
+                void handlePlanAction(action, planPath).catch((error) => showTransientStatus(formatError(error)))
+              })
+            },
             store: input.store,
             taskRunner: taskManager,
             terminal,
@@ -510,6 +612,16 @@ function refreshInteractive(terminal: FurnaceTerminal, store: SessionStore, sess
   terminal.setTranscript(transcript)
 }
 
+async function visibleAssistantTextForMode(cwd: string, assistantText: string, state: { mode: AgentMode; planPath?: string }): Promise<string> {
+  if (state.mode !== "plan" || !state.planPath) return assistantText
+  try {
+    const content = await readFile(resolve(cwd, state.planPath), "utf8")
+    return renderVisiblePlanArtifact(assistantText, state.planPath, content)
+  } catch {
+    return assistantText
+  }
+}
+
 async function runPiped(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   sessionId: string
@@ -527,6 +639,47 @@ async function runPiped(input: {
     if (command.name === "/new") {
       const session = input.store.getSession(sessionId)
       sessionId = session.activeLeafId ? input.store.createSession({ cwd: process.cwd(), title: "New Chat" }).id : session.id
+      continue
+    }
+    if (command.name === "/plan") {
+      const state = currentPlanModeState(input.store.getActivePath(sessionId))
+      const planPath = state.planPath || createPlanPath(process.cwd(), command.argument || input.store.getSession(sessionId).title)
+      input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "plan", planPath, reason: "user" })
+      permissions.setSessionMode(sessionId, "plan", planPath)
+      process.stdout.write(`Plan mode active. Plan artifact: ${planPath}\n`)
+      if (command.argument) {
+        await runSingleTurn({ config: input.config, cwd: process.cwd(), permissions, prompt: command.argument, sessionId, store: input.store })
+      }
+      continue
+    }
+    if (command.name === "/agent") {
+      input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "agent", reason: "user" })
+      permissions.setSessionMode(sessionId, "agent")
+      process.stdout.write("Agent mode active.\n")
+      continue
+    }
+    if (command.name === "/mode") {
+      const requested = command.argument.trim().toLowerCase()
+      if (!requested) {
+        const state = currentPlanModeState(input.store.getActivePath(sessionId))
+        process.stdout.write(`Current mode: ${state.mode}${state.mode === "plan" && state.planPath ? ` (${state.planPath})` : ""}\n`)
+        continue
+      }
+      if (requested === "agent") {
+        input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "agent", reason: "user" })
+        permissions.setSessionMode(sessionId, "agent")
+        process.stdout.write("Agent mode active.\n")
+        continue
+      }
+      if (requested === "plan") {
+        const state = currentPlanModeState(input.store.getActivePath(sessionId))
+        const planPath = state.planPath || createPlanPath(process.cwd(), input.store.getSession(sessionId).title)
+        input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "plan", planPath, reason: "user" })
+        permissions.setSessionMode(sessionId, "plan", planPath)
+        process.stdout.write(`Plan mode active. Plan artifact: ${planPath}\n`)
+        continue
+      }
+      process.stdout.write("Usage: /mode [agent|plan]\n")
       continue
     }
     if (command.name === "/reset-perms") {
@@ -610,6 +763,7 @@ async function runSingleTurn(input: {
   prompt: string
   sessionId: string
   signal?: AbortSignal
+  onPlanReady?: (planPath: string) => void
   store: SessionStore
   taskRunner?: TaskManager
   terminal?: FurnaceTerminal
@@ -621,6 +775,16 @@ async function runSingleTurn(input: {
       createChildTask: ({ description, parentSessionId, prompt }) => {
         const child = input.store.createSession({ cwd: input.cwd, parentSessionId, title: `${description} (subagent)` })
         permissions.inheritSession(child.id, parentSessionId)
+        const parentPlanState = currentPlanModeState(input.store.getActivePath(parentSessionId))
+        if (parentPlanState.mode === "plan") {
+          input.store.appendEntry<PlanModeEntryData>(child.id, "custom", null, {
+            kind: "mode_change",
+            mode: "plan",
+            planPath: parentPlanState.planPath,
+            reason: "inherited",
+          })
+          permissions.setSessionMode(child.id, "plan", parentPlanState.planPath)
+        }
         return {
           background: false,
           childSessionId: child.id,
@@ -646,8 +810,11 @@ async function runSingleTurn(input: {
 
   const activePath = input.store.getActivePath(input.sessionId)
   const transcript = entriesToTranscript(activePath)
+  const planState = currentPlanModeState(activePath)
+  permissions.setSessionMode(input.sessionId, planState.mode, planState.planPath)
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
-  const messages: OpenRouterMessage[] = entriesToModelMessages(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), activePath, { cwd: input.cwd })
+  const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.systemPrompt, skillCatalog.skills), planState)
+  const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
 
   if (input.terminal) input.terminal.setTranscript(transcript)
   else renderAssistantStart(transcript)
@@ -704,12 +871,15 @@ async function runSingleTurn(input: {
       input.terminal?.setThinking(true, "thinking")
     },
   })
-  const assistantText = result.content
+  const assistantText = await visibleAssistantTextForMode(input.cwd, result.content, planState)
 
   input.store.appendMessage(input.sessionId, "assistant", assistantText, input.config.model)
   if (input.terminal) {
     input.terminal.setThinking(false)
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+    if (planState.mode === "plan" && planState.planPath) {
+      input.onPlanReady?.(planState.planPath)
+    }
   } else {
     renderConversation(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     renderDone()
@@ -728,7 +898,11 @@ async function runSubagentTask(input: {
   const prompt = formatSubagentPrompt(input.record)
   input.store.appendMessage(input.record.childSessionId, "user", prompt)
   const skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
-  const messages: OpenRouterMessage[] = entriesToModelMessages(appendSkillGuidance(input.config.subagentSystemPrompt, skillCatalog.skills), input.store.getActivePath(input.record.childSessionId), { cwd: input.cwd })
+  const activePath = input.store.getActivePath(input.record.childSessionId)
+  const planState = currentPlanModeState(activePath)
+  input.permissions.setSessionMode(input.record.childSessionId, planState.mode, planState.planPath)
+  const systemPrompt = appendPlanModeGuidance(appendSkillGuidance(input.config.subagentSystemPrompt, skillCatalog.skills), planState)
+  const messages: OpenRouterMessage[] = entriesToModelMessages(systemPrompt, activePath, { cwd: input.cwd })
   const terminal = input.terminal
 
   const result = await runAgentTurn({

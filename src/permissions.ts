@@ -1,3 +1,6 @@
+import { resolve } from "node:path"
+import type { AgentMode, PlanModeState } from "./plan-mode.js"
+
 export type PermissionAction = "allow" | "ask" | "deny"
 
 export type PermissionDecision = "allow_once" | "allow_tool_session" | "allow_all_session" | "deny"
@@ -12,6 +15,7 @@ export type PermissionRule = {
 export type PermissionRequest = {
   args: string
   callId: string
+  cwd: string
   description: string
   pattern: string
   permission: string
@@ -23,6 +27,7 @@ export type PermissionPrompt = (request: PermissionRequest) => Promise<Permissio
 
 export class SessionPermissionStore {
   private readonly inheritedSessionIds = new Map<string, string>()
+  private readonly modes = new Map<string, PlanModeState>()
   private readonly rules: PermissionRule[] = []
   private readonly allowAllSessionIds = new Set<string>()
 
@@ -32,6 +37,10 @@ export class SessionPermissionStore {
 
   inheritSession(childSessionId: string, parentSessionId: string): void {
     if (childSessionId !== parentSessionId) this.inheritedSessionIds.set(childSessionId, parentSessionId)
+  }
+
+  setSessionMode(sessionId: string, mode: AgentMode, planPath?: string): void {
+    this.modes.set(sessionId, mode === "plan" ? { mode, planPath } : { mode })
   }
 
   async authorize(request: PermissionRequest, prompt?: PermissionPrompt): Promise<PermissionDecision> {
@@ -74,6 +83,8 @@ export class SessionPermissionStore {
 
   evaluate(request: PermissionRequest): PermissionAction {
     const sessionIds = permissionSessionLineage(request.sessionId, this.inheritedSessionIds)
+    const planMode = sessionIds.map((sessionId) => this.modes.get(sessionId)).find((mode) => mode?.mode === "plan")
+    if (planMode?.mode === "plan") return planModePermissionAction(request, planMode)
     if (sessionIds.some((sessionId) => this.allowAllSessionIds.has(sessionId))) return "allow"
 
     for (let index = this.rules.length - 1; index >= 0; index -= 1) {
@@ -99,6 +110,7 @@ export function createToolPermissionRequest(input: {
   return {
     args: input.args,
     callId: input.callId,
+      cwd: input.cwd,
     description: permissionDescription(input.toolName, pattern),
     pattern,
     permission: permissionName(input.toolName),
@@ -111,6 +123,117 @@ export function defaultPermissionAction(permission: string): PermissionAction {
   if (["read", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "websearch", "webfetch"].includes(permission)) return "allow"
   if (["write", "edit", "bash", "skill_manage"].includes(permission)) return "ask"
   return "ask"
+}
+
+function planModePermissionAction(request: PermissionRequest, mode: PlanModeState): PermissionAction {
+  if (["read", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "websearch", "webfetch"].includes(request.permission)) return "allow"
+  if (request.permission === "bash") return isPlanModeSafeCommand(stringArg(parseArgs(request.args), "command") || "") ? "allow" : "deny"
+  if (request.permission === "write") return isPlanArtifactWrite(request, mode) ? "allow" : "deny"
+  if (request.permission === "edit") return isPlanArtifactEdit(request, mode) ? "allow" : "deny"
+  return "deny"
+}
+
+function isPlanArtifactWrite(request: PermissionRequest, mode: PlanModeState): boolean {
+  if (!mode.planPath) return false
+  const parsed = parseArgs(request.args)
+  const path = stringArg(parsed, "path")
+  if (!path) return false
+  return sameResolvedPath(resolve(request.cwd, path), resolve(request.cwd, mode.planPath))
+}
+
+function isPlanArtifactEdit(request: PermissionRequest, mode: PlanModeState): boolean {
+  if (!mode.planPath) return false
+  const patch = stringArg(parseArgs(request.args), "patch")
+  if (!patch) return false
+  const targets = patchTargetEntries(patch)
+  if (targets.length === 0) return false
+  return targets.every((target) => target.operation !== "delete" && sameResolvedPath(resolve(request.cwd, target.path), resolve(request.cwd, mode.planPath || "")))
+}
+
+function isPlanModeSafeCommand(command: string): boolean {
+  if (!command.trim()) return false
+  const destructive = [
+    /\brm\b/i,
+    /\brmdir\b/i,
+    /\bmv\b/i,
+    /\bcp\b/i,
+    /\bmkdir\b/i,
+    /\btouch\b/i,
+    /\bchmod\b/i,
+    /\bchown\b/i,
+    /\btee\b/i,
+    /\bdd\b/i,
+    /(^|[^<])>(?!>)/,
+    />>/,
+    /\bnpm\s+(install|uninstall|update|ci|link|publish)/i,
+    /\byarn\s+(add|remove|install|publish)/i,
+    /\bpnpm\s+(add|remove|install|publish)/i,
+    /\bpip\s+(install|uninstall)/i,
+    /\bgit\s+(add|commit|push|pull|merge|rebase|reset|checkout|stash|cherry-pick|revert|tag|init|clone)/i,
+    /\bsudo\b/i,
+    /\bkill\b/i,
+    /\bpkill\b/i,
+    /\bkillall\b/i,
+    /\b(vim?|nano|emacs|code)\b/i,
+  ]
+  if (destructive.some((pattern) => pattern.test(command))) return false
+  return [
+    /^\s*cat\b/,
+    /^\s*head\b/,
+    /^\s*tail\b/,
+    /^\s*less\b/,
+    /^\s*more\b/,
+    /^\s*grep\b/,
+    /^\s*find\b/,
+    /^\s*ls\b/,
+    /^\s*pwd\b/,
+    /^\s*echo\b/,
+    /^\s*printf\b/,
+    /^\s*wc\b/,
+    /^\s*sort\b/,
+    /^\s*uniq\b/,
+    /^\s*diff\b/,
+    /^\s*file\b/,
+    /^\s*stat\b/,
+    /^\s*du\b/,
+    /^\s*df\b/,
+    /^\s*tree\b/,
+    /^\s*which\b/,
+    /^\s*whereis\b/,
+    /^\s*type\b/,
+    /^\s*env\b/,
+    /^\s*printenv\b/,
+    /^\s*uname\b/,
+    /^\s*whoami\b/,
+    /^\s*id\b/,
+    /^\s*date\b/,
+    /^\s*ps\b/,
+    /^\s*git\s+(status|log|diff|show|branch|remote|config\s+--get)/i,
+    /^\s*git\s+ls-/i,
+    /^\s*npm\s+(list|ls|view|info|search|outdated|audit)/i,
+    /^\s*yarn\s+(list|info|why|audit)/i,
+    /^\s*node\s+--version/i,
+    /^\s*python\s+--version/i,
+    /^\s*rg\b/,
+    /^\s*fd\b/,
+    /^\s*jq\b/,
+    /^\s*sed\s+-n/i,
+    /^\s*awk\b/,
+  ].some((pattern) => pattern.test(command))
+}
+
+function patchTargetEntries(patch: string): Array<{ operation: "add" | "delete" | "update"; path: string }> {
+  const targets: Array<{ operation: "add" | "delete" | "update"; path: string }> = []
+  for (const line of patch.replace(/\r\n/g, "\n").split("\n")) {
+    if (line.startsWith("*** Add File: ")) targets.push({ operation: "add", path: line.slice("*** Add File: ".length).trim() })
+    else if (line.startsWith("*** Update File: ")) targets.push({ operation: "update", path: line.slice("*** Update File: ".length).trim() })
+    else if (line.startsWith("*** Delete File: ")) targets.push({ operation: "delete", path: line.slice("*** Delete File: ".length).trim() })
+  }
+  return targets.filter((target) => Boolean(target.path))
+}
+
+function sameResolvedPath(left: string, right: string): boolean {
+  return resolve(left) === resolve(right)
 }
 
 function permissionSessionLineage(sessionId: string | undefined, inheritedSessionIds: Map<string, string>): string[] {

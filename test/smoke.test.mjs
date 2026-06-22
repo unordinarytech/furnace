@@ -195,7 +195,7 @@ test("queued prompt previews truncate and track selected item", async () => {
 })
 
 test("slash autocomplete filters and inserts command text", async () => {
-  const { applySlashAutocomplete, slashAutocompleteMatches } = await import("../dist/ui/components/prompt-input.js")
+  const { applySlashAutocomplete, autocompleteWindow, slashAutocompleteMatches } = await import("../dist/ui/components/prompt-input.js")
   const { isKnownSlashCommand } = await import("../dist/commands.js")
   const items = [
     { label: "/model", value: "/model", description: "Select model" },
@@ -219,9 +219,22 @@ test("slash autocomplete filters and inserts command text", async () => {
   assert.deepEqual(skillsView.map((item) => item.value), ["/skills view"])
   assert.equal(applySlashAutocomplete("/skills v", 9, skillsView[0]), "/skills view ")
   assert.equal(isKnownSlashCommand("/history"), true)
+  assert.equal(isKnownSlashCommand("/plan"), true)
+  assert.equal(isKnownSlashCommand("/agent"), true)
+  assert.equal(isKnownSlashCommand("/mode"), true)
   assert.equal(isKnownSlashCommand("/skills"), true)
   assert.equal(isKnownSlashCommand("/quit"), true)
   assert.equal(isKnownSlashCommand("/not-real"), false)
+
+  const manyItems = Array.from({ length: 12 }, (_, index) => ({
+    label: `/command-${index}`,
+    value: `/command-${index}`,
+    selected: index === 10,
+  }))
+  const window = autocompleteWindow(manyItems, 8)
+  assert.equal(window.hiddenAbove > 0, true)
+  assert.equal(window.visible.some((item) => item.value === "/command-10"), true)
+  assert.equal(window.hiddenBelow, 0)
 })
 
 test("skill_manage tool activity renders proposed SKILL.md", async () => {

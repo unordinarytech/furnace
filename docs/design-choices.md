@@ -97,6 +97,40 @@ Current implementation:
 - `src/tools/registry.ts` registers `skill` and `skill_manage`.
 - `src/cli.ts` wires slash commands, reload, and hidden invocation.
 
+## Plan Mode
+
+Furnace treats planning as a first-class session mode.
+
+Reasoning:
+
+Planning should not depend only on the model remembering to be careful. A real mode lets the runtime change permissions, UI labels, system guidance, and execution handoff behavior together. The durable plan artifact also gives users and future turns a concrete object to review before implementation starts.
+
+Harness provenance:
+
+- OpenCode contributed the spine: a mode visible in runtime state, discoverable mode switching, and permission-policy enforcement instead of prompt-only safety.
+- Hermes Agent contributed the durable markdown plan artifact as the main planning output.
+- Pi contributed the compact bridge from planning to execution through an explicit user choice.
+
+Current behavior:
+
+- Sessions can be in `agent` or `plan` mode.
+- Mode changes are stored as `custom` session entries, so active mode is reconstructed from the session path.
+- `Tab` and `Shift+Tab` cycle mode in the TUI.
+- `/plan`, `/agent`, and `/mode [agent|plan]` expose the same controls through slash commands.
+- Plan mode writes only to `.furnace/plans/YYYY-MM-DD_HHMMSS-<slug>.md`.
+- Plan mode allows read/search/web/question/subagent exploration and denies side-effecting tools.
+- After a plan turn, the TUI offers `Execute`, `Refine`, or `Stay in plan mode`.
+- `Execute` switches back to agent mode and injects a hidden follow-up that points to the plan file.
+
+Current implementation:
+
+- `docs/plan.md` is the canonical plan-mode behavior reference.
+- `report/plan-mode.md` is the inspected-source research snapshot.
+- `src/plan-mode.ts` owns mode reconstruction, plan path generation, plan guidance, and execution handoff text.
+- `src/permissions.ts` enforces the mode-aware safety clamp.
+- `src/cli.ts` wires slash commands, mode entries, subagent inheritance, and the execute/refine/stay bridge.
+- `src/ui/ink-terminal.tsx` and `src/ui/components/prompt-input.tsx` render mode labels, Tab cycling, and the post-plan action panel.
+
 ## Tool Call Persistence
 
 Tool calls and results are persisted as first-class session entries instead of being only transient UI state.

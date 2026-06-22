@@ -9,6 +9,7 @@ Furnace intentionally combines a few proven patterns from other coding harnesses
 - OpenCode influenced the pending request architecture for `ask_question`: the model calls a tool, runtime creates a pending UI request, the user replies or rejects it, and the answer returns to the model as a normal tool result.
 - Pi influenced the `ask_question` terminal UX: multiple questions, left/right navigation, option selection, custom answers, cancellation/refusal, and a compact focused panel.
 - OpenCode CLI influenced queued prompt management: queued prompts are visible, selectable, editable, removable, and promotable.
+- OpenCode influenced plan mode as runtime state with keyboard/slash switching and policy enforcement; Hermes Agent influenced the durable markdown plan artifact; Pi influenced the execute/refine/stay bridge.
 - Hermes Agent influenced clarify semantics, busy-input framing, and subagent batching/background completion: "Other" custom answers, explicit refusal/dismissal handling, the future `interrupt | queue | steer` distinction, and grouped task completion re-entry.
 - OpenCode and Hermes Agent both influenced permissions: OpenCode's `allow | ask | deny` policy shape plus Hermes-style conversation-scoped broad approval.
 
@@ -97,6 +98,27 @@ Behavior:
 - Exact commands are submitted normally, so `/theme` followed by Enter still opens the theme picker instead of getting trapped in autocomplete.
 - Commands that commonly take an argument can insert a trailing space, for example `/theme `.
 - Slash commands submitted while Furnace is busy are handled as commands, not queued as model prompts. Safe commands like `/tasks`, `/reset-perms`, and `/theme <name>` run immediately; commands that would disrupt the active turn show a short status and can be retried after the turn finishes.
+
+## Plan Mode
+
+Plan mode is a first-class session mode for research and implementation planning.
+
+Controls:
+
+- Press `Tab` or `Shift+Tab` from the prompt to cycle between `agent` and `plan`.
+- `/plan [prompt]` switches to plan mode. With a prompt, Furnace immediately plans that request.
+- `/agent` switches back to normal implementation mode.
+- `/mode`, `/mode plan`, and `/mode agent` inspect or switch the current mode.
+
+Runtime behavior:
+
+1. Entering plan mode creates a target artifact path under `.furnace/plans/YYYY-MM-DD_HHMMSS-<slug>.md`.
+2. The model gets plan-specific guidance that asks for exact files, commands, tests, risks, and bite-sized implementation steps.
+3. The permission layer allows exploration and denies side effects outside the active plan file.
+4. After a plan-mode turn finishes, Furnace shows `Execute`, `Refine`, and `Stay in plan mode`.
+5. `Execute` switches to agent mode and injects a hidden follow-up telling the agent to read and implement the plan file.
+
+See `docs/plan.md` for the full behavior and safety policy.
 
 ## Skills
 

@@ -3,6 +3,7 @@ import * as React from "react"
 
 import { slashCommandDefinitions } from "../commands.js"
 import type { PermissionDecision, PermissionRequest } from "../permissions.js"
+import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
@@ -16,6 +17,7 @@ import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
+  clearPlanActions(): void
   requestQuestions(request: AskQuestionRequest): Promise<AskQuestionResponse>
   requestApproval(request: PermissionRequest): Promise<PermissionDecision>
   run(): Promise<void>
@@ -24,6 +26,7 @@ export type FurnaceTerminal = {
   setBusy(busy: boolean): void
   setInputDraft(value: string): void
   setLofi(enabled: boolean): void
+  setMode(mode: AgentMode, planPath?: string): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
@@ -37,6 +40,7 @@ export type FurnaceTerminal = {
     onCancel: () => void,
   ): void
   showThemePicker(choices: ThemeChoice[], currentTheme: string, onSelect: (theme: string, done: boolean) => void, onCancel: () => void): void
+  showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
   setModel(model: string, settings: ModelSettings): void
   setTheme(theme: string): void
   setTitle(title: string): void
@@ -73,6 +77,8 @@ export type QueuedPrompt = {
   text: string
 }
 
+export type PlanAction = "execute" | "refine" | "stay"
+
 type CreateFurnaceTerminalOptions = {
   cwd: string
   model: string
@@ -81,6 +87,7 @@ type CreateFurnaceTerminalOptions = {
   onQueuePromote?: (id: string) => void
   onQueueRemove?: (id: string) => void
   onTaskBackground?: () => void
+  onModeCycle?: (direction: 1 | -1) => void
   themeName: string
   title: string
   onSubmit: (text: string) => void
@@ -99,6 +106,11 @@ type UiScreen =
     }
   | { kind: "theme"; choices: ThemeChoice[]; currentTheme: string; onCancel: () => void; onSelect: (theme: string, done: boolean) => void }
 
+type PlanActionState = {
+  onSelect: (action: PlanAction) => void
+  planPath: string
+}
+
 type ApprovalPromptState = PermissionRequest & {
   resolve: (decision: PermissionDecision) => void
 }
@@ -107,7 +119,7 @@ type QuestionPromptState = AskQuestionRequest & {
   resolve: (response: AskQuestionResponse) => void
 }
 
-type UiFocus = "input" | "question" | "queue" | "tasks"
+type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks"
 
 type UiState = {
   approval?: ApprovalPromptState
@@ -117,8 +129,11 @@ type UiState = {
   focus: UiFocus
   inputDraft: string
   lofiEnabled: boolean
+  mode: AgentMode
   model: string
   modelSettings: ModelSettings
+  planAction?: PlanActionState
+  planPath?: string
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
@@ -145,6 +160,9 @@ class UiStore {
   readonly taskHandlers: {
     onBackground?: () => void
   }
+  readonly modeHandlers: {
+    onCycle?: (direction: 1 | -1) => void
+  }
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -156,6 +174,9 @@ class UiStore {
     this.taskHandlers = {
       onBackground: options.onTaskBackground,
     }
+    this.modeHandlers = {
+      onCycle: options.onModeCycle,
+    }
     this.state = {
       approval: undefined,
       busy: false,
@@ -164,8 +185,11 @@ class UiStore {
       focus: "input",
       inputDraft: "",
       lofiEnabled: false,
+      mode: "agent",
       model: options.model,
       modelSettings: options.modelSettings,
+      planAction: undefined,
+      planPath: undefined,
       question: undefined,
       queuedPrompts: [],
       screen: { kind: "chat" },
@@ -217,6 +241,7 @@ function normalizeUiState(state: UiState): UiState {
   if (state.focus === "queue" && state.queuedPrompts.length === 0) return { ...state, focus: "input" }
   if (state.focus === "tasks" && state.tasks.length === 0) return { ...state, focus: "input" }
   if (state.focus === "question" && !state.question) return { ...state, focus: "input" }
+  if (state.focus === "plan_actions" && !state.planAction) return { ...state, focus: "input" }
   return state
 }
 
@@ -235,6 +260,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   return {
     clearToolActivities() {
       store.update({ toolActivities: [] })
+    },
+    clearPlanActions() {
+      store.update((state) => ({ ...state, focus: state.focus === "plan_actions" ? "input" : state.focus, planAction: undefined }))
     },
     requestQuestions(request) {
       return new Promise<AskQuestionResponse>((resolve) => {
@@ -267,6 +295,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setLofi(enabled) {
       store.update({ lofiEnabled: enabled })
     },
+    setMode(mode, planPath) {
+      store.update({ mode, planPath })
+    },
     setThinking(thinking, message = "thinking") {
       store.update({ thinking, thinkingMessage: message })
     },
@@ -297,6 +328,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     showThemePicker(choices, currentTheme, onSelect, onCancel) {
       store.update({ screen: { kind: "theme", choices, currentTheme, onCancel, onSelect }, title: "Theme" })
+    },
+    showPlanActions(planPath, onSelect) {
+      store.update((state) => ({ ...state, focus: "plan_actions", planAction: { onSelect, planPath } }))
     },
     setModel(model, settings) {
       store.update((state) => ({ ...state, model, modelSettings: settings }))
@@ -347,7 +381,7 @@ function FurnaceApp({
 
   return (
     <AppShell>
-      <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} title={state.title} />
+      <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} title={state.title} />
       <AppShell.Content>
         {state.screen.kind === "history" ? (
           <HistoryScreen screen={state.screen} store={store} />
@@ -358,7 +392,7 @@ function FurnaceApp({
         ) : (
           <>
             <ChatScreen
-              interactionActive={Boolean(state.approval) || state.focus === "question" || state.focus === "queue" || state.focus === "tasks"}
+              interactionActive={Boolean(state.approval) || state.focus === "plan_actions" || state.focus === "question" || state.focus === "queue" || state.focus === "tasks"}
               onScrollStateChange={(canScrollUp) => {
                 if (store.getSnapshot().chatCanScrollUp !== canScrollUp) store.update({ chatCanScrollUp: canScrollUp })
               }}
@@ -369,6 +403,7 @@ function FurnaceApp({
               transcript={state.transcript}
             />
             {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
+            {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
             {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
             {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
             {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
@@ -385,8 +420,10 @@ function FurnaceApp({
         onEmptyUp={() => {
           if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
         }}
+        onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
         onSubmit={onSubmit}
         placeholder={promptPlaceholder(state)}
+        prefix={state.mode === "plan" ? "plan>" : ">"}
         value={state.inputDraft}
       />
       <AppShell.Hints items={hintItemsForState(state)} />
@@ -431,26 +468,30 @@ function taskHintItems(state: UiState): string[] {
 
 function hintItemsForState(state: UiState): string[] {
   if (state.approval) return approvalHintItems()
+  if (state.focus === "plan_actions" && state.planAction) return ["up/down select", "enter select", "esc stay"]
   if (state.focus === "question" && state.question) return questionHintItems()
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
   if (state.focus === "tasks" && state.tasks.length > 0) return taskHintItems(state)
   const extras: string[] = []
+  if (state.planAction) extras.push("up plan actions")
   if (state.question) extras.push("up answer question")
   if (state.tasks.some((task) => task.status === "running")) extras.push("up task status")
   if (state.queuedPrompts.length > 0) extras.push("up manage queue")
-  return [...extras, ...hintItems(state.screen.kind)]
+  return [...extras, "tab mode", ...hintItems(state.screen.kind)]
 }
 
 function promptPlaceholder(state: UiState): string {
   if (state.approval) return "Resolve the permission prompt..."
+  if (state.planAction) return "Choose a plan action, or press esc to keep planning..."
   if (state.question) return state.busy ? "Type a follow-up to queue, or press up to answer..." : "Type a reply, or press up to answer..."
   if (state.busy) return "Furnace is working; submit to queue..."
-  return "Ask Furnace or type /theme"
+  return state.mode === "plan" ? "Describe what to plan, or type /agent" : "Ask Furnace or type /plan"
 }
 
 function reservedInteractionRows(state: UiState): number {
   if (state.approval) return 8
   let rows = 0
+  if (state.planAction) rows += 6
   if (state.question) rows += 9
   if (state.tasks.length > 0) rows += taskPanelRows(state.tasks)
   if (state.queuedPrompts.length > 0) rows += queuedPromptPanelRows(state.queuedPrompts)
@@ -491,6 +532,7 @@ function queuedPromptPanelRows(prompts: QueuedPrompt[]): number {
 
 function panelFocusOrder(state: UiState): UiFocus[] {
   const order: UiFocus[] = []
+  if (state.planAction) order.push("plan_actions")
   if (state.question) order.push("question")
   if (state.tasks.length > 0) order.push("tasks")
   if (state.queuedPrompts.length > 0) order.push("queue")
@@ -552,6 +594,41 @@ type QuestionChoiceValue = `option:${number}` | "continue" | "custom" | "refuse"
 
 type QuestionDraftAnswer = AskQuestionAnswer & {
   label: string
+}
+
+function PlanActionPanel({ action, store }: { action: PlanActionState; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const active = store.getSnapshot().focus === "plan_actions"
+  const items: Array<SelectListItem<PlanAction>> = [
+    { label: "Execute", value: "execute", description: "switch to agent mode and run the plan" },
+    { label: "Refine", value: "refine", description: "keep plan mode and edit the plan" },
+    { label: "Stay in plan mode", value: "stay", description: "dismiss this choice" },
+  ]
+
+  const resolve = React.useCallback(
+    (value: PlanAction) => {
+      store.update((state) => ({ ...state, focus: "input", planAction: undefined }))
+      action.onSelect(value)
+    },
+    [action, store],
+  )
+
+  return (
+    <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>Plan ready</Text>
+        <Text color={theme.colors.mutedForeground}>{action.planPath}</Text>
+      </Box>
+      <SelectList
+        active={active}
+        items={items}
+        maxRows={3}
+        onBoundary={(direction) => focusAdjacentPanel(store, direction)}
+        onCancel={() => resolve("stay")}
+        onSelect={(item) => resolve(item.value)}
+      />
+    </Box>
+  )
 }
 
 function QuestionPrompt({ request, store }: { request: QuestionPromptState; store: UiStore }): React.ReactNode {
@@ -1986,6 +2063,10 @@ function formatFooterSettings(settings: ModelSettings): string {
   const reasoning = settings.reasoningEffort && settings.reasoningEffort !== "none" ? settings.reasoningEffort : "auto"
   const fast = settings.fast ? ", fast" : ""
   return `${context} (${reasoning}${fast})`
+}
+
+function modeLabel(state: UiState): string {
+  return state.mode === "plan" ? `plan${state.planPath ? ` ${state.planPath}` : ""}` : "agent"
 }
 
 function supportsReasoning(choice: ModelChoice | undefined): boolean {

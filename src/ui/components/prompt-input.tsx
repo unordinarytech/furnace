@@ -10,6 +10,7 @@ export type PromptInputProps = {
   disabled?: boolean
   onChange?: (value: string) => void
   onEmptyUp?: () => void
+  onModeCycle?: (direction: 1 | -1) => void
   onSubmit: (value: string) => void
   placeholder?: string
   prefix?: string
@@ -34,6 +35,7 @@ export function PromptInput({
   disabled = false,
   onChange,
   onEmptyUp,
+  onModeCycle,
   onSubmit,
   placeholder = "Ask Furnace...",
   prefix = ">",
@@ -74,6 +76,16 @@ export function PromptInput({
 
   useInput((input, key) => {
     if (!enabled) return
+    const reverseTab = input === "\u001b[Z"
+    if (reverseTab) {
+      onModeCycle?.(-1)
+      return
+    }
+    if (key.tab && !autocompleteActive) {
+      const shifted = Boolean((key as { shift?: boolean }).shift)
+      onModeCycle?.(shifted ? -1 : 1)
+      return
+    }
     if (key.ctrl || key.meta) return
 
     if (autocompleteActive) {
@@ -181,14 +193,15 @@ export function PromptInput({
 
 function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] }): React.ReactNode {
   const theme = useTheme()
-  const visible = items.slice(0, 8)
+  const window = autocompleteWindow(items)
   return (
     <Box borderStyle="round" borderColor={theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Commands</Text>
         <Text color={theme.colors.mutedForeground}>tab/enter complete</Text>
       </Box>
-      {visible.map((item) => (
+      {window.hiddenAbove > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenAbove} more above</Text> : null}
+      {window.visible.map((item) => (
         <Box key={item.value} justifyContent="space-between">
           <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected}>
             {item.selected ? "› " : "  "}{item.label}
@@ -196,9 +209,21 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
           {item.description ? <Text color={theme.colors.mutedForeground}> {item.description}</Text> : null}
         </Box>
       ))}
-      {items.length > visible.length ? <Text color={theme.colors.mutedForeground}>{items.length - visible.length} more below</Text> : null}
+      {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>
   )
+}
+
+export function autocompleteWindow(items: PromptAutocompleteMatch[], maxVisible = 8): { hiddenAbove: number; hiddenBelow: number; visible: PromptAutocompleteMatch[] } {
+  const selected = items.findIndex((item) => item.selected)
+  const selectedIndex = selected >= 0 ? selected : 0
+  const start = Math.min(Math.max(0, items.length - maxVisible), Math.max(0, selectedIndex - Math.floor(maxVisible / 2)))
+  const visible = items.slice(start, start + maxVisible)
+  return {
+    hiddenAbove: start,
+    hiddenBelow: Math.max(0, items.length - start - visible.length),
+    visible,
+  }
 }
 
 export function slashAutocompleteMatches(

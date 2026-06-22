@@ -153,6 +153,14 @@ Current safety behavior:
 - `read` tracks file size and mtime for each returned path/range within the active session. In real sessions this is stored in SQLite, so re-reading the same unchanged range after resume/restart returns an unchanged notice instead of repeating the file contents.
 - `write` and `edit` warn when a file changed after Furnace last read it in the active session, including after resume/restart. Approval still happens before execution; stale warnings appear in the result after an approved modification.
 
+Plan mode safety:
+
+- Plan mode is enforced before normal conversation-scoped grants, so `Allow all tools for conversation` cannot bypass it.
+- Plan mode allows read/search/web/question/subagent exploration.
+- `write` and `edit` are allowed only for the active `.furnace/plans/YYYY-MM-DD_HHMMSS-<slug>.md` artifact.
+- Mutating `bash` commands, `skill_manage`, commits, package installs, redirects, destructive filesystem commands, and unknown side-effecting tools are denied.
+- Read-only `bash` commands such as `git status`, `git diff`, `rg`, `ls`, and `sed -n` are allowed for exploration.
+
 Approval prompt choices:
 
 - `Allow once`: approve only the current tool call.

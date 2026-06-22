@@ -19,6 +19,70 @@ test("default permissions allow low-risk tools and ask for modifying tools", () 
   assert.equal(defaultPermissionAction("bash"), "ask")
 })
 
+test("plan mode denies side effects except the active plan artifact", async () => {
+  const store = new SessionPermissionStore()
+  const planPath = ".furnace/plans/2026-06-22_174500-plan.md"
+  store.setSessionMode("session-1", "plan", planPath)
+
+  const planWrite = createToolPermissionRequest({
+    args: JSON.stringify({ path: planPath, content: "# Plan\n", overwrite: true }),
+    callId: "call-plan-write",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "write",
+  })
+  const sourceWrite = createToolPermissionRequest({
+    args: JSON.stringify({ path: "src/app.ts", content: "changed", overwrite: true }),
+    callId: "call-source-write",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "write",
+  })
+  const mutatingBash = createToolPermissionRequest({
+    args: JSON.stringify({ command: "npm install left-pad" }),
+    callId: "call-bash",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "bash",
+  })
+  const readOnlyBash = createToolPermissionRequest({
+    args: JSON.stringify({ command: "git status --short" }),
+    callId: "call-status",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "bash",
+  })
+  const skillManage = createToolPermissionRequest({
+    args: JSON.stringify({ name: "new-skill" }),
+    callId: "call-skill-manage",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "skill_manage",
+  })
+
+  assert.equal(await store.authorize(planWrite), "allow_once")
+  assert.equal(await store.authorize(sourceWrite, async () => "allow_all_session"), "deny")
+  assert.equal(await store.authorize(mutatingBash), "deny")
+  assert.equal(await store.authorize(readOnlyBash), "allow_once")
+  assert.equal(await store.authorize(skillManage), "deny")
+})
+
+test("plan mode overrides inherited broad grants", async () => {
+  const store = new SessionPermissionStore()
+  const parentWrite = createToolPermissionRequest({
+    args: JSON.stringify({ path: "src/app.ts", content: "changed", overwrite: true }),
+    callId: "call-parent",
+    cwd: "/tmp/project",
+    sessionId: "parent",
+    toolName: "write",
+  })
+  await store.authorize(parentWrite, async () => "allow_all_session")
+  store.setSessionMode("parent", "plan", ".furnace/plans/2026-06-22_174500-plan.md")
+  store.inheritSession("child", "parent")
+
+  assert.equal(store.evaluate({ ...parentWrite, callId: "call-child", sessionId: "child" }), "deny")
+})
+
 test("child sessions inherit parent conversation grants", async () => {
   const store = new SessionPermissionStore()
   const parentBash = createToolPermissionRequest({
