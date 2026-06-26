@@ -1201,12 +1201,20 @@ function slashAutocompleteItems(skills: Skill[]): PromptAutocompleteItem[] {
       label: command.usage || command.name,
       value: command.name,
     })),
-    ...skills.map((skill) => ({
-      description: skill.description,
-      insertText: `/skill:${skill.name} `,
-      label: `/skill:${skill.name}`,
-      value: `/skill:${skill.name}`,
-    })),
+    ...skills.flatMap((skill) => [
+      {
+        description: skill.description,
+        insertText: `/skill:${skill.name} `,
+        label: `/${skill.name}`,
+        value: `/${skill.name}`,
+      },
+      {
+        description: skill.description,
+        insertText: `/skill:${skill.name} `,
+        label: `/skill:${skill.name}`,
+        value: `/skill:${skill.name}`,
+      },
+    ]),
   ]
 }
 
