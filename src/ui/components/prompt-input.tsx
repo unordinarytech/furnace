@@ -239,11 +239,17 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
       </Box>
       {window.hiddenAbove > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenAbove} more above</Text> : null}
       {window.visible.map((item) => (
-        <Box key={item.value} justifyContent="space-between">
-          <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected}>
-            {item.selected ? "› " : "  "}{item.label}
-          </Text>
-          {item.description ? <Text color={theme.colors.mutedForeground}> {item.description}</Text> : null}
+        <Box key={item.value}>
+          <Box flexShrink={0} minWidth={28}>
+            <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected} wrap="truncate">
+              {item.selected ? "› " : "  "}{item.label}
+            </Text>
+          </Box>
+          {item.description ? (
+            <Text color={theme.colors.mutedForeground} wrap="truncate">
+              {"  "}{item.description}
+            </Text>
+          ) : null}
         </Box>
       ))}
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
