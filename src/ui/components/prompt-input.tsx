@@ -285,7 +285,8 @@ export function applySlashAutocomplete(value: string, cursorOffset: number, item
   const token = slashAutocompleteToken(value, cursorOffset)
   if (!token) return value
   const insertText = item.insertText || item.value
-  return `${insertText}${value.slice(cursorOffset)}`
+  const tokenStart = cursorOffset - token.length
+  return `${value.slice(0, tokenStart)}${insertText}${value.slice(cursorOffset)}`
 }
 
 function slashAutocompleteToken(value: string, cursorOffset: number): string | undefined {
@@ -293,8 +294,16 @@ function slashAutocompleteToken(value: string, cursorOffset: number): string | u
   const beforeCursor = value.slice(0, cursorOffset)
   const afterCursor = value.slice(cursorOffset)
   if (afterCursor.trim()) return undefined
-  if (!beforeCursor.startsWith("/")) return undefined
-  return beforeCursor
+  // Find the last '/' that is at start of string or preceded by whitespace
+  let slashIndex = -1
+  for (let i = beforeCursor.length - 1; i >= 0; i--) {
+    if (beforeCursor[i] === "/" && (i === 0 || /\s/.test(beforeCursor[i - 1]))) {
+      slashIndex = i
+      break
+    }
+  }
+  if (slashIndex < 0) return undefined
+  return beforeCursor.slice(slashIndex)
 }
 
 export function lofiChibiFrame(tick: number): string {

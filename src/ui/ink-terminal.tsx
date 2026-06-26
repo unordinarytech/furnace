@@ -281,7 +281,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         alternateScreen: true,
         exitOnCtrlC: false,
         incrementalRendering: true,
-        maxFps: 12,
+        maxFps: 30,
       })
       return instance.waitUntilExit().then(() => undefined)
     },
@@ -1081,7 +1081,10 @@ function ChatScreen({
   const maxScrollOffset = Math.max(0, transcriptLines.length - viewportRows)
   const pageScrollRows = Math.max(1, viewportRows - 2)
   const end = Math.max(0, transcriptLines.length - Math.min(scrollOffset, maxScrollOffset))
-  const visibleLines = visibleTranscriptWindow(transcriptLines, Math.max(0, end - viewportRows), end, viewportRows)
+  const visibleLines = React.useMemo(
+    () => visibleTranscriptWindow(transcriptLines, Math.max(0, end - viewportRows), end, viewportRows),
+    [end, transcriptLines, viewportRows],
+  )
 
   React.useEffect(() => {
     setScrollOffset((current) => Math.min(current, maxScrollOffset))
@@ -1154,7 +1157,7 @@ type TranscriptLineData = {
   toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary"
 }
 
-function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
+const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
   const theme = useTheme()
   if (line.kind === "blank") return <Text> </Text>
   if (line.kind === "spinner") return <Spinner label={line.text} />
@@ -1173,7 +1176,7 @@ function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode
   }
   if (line.role === "assistant") return <MarkdownLine text={line.text || " "} />
   return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
-}
+})
 
 function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }): React.ReactNode {
   const theme = useTheme()
