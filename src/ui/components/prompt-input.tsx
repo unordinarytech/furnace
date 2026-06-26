@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from "ink"
+import { Box, Text, useInput, usePaste } from "ink"
 import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
@@ -74,6 +74,13 @@ export function PromptInput({
     setSelectedAutocompleteIndex(0)
   }, [autocompleteItems, value])
 
+  usePaste((pastedText) => {
+    if (!enabled) return
+    const sanitized = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    setValue((current) => current.slice(0, cursorOffset) + sanitized + current.slice(cursorOffset))
+    setCursorOffset((current) => current + sanitized.length)
+  })
+
   useInput((input, key) => {
     if (!enabled) return
     const reverseTab = input === "\u001b[Z"
@@ -86,7 +93,37 @@ export function PromptInput({
       onModeCycle?.(shifted ? -1 : 1)
       return
     }
-    if (key.ctrl || key.meta) return
+    if (key.ctrl) {
+      if (input === "a") {
+        setCursorOffset(0)
+        return
+      }
+      if (input === "e") {
+        setCursorOffset(value.length)
+        return
+      }
+      if (input === "k") {
+        setValue((current) => current.slice(0, cursorOffset))
+        return
+      }
+      if (input === "u") {
+        setValue((current) => current.slice(cursorOffset))
+        setCursorOffset(0)
+        return
+      }
+      if (input === "w") {
+        // delete word backwards from cursor
+        const before = value.slice(0, cursorOffset)
+        const trimmed = before.trimEnd()
+        const lastSpace = trimmed.lastIndexOf(" ")
+        const newCursor = lastSpace < 0 ? 0 : lastSpace + 1
+        setValue((current) => current.slice(0, newCursor) + current.slice(cursorOffset))
+        setCursorOffset(newCursor)
+        return
+      }
+      return
+    }
+    if (key.meta) return
 
     if (autocompleteActive) {
       if (key.escape) {

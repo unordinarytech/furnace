@@ -169,6 +169,7 @@ async function runInteractive(input: {
         running = false
         activeAbortController = undefined
         terminal.setBusy(false)
+        process.stdout.write("\x07")
         terminal.setThinking(false)
         terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
       })
@@ -637,6 +638,7 @@ async function runInteractive(input: {
       running = false
       activeAbortController = undefined
       terminal.setBusy(false)
+      process.stdout.write("\x07")
       syncQueuedPrompts()
     }
   }
