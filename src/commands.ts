@@ -12,6 +12,7 @@ export type ParsedPrompt = {
 }
 
 export const slashCommandDefinitions: SlashCommandDefinition[] = [
+  { name: "/clear", description: "Clear the conversation display" },
   { name: "/new", description: "Start a fresh conversation" },
   { name: "/history", aliases: ["/historu"], description: "Open saved conversations" },
   { name: "/model", description: "Select model", usage: "/model" },

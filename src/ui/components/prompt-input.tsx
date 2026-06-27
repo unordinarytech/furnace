@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from "ink"
+import { Box, Text, useInput, usePaste } from "ink"
 import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
@@ -8,6 +8,7 @@ export type PromptInputProps = {
   autocompleteItems?: PromptAutocompleteItem[]
   busy?: boolean
   disabled?: boolean
+  historyItems?: string[]
   onChange?: (value: string) => void
   onEmptyUp?: () => void
   onModeCycle?: (direction: 1 | -1) => void
@@ -33,6 +34,7 @@ export function PromptInput({
   autocompleteItems = [],
   busy = false,
   disabled = false,
+  historyItems = [],
   onChange,
   onEmptyUp,
   onModeCycle,
@@ -45,6 +47,8 @@ export function PromptInput({
   const [localValue, setLocalValue] = React.useState("")
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = React.useState(0)
+  const [historyIndex, setHistoryIndex] = React.useState(-1)
+  const historySavedDraft = React.useRef("")
   const previousControlledValue = React.useRef(controlledValue)
   const value = controlledValue ?? localValue
   const enabled = active && !disabled
@@ -74,6 +78,18 @@ export function PromptInput({
     setSelectedAutocompleteIndex(0)
   }, [autocompleteItems, value])
 
+  React.useEffect(() => {
+    setHistoryIndex(-1)
+    historySavedDraft.current = ""
+  }, [historyItems])
+
+  usePaste((pastedText) => {
+    if (!enabled) return
+    const sanitized = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    setValue((current) => current.slice(0, cursorOffset) + sanitized + current.slice(cursorOffset))
+    setCursorOffset((current) => current + sanitized.length)
+  })
+
   useInput((input, key) => {
     if (!enabled) return
     const reverseTab = input === "\u001b[Z"
@@ -86,7 +102,37 @@ export function PromptInput({
       onModeCycle?.(shifted ? -1 : 1)
       return
     }
-    if (key.ctrl || key.meta) return
+    if (key.ctrl) {
+      if (input === "a") {
+        setCursorOffset(0)
+        return
+      }
+      if (input === "e") {
+        setCursorOffset(value.length)
+        return
+      }
+      if (input === "k") {
+        setValue((current) => current.slice(0, cursorOffset))
+        return
+      }
+      if (input === "u") {
+        setValue((current) => current.slice(cursorOffset))
+        setCursorOffset(0)
+        return
+      }
+      if (input === "w") {
+        // delete word backwards from cursor
+        const before = value.slice(0, cursorOffset)
+        const trimmed = before.trimEnd()
+        const lastSpace = trimmed.lastIndexOf(" ")
+        const newCursor = lastSpace < 0 ? 0 : lastSpace + 1
+        setValue((current) => current.slice(0, newCursor) + current.slice(cursorOffset))
+        setCursorOffset(newCursor)
+        return
+      }
+      return
+    }
+    if (key.meta) return
 
     if (autocompleteActive) {
       if (key.escape) {
@@ -111,6 +157,47 @@ export function PromptInput({
       }
     }
 
+    if (historyItems.length > 0 && value.length === 0 && key.upArrow && historyIndex === -1) {
+      historySavedDraft.current = ""
+      setHistoryIndex(0)
+      setValue(historyItems[0])
+      setCursorOffset(historyItems[0].length)
+      return
+    }
+
+    if (historyIndex >= 0) {
+      if (key.upArrow) {
+        if (historyIndex < historyItems.length - 1) {
+          const next = historyIndex + 1
+          setHistoryIndex(next)
+          setValue(historyItems[next])
+          setCursorOffset(historyItems[next].length)
+        } else {
+          onEmptyUp?.()
+        }
+        return
+      }
+      if (key.downArrow) {
+        if (historyIndex > 0) {
+          const next = historyIndex - 1
+          setHistoryIndex(next)
+          setValue(historyItems[next])
+          setCursorOffset(historyItems[next].length)
+        } else {
+          setHistoryIndex(-1)
+          setValue(historySavedDraft.current)
+          setCursorOffset(historySavedDraft.current.length)
+        }
+        return
+      }
+      if (key.escape) {
+        setHistoryIndex(-1)
+        setValue(historySavedDraft.current)
+        setCursorOffset(historySavedDraft.current.length)
+        return
+      }
+    }
+
     if (key.upArrow && value.length === 0) {
       onEmptyUp?.()
       return
@@ -119,6 +206,8 @@ export function PromptInput({
     if (key.return) {
       const submitted = value.trim()
       if (!submitted) return
+      setHistoryIndex(-1)
+      historySavedDraft.current = ""
       setValue("")
       setCursorOffset(0)
       onSubmit(submitted)
@@ -202,11 +291,17 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
       </Box>
       {window.hiddenAbove > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenAbove} more above</Text> : null}
       {window.visible.map((item) => (
-        <Box key={item.value} justifyContent="space-between">
-          <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected}>
-            {item.selected ? "› " : "  "}{item.label}
-          </Text>
-          {item.description ? <Text color={theme.colors.mutedForeground}> {item.description}</Text> : null}
+        <Box key={item.value}>
+          <Box flexShrink={0} minWidth={28}>
+            <Text color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected} wrap="truncate">
+              {item.selected ? "› " : "  "}{item.label}
+            </Text>
+          </Box>
+          {item.description ? (
+            <Text color={theme.colors.mutedForeground} wrap="truncate">
+              {"  "}{item.description}
+            </Text>
+          ) : null}
         </Box>
       ))}
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
@@ -248,7 +343,8 @@ export function applySlashAutocomplete(value: string, cursorOffset: number, item
   const token = slashAutocompleteToken(value, cursorOffset)
   if (!token) return value
   const insertText = item.insertText || item.value
-  return `${insertText}${value.slice(cursorOffset)}`
+  const tokenStart = cursorOffset - token.length
+  return `${value.slice(0, tokenStart)}${insertText}${value.slice(cursorOffset)}`
 }
 
 function slashAutocompleteToken(value: string, cursorOffset: number): string | undefined {
@@ -256,8 +352,16 @@ function slashAutocompleteToken(value: string, cursorOffset: number): string | u
   const beforeCursor = value.slice(0, cursorOffset)
   const afterCursor = value.slice(cursorOffset)
   if (afterCursor.trim()) return undefined
-  if (!beforeCursor.startsWith("/")) return undefined
-  return beforeCursor
+  // Find the last '/' that is at start of string or preceded by whitespace
+  let slashIndex = -1
+  for (let i = beforeCursor.length - 1; i >= 0; i--) {
+    if (beforeCursor[i] === "/" && (i === 0 || /\s/.test(beforeCursor[i - 1]))) {
+      slashIndex = i
+      break
+    }
+  }
+  if (slashIndex < 0) return undefined
+  return beforeCursor.slice(slashIndex)
 }
 
 export function lofiChibiFrame(tick: number): string {

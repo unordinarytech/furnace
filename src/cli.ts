@@ -169,6 +169,7 @@ async function runInteractive(input: {
         running = false
         activeAbortController = undefined
         terminal.setBusy(false)
+        process.stdout.write("\x07")
         terminal.setThinking(false)
         terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: formatError(error) }])
       })
@@ -197,6 +198,10 @@ async function runInteractive(input: {
       const result = lofi.toggle()
       terminal.setLofi(result.enabled)
       showTransientStatus(result.message)
+      return
+    }
+    if (command.name === "/clear") {
+      terminal.clearTranscriptDisplay()
       return
     }
     if (isSkillCommand(command.name)) {
@@ -637,6 +642,7 @@ async function runInteractive(input: {
       running = false
       activeAbortController = undefined
       terminal.setBusy(false)
+      process.stdout.write("\x07")
       syncQueuedPrompts()
     }
   }
@@ -1199,12 +1205,20 @@ function slashAutocompleteItems(skills: Skill[]): PromptAutocompleteItem[] {
       label: command.usage || command.name,
       value: command.name,
     })),
-    ...skills.map((skill) => ({
-      description: skill.description,
-      insertText: `/skill:${skill.name} `,
-      label: `/skill:${skill.name}`,
-      value: `/skill:${skill.name}`,
-    })),
+    ...skills.flatMap((skill) => [
+      {
+        description: skill.description,
+        insertText: `/skill:${skill.name} `,
+        label: `/${skill.name}`,
+        value: `/${skill.name}`,
+      },
+      {
+        description: skill.description,
+        insertText: `/skill:${skill.name} `,
+        label: `/skill:${skill.name}`,
+        value: `/skill:${skill.name}`,
+      },
+    ]),
   ]
 }
 

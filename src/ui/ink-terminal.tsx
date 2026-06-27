@@ -1,5 +1,6 @@
-import { Box, Text, render, useApp, useInput, useWindowSize, type Instance } from "ink"
+import { Box, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
+import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
 import type { PermissionDecision, PermissionRequest } from "../permissions.js"
@@ -8,6 +9,7 @@ import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
+import { truncateEnd } from "./utils.js"
 import { AppShell } from "./components/app-shell.js"
 import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
@@ -45,6 +47,7 @@ export type FurnaceTerminal = {
   setTheme(theme: string): void
   setTitle(title: string): void
   setToolActivities(activities: ToolActivity[]): void
+  clearTranscriptDisplay(): void
   setTranscript(transcript: TranscriptMessage[]): void
 }
 
@@ -146,6 +149,7 @@ type UiState = {
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
+  transcriptOffset: number
 }
 
 class UiStore {
@@ -202,6 +206,7 @@ class UiStore {
       tasks: [],
       toolActivities: [],
       transcript: [],
+      transcriptOffset: 0,
     }
   }
 
@@ -278,6 +283,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
         alternateScreen: true,
         exitOnCtrlC: false,
+        incrementalRendering: true,
         maxFps: 30,
       })
       return instance.waitUntilExit().then(() => undefined)
@@ -345,8 +351,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setToolActivities(activities) {
       store.update({ toolActivities: activities })
     },
+    clearTranscriptDisplay() {
+      store.update((state) => ({ ...state, transcriptOffset: state.transcript.length }))
+    },
     setTranscript(transcript) {
-      store.update({ screen: { kind: "chat" }, transcript })
+      store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0 })
     },
   }
 }
@@ -379,6 +388,15 @@ function FurnaceApp({
     }
   })
 
+  const sentMessages = React.useMemo(
+    () =>
+      state.transcript
+        .filter((m) => m.role === "user" && m.content.trim())
+        .map((m) => m.content)
+        .reverse(),
+    [state.transcript],
+  )
+
   return (
     <AppShell>
       <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} title={state.title} />
@@ -400,7 +418,7 @@ function FurnaceApp({
               thinkingMessage={state.thinkingMessage}
               reservedRows={reservedInteractionRows(state)}
               toolActivities={state.toolActivities}
-              transcript={state.transcript}
+              transcript={state.transcript.slice(state.transcriptOffset)}
             />
             {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
             {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
@@ -416,6 +434,7 @@ function FurnaceApp({
         busy={state.busy}
         disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
         autocompleteItems={state.slashCommandItems}
+        historyItems={sentMessages}
         onChange={(value) => store.update({ inputDraft: value })}
         onEmptyUp={() => {
           if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
@@ -434,16 +453,11 @@ function FurnaceApp({
 
 function LofiCorner(): React.ReactNode {
   const theme = useTheme()
-  const [tick, setTick] = React.useState(0)
-
-  React.useEffect(() => {
-    const interval = setInterval(() => setTick((current) => current + 1), 550)
-    return () => clearInterval(interval)
-  }, [])
+  const { frame } = useAnimation({ interval: 500 })
 
   return (
     <Box justifyContent="flex-end" paddingRight={2}>
-      <Text color={theme.colors.primary}>{lofiChibiFrame(tick)}</Text>
+      <Text color={theme.colors.primary}>{lofiChibiFrame(frame)}</Text>
     </Box>
   )
 }
@@ -1083,7 +1097,10 @@ function ChatScreen({
   const maxScrollOffset = Math.max(0, transcriptLines.length - viewportRows)
   const pageScrollRows = Math.max(1, viewportRows - 2)
   const end = Math.max(0, transcriptLines.length - Math.min(scrollOffset, maxScrollOffset))
-  const visibleLines = visibleTranscriptWindow(transcriptLines, Math.max(0, end - viewportRows), end, viewportRows)
+  const visibleLines = React.useMemo(
+    () => visibleTranscriptWindow(transcriptLines, Math.max(0, end - viewportRows), end, viewportRows),
+    [end, transcriptLines, viewportRows],
+  )
 
   React.useEffect(() => {
     setScrollOffset((current) => Math.min(current, maxScrollOffset))
@@ -1134,7 +1151,7 @@ function ChatScreen({
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1}>
       {visibleLines.map((line, index) => (
-        <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${end}-${index}`} line={line} />
+        <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
     </Box>
   )
@@ -1156,7 +1173,7 @@ type TranscriptLineData = {
   toolTone?: "addition" | "context" | "deletion" | "error" | "meta" | "summary"
 }
 
-function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
+const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode {
   const theme = useTheme()
   if (line.kind === "blank") return <Text> </Text>
   if (line.kind === "spinner") return <Spinner label={line.text} />
@@ -1169,21 +1186,21 @@ function TranscriptLine({ line }: { line: TranscriptLineData }): React.ReactNode
     return <Text color={color} bold={line.toolTone === "summary"}>{line.text}</Text>
   }
   if (line.kind === "plan") {
-    if (line.planTone === "content") return <PlanMarkdownLine text={line.text || " "} />
+    if (line.planTone === "content") return <MarkdownLine text={line.text || " "} prefix="| " />
     const color = line.planTone === "border" ? theme.colors.primary : theme.colors.mutedForeground
     return <Text color={color}>{line.planTone === "meta" ? `| ${line.text || " "}` : line.text || " "}</Text>
   }
   if (line.role === "assistant") return <MarkdownLine text={line.text || " "} />
   return <Text color={theme.colors.foreground}>{line.text || " "}</Text>
-}
+})
 
-function MarkdownLine({ text }: { text: string }): React.ReactNode {
+function MarkdownLine({ text, prefix = "" }: { text: string; prefix?: string }): React.ReactNode {
   const theme = useTheme()
   const heading = text.match(/^(#{1,6})\s+(.+)$/)
   if (heading) {
     return (
       <Text color={theme.colors.primary} bold>
-        {heading[2]}
+        {prefix}{heading[2]}
       </Text>
     )
   }
@@ -1192,7 +1209,7 @@ function MarkdownLine({ text }: { text: string }): React.ReactNode {
   if (quote) {
     return (
       <Text color={theme.colors.mutedForeground}>
-        | <InlineMarkdown text={quote[1] || " "} />
+        {prefix}| <InlineMarkdown text={quote[1] || " "} />
       </Text>
     )
   }
@@ -1201,7 +1218,7 @@ function MarkdownLine({ text }: { text: string }): React.ReactNode {
   if (unordered) {
     return (
       <Text color={theme.colors.foreground}>
-        {unordered[1]}- <InlineMarkdown text={unordered[2]} />
+        {prefix}{unordered[1]}- <InlineMarkdown text={unordered[2]} />
       </Text>
     )
   }
@@ -1210,7 +1227,7 @@ function MarkdownLine({ text }: { text: string }): React.ReactNode {
   if (ordered) {
     return (
       <Text color={theme.colors.foreground}>
-        {ordered[1]}
+        {prefix}{ordered[1]}
         {ordered[2]} <InlineMarkdown text={ordered[3]} />
       </Text>
     )
@@ -1218,63 +1235,12 @@ function MarkdownLine({ text }: { text: string }): React.ReactNode {
 
   const fence = text.match(/^```(.*)$/)
   if (fence) {
-    return <Text color={theme.colors.mutedForeground}>{fence[1] ? `code ${fence[1]}` : "code"}</Text>
+    return <Text color={theme.colors.mutedForeground}>{prefix}{fence[1] ? `code ${fence[1]}` : "code"}</Text>
   }
 
   return (
     <Text color={theme.colors.foreground}>
-      <InlineMarkdown text={text} />
-    </Text>
-  )
-}
-
-function PlanMarkdownLine({ text }: { text: string }): React.ReactNode {
-  const theme = useTheme()
-  const heading = text.match(/^(#{1,6})\s+(.+)$/)
-  if (heading) {
-    return (
-      <Text color={theme.colors.primary} bold>
-        | {heading[2]}
-      </Text>
-    )
-  }
-
-  const quote = text.match(/^>\s?(.*)$/)
-  if (quote) {
-    return (
-      <Text color={theme.colors.mutedForeground}>
-        | | <InlineMarkdown text={quote[1] || " "} />
-      </Text>
-    )
-  }
-
-  const unordered = text.match(/^(\s*)[-*]\s+(.+)$/)
-  if (unordered) {
-    return (
-      <Text color={theme.colors.foreground}>
-        | {unordered[1]}- <InlineMarkdown text={unordered[2]} />
-      </Text>
-    )
-  }
-
-  const ordered = text.match(/^(\s*)(\d+[.)])\s+(.+)$/)
-  if (ordered) {
-    return (
-      <Text color={theme.colors.foreground}>
-        | {ordered[1]}
-        {ordered[2]} <InlineMarkdown text={ordered[3]} />
-      </Text>
-    )
-  }
-
-  const fence = text.match(/^```(.*)$/)
-  if (fence) {
-    return <Text color={theme.colors.mutedForeground}>| {fence[1] ? `code ${fence[1]}` : "code"}</Text>
-  }
-
-  return (
-    <Text color={theme.colors.foreground}>
-      | <InlineMarkdown text={text} />
+      {prefix}<InlineMarkdown text={text} />
     </Text>
   )
 }
@@ -1355,7 +1321,7 @@ function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMess
 }
 
 function appendWrappedContentLines(lines: TranscriptLineData[], content: string, message: TranscriptMessage, messageIndex: number, width: number): void {
-  for (const wrappedLine of wrapText(content, width)) {
+  for (const wrappedLine of wrapAnsi(content, width, { hard: false, wordWrap: true }).split("\n")) {
     lines.push({ kind: "content", messageIndex, role: message.role, text: wrappedLine })
   }
 }
@@ -1403,12 +1369,12 @@ export function planPreviewBoxLines(path: string, body: string, width: number): 
   const innerWidth = Math.max(1, boxWidth - 4)
   const lines: Array<{ text: string; tone: "border" | "content" | "meta" }> = []
   lines.push({ text: planPreviewBorder(" Saved Plan ", boxWidth), tone: "border" })
-  for (const wrappedPath of wrapText(`Path: ${path}`, innerWidth)) {
+  for (const wrappedPath of wrapAnsi(`Path: ${path}`, innerWidth, { hard: false, wordWrap: true }).split("\n")) {
     lines.push({ text: wrappedPath, tone: "meta" })
   }
   lines.push({ text: "|", tone: "border" })
   for (const sourceLine of body.split(/\r?\n/)) {
-    const wrapped = sourceLine ? wrapText(sourceLine, innerWidth) : [""]
+    const wrapped = sourceLine ? wrapAnsi(sourceLine, innerWidth, { hard: false, wordWrap: true }).split("\n") : [""]
     for (const line of wrapped) {
       lines.push({ text: line, tone: "content" })
     }
@@ -1860,12 +1826,6 @@ function compactToolArgs(args: string): string {
   }
 }
 
-function truncateEnd(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  if (maxLength <= 3) return value.slice(0, maxLength)
-  return `${value.slice(0, maxLength - 3)}...`
-}
-
 function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end: number, viewportRows: number): TranscriptLineData[] {
   const visible = lines.slice(start, end)
   while (visible[0]?.kind === "blank") visible.shift()
@@ -1883,50 +1843,47 @@ function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end
   return visible.slice(0, viewportRows)
 }
 
-function wrapText(text: string, width: number): string[] {
-  const result: string[] = []
-  const targetWidth = Math.max(1, width)
-  for (const sourceLine of text.split("\n")) {
-    const words = sourceLine.split(/(\s+)/)
-    let line = ""
-    for (const word of words) {
-      if (!word) continue
-      if (line.length + word.length <= targetWidth) {
-        line += word
-        continue
-      }
-      if (line.trim()) result.push(line.trimEnd())
-      if (word.length > targetWidth) {
-        for (let index = 0; index < word.length; index += targetWidth) {
-          const chunk = word.slice(index, index + targetWidth)
-          if (chunk.length === targetWidth) result.push(chunk)
-          else line = chunk
-        }
-      } else {
-        line = word.trimStart()
-      }
-    }
-    result.push(line.trimEnd())
-  }
-  return result.length > 0 ? result : [""]
-}
-
 function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "history" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
+  const [filter, setFilter] = React.useState("")
+
+  const filteredChoices = React.useMemo(() => {
+    const normalized = filter.trim().toLowerCase()
+    if (!normalized) return screen.choices
+    return screen.choices.filter((c) => c.title.toLowerCase().includes(normalized))
+  }, [screen.choices, filter])
+
   const items: Array<SelectListItem<string>> = React.useMemo(
     () =>
-      screen.choices.map((choice) => ({
+      filteredChoices.map((choice) => ({
         description: formatRelativeTime(choice.updatedAt),
         label: choice.title,
         value: choice.id,
       })),
-    [screen.choices],
+    [filteredChoices],
   )
+
+  useInput((input, key) => {
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.backspace || key.delete) {
+      setFilter((current) => current.slice(0, -1))
+      return
+    }
+    if (!key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && input) {
+      setFilter((current) => current + input)
+    }
+  })
+
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
       <Text color={theme.colors.primary} bold>
         Select a conversation
       </Text>
+      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
       <SelectList
         items={items}
         maxRows={12}
@@ -1938,7 +1895,7 @@ function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "h
           store.update({ screen: { kind: "chat" } })
           screen.onSelect(item.value)
         }}
-        selectedValue={screen.currentSessionId}
+        selectedValue={filter ? null : screen.currentSessionId}
       />
     </Box>
   )

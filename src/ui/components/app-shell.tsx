@@ -1,6 +1,7 @@
 import { Box, Text, useWindowSize } from "ink"
 import * as React from "react"
 
+import { truncateEnd, truncateMiddle } from "../utils.js"
 import { useTheme } from "./theme-provider.js"
 
 export type AppShellProps = {
@@ -71,18 +72,3 @@ function Hints({ items }: AppShellHintsProps): React.ReactNode {
 AppShell.Header = Header
 AppShell.Content = Content
 AppShell.Hints = Hints
-
-function truncateMiddle(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  if (maxLength <= 1) return value.slice(0, maxLength)
-  const keep = maxLength - 1
-  const left = Math.ceil(keep / 2)
-  const right = Math.floor(keep / 2)
-  return `${value.slice(0, left)}…${value.slice(value.length - right)}`
-}
-
-function truncateEnd(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value
-  if (maxLength <= 3) return value.slice(0, maxLength)
-  return `${value.slice(0, maxLength - 3)}...`
-}
