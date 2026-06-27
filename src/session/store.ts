@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
 import Database from "better-sqlite3"
+import type { ImageAttachment } from "../utils/images.js"
 import type {
   EntryRecord,
   EntryRole,
@@ -159,10 +160,24 @@ export class SessionStore {
     sessionId: string,
     role: "user" | "assistant",
     content: string,
-    modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string },
+    modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string; images?: ImageAttachment[] },
   ): EntryRecord<MessageEntryData> {
     const options = typeof modelOrOptions === "string" ? { model: modelOrOptions } : modelOrOptions || {}
-    return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, ...options })
+    const { images: imageAttachments, ...entryOptions } = options
+    const images = imageAttachments?.map((img) => {
+      if (img.source.type === "base64") {
+        return {
+          type: "base64" as const,
+          media_type: img.source.media_type,
+          data: img.source.data,
+        }
+      }
+      return {
+        type: "url" as const,
+        url: img.source.url,
+      }
+    })
+    return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, images, ...entryOptions })
   }
 
   appendToolCall(sessionId: string, input: ToolCallEntryData): EntryRecord<ToolCallEntryData> {

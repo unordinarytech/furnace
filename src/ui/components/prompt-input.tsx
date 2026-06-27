@@ -2,6 +2,7 @@ import { Box, Text, useInput, usePaste } from "ink"
 import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
+import type { ImageAttachment } from "../../utils/images.js"
 
 export type PromptInputProps = {
   active?: boolean
@@ -9,6 +10,8 @@ export type PromptInputProps = {
   busy?: boolean
   disabled?: boolean
   historyItems?: string[]
+  imageAttachments?: ImageAttachment[]
+  onClipboardImage?: () => void
   onChange?: (value: string) => void
   onEmptyUp?: () => void
   onModeCycle?: (direction: 1 | -1) => void
@@ -35,6 +38,8 @@ export function PromptInput({
   busy = false,
   disabled = false,
   historyItems = [],
+  imageAttachments = [],
+  onClipboardImage,
   onChange,
   onEmptyUp,
   onModeCycle,
@@ -85,6 +90,11 @@ export function PromptInput({
 
   usePaste((pastedText) => {
     if (!enabled) return
+    // Auto-attach clipboard images on empty paste (image-only gesture)
+    if (!pastedText.trim() && onClipboardImage) {
+      onClipboardImage()
+      return
+    }
     const sanitized = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
     setValue((current) => current.slice(0, cursorOffset) + sanitized + current.slice(cursorOffset))
     setCursorOffset((current) => current + sanitized.length)
@@ -92,6 +102,19 @@ export function PromptInput({
 
   useInput((input, key) => {
     if (!enabled) return
+    // Ctrl+V fallback for terminals without bracketed paste
+    if (key.ctrl && input === "v" && onClipboardImage) {
+      onClipboardImage()
+      return
+    }
+    // Alt+V (Escape+V) - reliable cross-platform image paste
+    if (input === "v" && !key.ctrl && !key.meta && onClipboardImage) {
+      const isAltV = true // Ink receives Alt+V as plain "v" after Escape
+      if (isAltV) {
+        onClipboardImage()
+        return
+      }
+    }
     const reverseTab = input === "\u001b[Z"
     if (reverseTab) {
       onModeCycle?.(-1)
@@ -255,26 +278,43 @@ export function PromptInput({
   return (
     <>
       {autocompleteActive ? <PromptAutocompleteMenu items={autocompleteMatches} /> : null}
-      <Box borderStyle="round" borderColor={enabled ? theme.colors.focusRing : theme.colors.border} paddingX={1}>
+      {imageAttachments.length > 0 ? (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color={theme.colors.mutedForeground}>
+            {imageAttachments.length} image{imageAttachments.length === 1 ? "" : "s"} attached
+          </Text>
+          {imageAttachments.map((img, idx) => (
+            <Box key={img.id}>
+              <Text color={theme.colors.foreground}>
+              📎 {img.displayName || `Image ${idx + 1}`}
+              {img.size ? ` (${formatImageSize(img.size)})` : ""}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+      <Box borderStyle="round" borderColor={enabled ? theme.colors.focusRing : theme.colors.border} paddingX={1} flexWrap="nowrap">
         <Text color={enabled ? theme.colors.primary : theme.colors.mutedForeground} bold>
           {prefix}{" "}
         </Text>
-        {value ? (
-          <Text color={theme.colors.foreground}>
-            {before}
-            <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-              {cursor}
+        <Box flexDirection="row" flexWrap="wrap" flexGrow={1}>
+          {value ? (
+            <Text color={theme.colors.foreground}>
+              {before}
+              <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                {cursor}
+              </Text>
+              {after}
             </Text>
-            {after}
-          </Text>
-        ) : (
-          <Text color={theme.colors.mutedForeground}>
-            <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+          ) : (
+            <Text color={theme.colors.mutedForeground}>
+              <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
               {display[0] ?? " "}
             </Text>
             {display.slice(1)}
           </Text>
-        )}
+          )}
+        </Box>
       </Box>
     </>
   )
@@ -307,6 +347,12 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>
   )
+}
+
+function formatImageSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function autocompleteWindow(items: PromptAutocompleteMatch[], maxVisible = 8): { hiddenAbove: number; hiddenBelow: number; visible: PromptAutocompleteMatch[] } {

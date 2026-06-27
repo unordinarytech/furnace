@@ -24,6 +24,7 @@ import type { TaskRecord } from "./tasks/types.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
 import type { PromptAutocompleteItem } from "./ui/components/prompt-input.js"
+import type { ImageAttachment } from "./utils/images.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -164,8 +165,8 @@ async function runInteractive(input: {
     },
     themeName: input.config.theme,
     title: initialSession.title,
-    onSubmit: (prompt) => {
-      void handleInteractiveSubmit(prompt).catch((error) => {
+    onSubmit: (prompt, images) => {
+      void handleInteractiveSubmit(prompt, images).catch((error) => {
         running = false
         activeAbortController = undefined
         terminal.setBusy(false)
@@ -185,7 +186,7 @@ async function runInteractive(input: {
     lofi.stop()
   }
 
-  async function handleInteractiveSubmit(prompt: string): Promise<void> {
+  async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[]): Promise<void> {
     const command = parseSlashCommand(prompt)
 
     if (command.name === "/exit" || command.name === "/quit") {
@@ -202,6 +203,10 @@ async function runInteractive(input: {
     }
     if (command.name === "/clear") {
       terminal.clearTranscriptDisplay()
+      return
+    }
+    if (command.name === "/image") {
+      await handleImageCommand(command.argument)
       return
     }
     if (isSkillCommand(command.name)) {
@@ -345,7 +350,7 @@ async function runInteractive(input: {
     }
 
     clearTransientStatus()
-    await runPromptQueue(prompt)
+    await runPromptQueue({ text: prompt, images })
   }
 
   function showTransientStatus(content: string, ttlMs = 3000): void {
@@ -486,6 +491,39 @@ async function runInteractive(input: {
     terminal.setSlashCommandItems(slashAutocompleteItems(skillCatalog.skills))
   }
 
+  async function handleImageCommand(argument: string): Promise<void> {
+    if (!argument.trim()) {
+      showTransientStatus("Usage: /image <path|url>")
+      return
+    }
+    const { loadImageAsBase64, parseImageUrl, createImageAttachment } = await import("./utils/images.js")
+    const path = argument.trim()
+    
+    // Check if it's a URL
+    const url = parseImageUrl(path)
+    if (url) {
+      const attachment = createImageAttachment({ type: "url", url }, { displayName: path })
+      terminal.addImageAttachment(attachment)
+      showTransientStatus(`Added image from URL: ${path}`)
+      return
+    }
+    
+    // Try to load as local file
+    const result = await loadImageAsBase64(path)
+    if (!result.success) {
+      showTransientStatus(`Error loading image: ${result.error}`)
+      return
+    }
+    
+    const attachment = createImageAttachment(result.source, {
+      displayName: path,
+      size: result.size,
+    })
+    terminal.addImageAttachment(attachment)
+    const sizeStr = result.size < 1024 ? `${result.size} B` : result.size < 1024 * 1024 ? `${(result.size / 1024).toFixed(1)} KB` : `${(result.size / (1024 * 1024)).toFixed(1)} MB`
+    showTransientStatus(`Added image: ${path} (${sizeStr})`)
+  }
+
   async function compactCurrentSession(focus: string): Promise<void> {
     clearTransientStatus()
     terminal.setThinking(true, "compacting context")
@@ -585,14 +623,16 @@ async function runInteractive(input: {
     }
   }
 
-  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; source?: string; text: string }): Promise<void> {
+  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; images?: ImageAttachment[]; source?: string; text: string }): Promise<void> {
     const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
     const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
     const source = typeof firstPrompt === "string" ? undefined : firstPrompt.source
+    const images = typeof firstPrompt === "string" ? undefined : firstPrompt.images
     queuedPrompts.unshift({
       createdAt: Date.now(),
       hidden,
       id: `active-${Date.now()}-${queueCounter++}`,
+      images,
       source,
       text: promptText,
     })
@@ -616,6 +656,7 @@ async function runInteractive(input: {
             cwd: input.cwd,
             hiddenUserMessage: next.hidden,
             hiddenUserMessageSource: next.hidden ? next.source || "hidden_prompt" : undefined,
+            images: next.images,
             permissions,
             prompt: next.text,
             sessionId,
@@ -827,6 +868,7 @@ async function runSingleTurn(input: {
   cwd: string
   hiddenUserMessage?: boolean
   hiddenUserMessageSource?: string
+  images?: ImageAttachment[]
   permissions?: SessionPermissionStore
   prompt: string
   sessionId: string
@@ -867,7 +909,19 @@ async function runSingleTurn(input: {
       executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, terminal: input.terminal }),
     })
 
-  input.store.appendMessage(input.sessionId, "user", input.prompt, input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : undefined)
+  input.store.appendMessage(
+    input.sessionId,
+    "user",
+    input.prompt,
+    input.hiddenUserMessage
+      ? { hidden: true, images: input.images, source: input.hiddenUserMessageSource || "hidden_prompt" }
+      : input.images
+        ? { images: input.images }
+        : undefined,
+  )
+  if (input.images && input.images.length > 0) {
+    console.log('[CLI] Appended message with', input.images.length, 'images')
+  }
   if (input.terminal) {
     input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))

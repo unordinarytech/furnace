@@ -10,7 +10,9 @@ session management :
 
 functionality :
 	- Multi task like ghost tui [NEXT NEXT NEXT]
+	- Image in prompt [DOING DOING DOING]
 	- memory long term of sorts
+	- Todos in chat instead of implementation plans unless told by user 
 
 - Stresstesting to be bug free 
 - Auto doc structure (from harness engineering)

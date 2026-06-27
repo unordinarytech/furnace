@@ -114,11 +114,18 @@ function abortError(): DOMException {
 }
 
 export function shouldForceWebSearch(messages: OpenRouterMessage[]): boolean {
-  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user" && typeof message.content === "string")?.content || ""
-  const asksForCurrentInfo = /\b(latest|current|currently|today|right now|recent|newest|news|up[- ]?to[- ]?date|release|version)\b/i.test(latestUserMessage)
+  const latestUserMessage = [...messages].reverse().find((message) => message.role === "user")
+  const contentText = latestUserMessage
+    ? typeof latestUserMessage.content === "string"
+      ? latestUserMessage.content
+      : Array.isArray(latestUserMessage.content)
+        ? latestUserMessage.content.find((block) => block.type === "text")?.text || ""
+        : ""
+    : ""
+  const asksForCurrentInfo = /\b(latest|current|currently|today|right now|recent|newest|news|up[- ]?to[- ]?date|release|version)\b/i.test(contentText)
   if (!asksForCurrentInfo) return false
 
   // Keep local development questions on filesystem/git tools.
-  const isLocalQuestion = /\b(this repo|this repository|codebase|workspace|working tree|git status|branch|commit|diff|file|folder|directory)\b/i.test(latestUserMessage)
+  const isLocalQuestion = /\b(this repo|this repository|codebase|workspace|working tree|git status|branch|commit|diff|file|folder|directory)\b/i.test(contentText)
   return !isLocalQuestion
 }

@@ -16,6 +16,8 @@ import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
 import { resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
+import { ImageAttachments } from "./components/image-attachments.js"
+import type { ImageAttachment } from "../utils/images.js"
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
@@ -49,6 +51,9 @@ export type FurnaceTerminal = {
   setToolActivities(activities: ToolActivity[]): void
   clearTranscriptDisplay(): void
   setTranscript(transcript: TranscriptMessage[]): void
+  addImageAttachment(attachment: ImageAttachment): void
+  removeImageAttachment(id: string): void
+  clearImageAttachments(): void
 }
 
 export type HistoryChoice = {
@@ -76,6 +81,7 @@ export type QueuedPrompt = {
   createdAt: number
   hidden?: boolean
   id: string
+  images?: ImageAttachment[]
   source?: string
   text: string
 }
@@ -93,7 +99,7 @@ type CreateFurnaceTerminalOptions = {
   onModeCycle?: (direction: 1 | -1) => void
   themeName: string
   title: string
-  onSubmit: (text: string) => void
+  onSubmit: (text: string, images?: ImageAttachment[]) => void
 }
 
 type UiScreen =
@@ -130,6 +136,7 @@ type UiState = {
   chatCanScrollUp: boolean
   cwd: string
   focus: UiFocus
+  imageAttachments: ImageAttachment[]
   inputDraft: string
   lofiEnabled: boolean
   mode: AgentMode
@@ -187,6 +194,7 @@ class UiStore {
       chatCanScrollUp: false,
       cwd: options.cwd,
       focus: "input",
+      imageAttachments: [],
       inputDraft: "",
       lofiEnabled: false,
       mode: "agent",
@@ -357,6 +365,21 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setTranscript(transcript) {
       store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0 })
     },
+    addImageAttachment(attachment) {
+      store.update((state) => ({
+        ...state,
+        imageAttachments: [...state.imageAttachments, attachment],
+      }))
+    },
+    removeImageAttachment(id) {
+      store.update((state) => ({
+        ...state,
+        imageAttachments: state.imageAttachments.filter((img) => img.id !== id),
+      }))
+    },
+    clearImageAttachments() {
+      store.update({ imageAttachments: [] })
+    },
   }
 }
 
@@ -376,7 +399,7 @@ function FurnaceApp({
   store,
 }: {
   onExit: () => void
-  onSubmit: (text: string) => void
+  onSubmit: (text: string, images?: ImageAttachment[]) => void
   state: UiState
   store: UiStore
 }): React.ReactNode {
@@ -396,6 +419,55 @@ function FurnaceApp({
         .reverse(),
     [state.transcript],
   )
+  
+  const handleSubmit = React.useCallback(
+    (text: string) => {
+      const images = state.imageAttachments.length > 0 ? state.imageAttachments : undefined
+      console.log('[SUBMIT] Submitting with', images?.length || 0, 'images')
+      if (images) {
+        console.log('[SUBMIT] Image IDs:', images.map(i => i.id))
+      }
+      store.update({ imageAttachments: [] })
+      onSubmit(text, images)
+    },
+    [onSubmit, state.imageAttachments, store],
+  )
+  
+  const handleClipboardImage = React.useCallback(async () => {
+    try {
+      const { saveClipboardImage } = await import("../utils/clipboard.js")
+      const { createImageAttachment } = await import("../utils/images.js")
+      
+      // Save to .furnace/images/clip_TIMESTAMP_counter.png
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+      const counter = state.imageAttachments.length + 1
+      const furnaceDir = state.cwd + "/.furnace/images"
+      const imagePath = `${furnaceDir}/clip_${timestamp}_${counter}.png`
+      
+      console.log('[CLIPBOARD] Attempting to save clipboard image to:', imagePath)
+      const success = await saveClipboardImage(imagePath)
+      console.log('[CLIPBOARD] Save result:', success)
+      if (success) {
+        const { loadImageAsBase64 } = await import("../utils/images.js")
+        const result = await loadImageAsBase64(imagePath)
+        console.log('[CLIPBOARD] Load result:', result.success ? 'success' : result.error)
+        if (result.success) {
+          const attachment = createImageAttachment(result.source, {
+            displayName: `Image ${counter}`,
+            size: result.size,
+          })
+          console.log('[CLIPBOARD] Created attachment:', attachment.id, attachment.displayName)
+          store.update((s) => ({
+            ...s,
+            imageAttachments: [...s.imageAttachments, attachment],
+          }))
+          console.log('[CLIPBOARD] Updated store with attachment')
+        }
+      }
+    } catch (error) {
+      console.error('[CLIPBOARD] Error:', error)
+    }
+  }, [state.cwd, state.imageAttachments.length, store])
 
   return (
     <AppShell>
@@ -435,12 +507,14 @@ function FurnaceApp({
         disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
         autocompleteItems={state.slashCommandItems}
         historyItems={sentMessages}
+        imageAttachments={state.imageAttachments}
+        onClipboardImage={handleClipboardImage}
         onChange={(value) => store.update({ inputDraft: value })}
         onEmptyUp={() => {
           if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
         }}
         onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
-        onSubmit={onSubmit}
+        onSubmit={handleSubmit}
         placeholder={promptPlaceholder(state)}
         prefix={state.mode === "plan" ? "plan>" : ">"}
         value={state.inputDraft}
@@ -491,7 +565,7 @@ function hintItemsForState(state: UiState): string[] {
   if (state.question) extras.push("up answer question")
   if (state.tasks.some((task) => task.status === "running")) extras.push("up task status")
   if (state.queuedPrompts.length > 0) extras.push("up manage queue")
-  return [...extras, "tab mode", ...hintItems(state.screen.kind)]
+  return [...extras, ...hintItems(state.screen.kind)]
 }
 
 function promptPlaceholder(state: UiState): string {
@@ -1305,6 +1379,17 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
   lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "user" : "assistant" })
+  
+  // Show attached images for user messages
+  if (message.role === "user" && message.imageCount && message.imageCount > 0) {
+    lines.push({
+      kind: "content",
+      messageIndex,
+      role: message.role,
+      text: `📎 ${message.imageCount} image${message.imageCount === 1 ? "" : "s"} attached`,
+    })
+  }
+  
   if (message.role === "assistant") {
     const planPreview = splitSavedPlanPreview(message.content)
     if (planPreview) {

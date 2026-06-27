@@ -15,6 +15,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/clear", description: "Clear the conversation display" },
   { name: "/new", description: "Start a fresh conversation" },
   { name: "/history", aliases: ["/historu"], description: "Open saved conversations" },
+  { name: "/image", description: "Attach image to next message", insertText: "/image ", usage: "/image <path|url>" },
   { name: "/model", description: "Select model", usage: "/model" },
   { name: "/plan", description: "Switch to plan mode", insertText: "/plan ", usage: "/plan [prompt]" },
   { name: "/agent", description: "Switch to normal agent mode" },

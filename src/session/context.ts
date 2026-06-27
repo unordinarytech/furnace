@@ -1,4 +1,5 @@
 import type { OpenRouterMessage } from "../openrouter.js"
+import type { ContentBlock } from "../openrouter.js"
 import type { CompactionEntryData, EntryRecord, MessageEntryData, ToolCallEntryData, ToolResultEntryData, TranscriptMessage } from "./types.js"
 
 export type RuntimeContextInput = {
@@ -13,7 +14,8 @@ export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[]
 
     const data = entry.data as MessageEntryData
     if (data.hidden) return []
-    return [{ role: entry.role, content: data.content }]
+    const imageCount = data.images?.length || 0
+    return [{ role: entry.role, content: data.content, imageCount }]
   })
 }
 
@@ -60,7 +62,35 @@ export function renderCompactionSummaryForModel(summary: string): string {
 function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
   if (entry.type === "message" && (entry.role === "user" || entry.role === "assistant")) {
     const data = entry.data as MessageEntryData
-    return [{ role: entry.role, content: data.content }]
+    
+    // If no images, return simple string content
+    if (!data.images || data.images.length === 0) {
+      return [{ role: entry.role, content: data.content }]
+    }
+    
+    console.log('[CONTEXT] Converting message with', data.images.length, 'images to model format')
+    
+    // Build multi-modal content with images
+    const contentBlocks: ContentBlock[] = [
+      { type: "text", text: data.content },
+    ]
+    
+    for (const img of data.images) {
+      if (img.type === "base64" && img.media_type && img.data) {
+        contentBlocks.push({
+          type: "image_url",
+          image_url: { url: `data:${img.media_type};base64,${img.data}` },
+        })
+      } else if (img.type === "url" && img.url) {
+        contentBlocks.push({
+          type: "image_url",
+          image_url: { url: img.url },
+        })
+      }
+    }
+    
+    console.log('[CONTEXT] Built', contentBlocks.length, 'content blocks (1 text +', contentBlocks.length - 1, 'images)')
+    return [{ role: entry.role, content: contentBlocks }]
   }
   if (entry.type === "tool_call") {
     const data = entry.data as ToolCallEntryData

@@ -30,6 +30,12 @@ export type EntryRecord<TData = unknown> = {
 
 export type MessageEntryData = {
   content: string
+  images?: Array<{
+    type: "base64" | "url"
+    media_type?: string
+    data?: string
+    url?: string
+  }>
   hidden?: boolean
   model?: string
   source?: string
@@ -94,4 +100,5 @@ export type FileReadFileKey = {
 export type TranscriptMessage = {
   role: "user" | "assistant"
   content: string
+  imageCount?: number
 }
