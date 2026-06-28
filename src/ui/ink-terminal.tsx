@@ -1,4 +1,4 @@
-import { Box, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
+import { Box, Static, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
@@ -147,11 +147,12 @@ type UiState = {
   thinking: boolean
   thinkingMessage: string
   title: string
+  committedLines: TranscriptLineData[]
+  staticKey: number
   streamingContent: string
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
-  transcriptOffset: number
 }
 
 class UiStore {
@@ -205,12 +206,14 @@ class UiStore {
       thinking: false,
       thinkingMessage: "thinking",
       title: options.title,
+      committedLines: [],
+      staticKey: 0,
       streamingContent: "",
       tasks: [],
       toolActivities: [],
       transcript: [],
-      transcriptOffset: 0,
     }
+    this.state.committedLines = [makeHeaderLine(this.state)]
   }
 
   getSnapshot = (): UiState => this.state
@@ -284,9 +287,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     run() {
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
-        alternateScreen: true,
+        alternateScreen: false,
         exitOnCtrlC: false,
-        incrementalRendering: true,
         maxFps: 30,
       })
       return instance.waitUntilExit().then(() => undefined)
@@ -355,13 +357,29 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       store.update({ toolActivities: activities })
     },
     clearTranscriptDisplay() {
-      store.update((state) => ({ ...state, transcriptOffset: state.transcript.length }))
+      store.update((state) => ({ ...state, committedLines: [makeHeaderLine(state)], staticKey: state.staticKey + 1 }))
     },
     setStreamingContent(text) {
       store.update({ streamingContent: text })
     },
     setTranscript(transcript) {
-      store.update({ screen: { kind: "chat" }, transcript, transcriptOffset: 0, streamingContent: "" })
+      const width = Math.max(20, (process.stdout.columns || 80) - 4)
+      store.update((state) => {
+        const prev = state.transcript
+        const prefixMatches = prev.length <= transcript.length && prev.every((message, index) => transcript[index]?.role === message.role && transcript[index]?.content === message.content)
+        if (prefixMatches) {
+          const newMessages = transcript.slice(prev.length)
+          const toolLines = state.toolActivities.length > 0 ? toolActivitiesToLines(state.toolActivities, prev.length, width) : []
+          const messageLines = newMessages.flatMap((message, index) => messageToLines(message, prev.length + index, width))
+          const appended = [...toolLines, ...messageLines]
+          if (appended.length === 0) {
+            return { ...state, screen: { kind: "chat" }, transcript, streamingContent: "" }
+          }
+          return { ...state, screen: { kind: "chat" }, committedLines: [...state.committedLines, ...appended], transcript, toolActivities: [], streamingContent: "" }
+        }
+        const allLines = transcript.flatMap((message, index) => messageToLines(message, index, width))
+        return { ...state, screen: { kind: "chat" }, committedLines: [makeHeaderLine(state), ...allLines], transcript, toolActivities: [], streamingContent: "", staticKey: state.staticKey + 1 }
+      })
     },
   }
 }
@@ -405,36 +423,31 @@ function FurnaceApp({
 
   return (
     <AppShell>
-      <AppShell.Header cwd={shortenHome(state.cwd)} model={state.model} settings={`${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`} title={state.title} />
-      <AppShell.Content>
-        {state.screen.kind === "history" ? (
-          <HistoryScreen screen={state.screen} store={store} />
-        ) : state.screen.kind === "model" ? (
-          <ModelScreen model={state.model} screen={state.screen} store={store} />
-        ) : state.screen.kind === "theme" ? (
-          <ThemeScreen screen={state.screen} store={store} />
-        ) : (
-          <>
-            <ChatScreen
-              interactionActive={Boolean(state.approval) || state.focus === "plan_actions" || state.focus === "question" || state.focus === "queue" || state.focus === "tasks"}
-              onScrollStateChange={(canScrollUp) => {
-                if (store.getSnapshot().chatCanScrollUp !== canScrollUp) store.update({ chatCanScrollUp: canScrollUp })
-              }}
-              thinking={state.thinking}
-              thinkingMessage={state.thinkingMessage}
-              reservedRows={reservedInteractionRows(state)}
-              streamingContent={state.streamingContent}
-              toolActivities={state.toolActivities}
-              transcript={state.transcript.slice(state.transcriptOffset)}
-            />
-            {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
-            {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
-            {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
-            {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
-            {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
-          </>
-        )}
-      </AppShell.Content>
+      <Static key={state.staticKey} items={state.committedLines}>
+        {(line, index) => <StaticLine key={index} line={line} />}
+      </Static>
+      {state.screen.kind === "history" ? (
+        <HistoryScreen screen={state.screen} store={store} />
+      ) : state.screen.kind === "model" ? (
+        <ModelScreen model={state.model} screen={state.screen} store={store} />
+      ) : state.screen.kind === "theme" ? (
+        <ThemeScreen screen={state.screen} store={store} />
+      ) : (
+        <>
+          <LiveChat
+            hasTranscript={state.transcript.length > 0}
+            thinking={state.thinking}
+            thinkingMessage={state.thinkingMessage}
+            streamingContent={state.streamingContent}
+            toolActivities={state.toolActivities}
+          />
+          {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
+          {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
+          {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
+          {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
+          {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
+        </>
+      )}
       {state.lofiEnabled ? <LofiCorner /> : null}
       <PromptInput
         active={state.focus === "input"}
@@ -507,17 +520,6 @@ function promptPlaceholder(state: UiState): string {
   if (state.question) return state.busy ? "Type a follow-up to queue, or press up to answer..." : "Type a reply, or press up to answer..."
   if (state.busy) return "Furnace is working; submit to queue..."
   return state.mode === "plan" ? "Describe what to plan, or type /agent" : "Ask Furnace or type /plan"
-}
-
-function reservedInteractionRows(state: UiState): number {
-  if (state.approval) return 8
-  let rows = 0
-  if (state.planAction) rows += 6
-  if (state.question) rows += 9
-  if (state.tasks.length > 0) rows += taskPanelRows(state.tasks)
-  if (state.queuedPrompts.length > 0) rows += queuedPromptPanelRows(state.queuedPrompts)
-  if (slashCommandAutocompleteVisible(state)) rows += slashCommandAutocompleteRows(state)
-  return rows
 }
 
 function slashCommandAutocompleteVisible(state: UiState): boolean {
@@ -1072,94 +1074,48 @@ function hintItems(kind: UiScreen["kind"]): string[] {
   return ["/new", "/history", "/model", "/theme", "/tasks", "/lofi", "/reset-perms", "/exit"]
 }
 
-function ChatScreen({
-  interactionActive,
-  onScrollStateChange,
+function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
+  if (line.kind === "header" && line.headerInfo) {
+    return <AppShell.Header cwd={line.headerInfo.cwd} model={line.headerInfo.model} settings={line.headerInfo.settings} title={line.headerInfo.title} />
+  }
+  return (
+    <Box paddingX={1}>
+      <TranscriptLine line={line} />
+    </Box>
+  )
+}
+
+function LiveChat({
+  hasTranscript,
+  streamingContent,
   thinking,
   thinkingMessage,
-  reservedRows,
-  streamingContent,
   toolActivities,
-  transcript,
 }: {
-  interactionActive?: boolean
-  onScrollStateChange?: (canScrollUp: boolean) => void
-  reservedRows?: number
+  hasTranscript: boolean
   streamingContent: string
   thinking: boolean
   thinkingMessage: string
   toolActivities: ToolActivity[]
-  transcript: TranscriptMessage[]
 }): React.ReactNode {
   const theme = useTheme()
-  const { columns, rows } = useWindowSize()
-  const [scrollOffset, setScrollOffset] = React.useState(0)
-  const viewportRows = chatViewportRows(rows, reservedRows || 0)
-  const activityKey = React.useMemo(
-    () => toolActivities.map((activity) => `${activity.id}:${activity.status}`).join("|"),
-    [toolActivities],
-  )
-  const transcriptLines = React.useMemo(
-    () => buildTranscriptLines(transcript, Math.max(20, columns - 4), toolActivities, thinking, thinkingMessage, streamingContent),
-    [columns, streamingContent, thinking, thinkingMessage, toolActivities, transcript],
-  )
-  const maxScrollOffset = Math.max(0, transcriptLines.length - viewportRows)
-  const pageScrollRows = Math.max(1, viewportRows - 2)
-  const end = Math.max(0, transcriptLines.length - Math.min(scrollOffset, maxScrollOffset))
-  const visibleLines = React.useMemo(
-    () => visibleTranscriptWindow(transcriptLines, Math.max(0, end - viewportRows), end, viewportRows),
-    [end, transcriptLines, viewportRows],
-  )
+  const { columns } = useWindowSize()
+  const lines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, Math.max(20, columns - 4))
 
-  React.useEffect(() => {
-    setScrollOffset((current) => Math.min(current, maxScrollOffset))
-  }, [maxScrollOffset])
-
-  React.useEffect(() => {
-    setScrollOffset(0)
-  }, [transcript.length])
-
-  React.useEffect(() => {
-    if (thinking || toolActivities.length > 0) setScrollOffset(0)
-  }, [activityKey, thinking, thinkingMessage, toolActivities.length])
-
-  React.useEffect(() => {
-    onScrollStateChange?.(maxScrollOffset > scrollOffset)
-  }, [maxScrollOffset, onScrollStateChange, scrollOffset])
-
-  useInput((input, key) => {
-    if (interactionActive) return
-    if (key.pageUp || (key.ctrl && input === "u")) {
-      setScrollOffset((current) => Math.min(maxScrollOffset, current + pageScrollRows))
-      return
+  if (lines.length === 0) {
+    if (!hasTranscript) {
+      return (
+        <Box paddingX={1}>
+          <Text color={theme.colors.mutedForeground}>Start a conversation, or use /history, /model, and /theme.</Text>
+        </Box>
+      )
     }
-    if (key.pageDown || (key.ctrl && input === "d")) {
-      setScrollOffset((current) => Math.max(0, current - pageScrollRows))
-      return
-    }
-    if (key.upArrow) {
-      setScrollOffset((current) => Math.min(maxScrollOffset, current + 1))
-      return
-    }
-    if (key.downArrow) {
-      setScrollOffset((current) => Math.max(0, current - 1))
-      return
-    }
-    if (key.end) setScrollOffset(0)
-    if (key.home) setScrollOffset(maxScrollOffset)
-  })
-
-  if (transcriptLines.length === 0) {
-    return (
-      <Box flexGrow={1} alignItems="center" justifyContent="center">
-        <Text color={theme.colors.mutedForeground}>Start a conversation, or use /history, /model, and /theme.</Text>
-      </Box>
-    )
+    return null
   }
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingX={1}>
-      {visibleLines.map((line, index) => (
+    <Box flexDirection="column" paddingX={1}>
+      {lines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
     </Box>
@@ -1173,7 +1129,8 @@ export function chatViewportRows(windowRows: number, reservedRows = 0): number {
 }
 
 type TranscriptLineData = {
-  kind: "blank" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
+  kind: "blank" | "content" | "header" | "plan" | "spinner" | "role" | "table" | "tool"
+  headerInfo?: { cwd: string; model: string; settings: string; title: string }
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
   role?: TranscriptMessage["role"]
@@ -1339,6 +1296,47 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
   if (thinking) {
     lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "assistant" })
     lines.push({ kind: "spinner", messageIndex: transcript.length, role: "assistant", text: thinkingMessage })
+  }
+  return lines
+}
+
+function makeHeaderLine(state: UiState): TranscriptLineData {
+  return {
+    kind: "header",
+    text: "",
+    headerInfo: {
+      cwd: shortenHome(state.cwd),
+      model: state.model,
+      settings: `${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · ${state.themeName}`,
+      title: state.title,
+    },
+  }
+}
+
+function messageToLines(message: TranscriptMessage, messageIndex: number, width: number): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  appendMessageLines(lines, message, messageIndex, width)
+  return lines
+}
+
+function toolActivitiesToLines(toolActivities: ToolActivity[], messageIndex: number, width: number): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  appendToolLines(lines, toolActivities, messageIndex, width)
+  return lines
+}
+
+function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string, thinking: boolean, thinkingMessage: string, width: number): TranscriptLineData[] {
+  const lines: TranscriptLineData[] = []
+  if (toolActivities.length > 0) {
+    appendToolLines(lines, toolActivities, 0, width)
+  }
+  if (streamingContent && !thinking) {
+    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "assistant" })
+    appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, 0, width)
+  }
+  if (thinking) {
+    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "assistant" })
+    lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: thinkingMessage })
   }
   return lines
 }

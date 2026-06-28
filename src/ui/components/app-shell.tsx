@@ -24,9 +24,9 @@ export type AppShellHintsProps = {
 }
 
 export function AppShell({ children }: AppShellProps): React.ReactNode {
-  const { columns, rows } = useWindowSize()
+  const { columns } = useWindowSize()
   return (
-    <Box flexDirection="column" height={rows} width={columns}>
+    <Box flexDirection="column" width={columns}>
       {children}
     </Box>
   )
