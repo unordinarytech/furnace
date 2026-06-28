@@ -107,13 +107,11 @@ export function PromptInput({
       onClipboardImage()
       return
     }
-    // Alt+V (Escape+V) - reliable cross-platform image paste
-    if (input === "v" && !key.ctrl && !key.meta && onClipboardImage) {
-      const isAltV = true // Ink receives Alt+V as plain "v" after Escape
-      if (isAltV) {
-        onClipboardImage()
-        return
-      }
+    // Alt/Meta+V (Escape+V) - explicit image paste fallback.
+    // Plain "v" must remain normal text input.
+    if (input === "v" && key.meta && onClipboardImage) {
+      onClipboardImage()
+      return
     }
     const reverseTab = input === "\u001b[Z"
     if (reverseTab) {
