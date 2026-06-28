@@ -286,7 +286,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       })
     },
     run() {
-      process.stdout.write("\n".repeat(process.stdout.rows || 24))
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
         alternateScreen: false,
         exitOnCtrlC: false,
@@ -438,6 +437,7 @@ function FurnaceApp({
           <ThemeScreen screen={state.screen} store={store} />
         ) : (
           <LiveChat
+            committedLines={state.committedLines}
             flexGrow
             hasTranscript={state.transcript.length > 0}
             thinking={state.thinking}
@@ -1090,6 +1090,7 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 }
 
 function LiveChat({
+  committedLines = [],
   flexGrow: grow,
   hasTranscript,
   streamingContent,
@@ -1097,6 +1098,7 @@ function LiveChat({
   thinkingMessage,
   toolActivities,
 }: {
+  committedLines?: TranscriptLineData[]
   flexGrow?: boolean
   hasTranscript: boolean
   streamingContent: string
@@ -1106,22 +1108,26 @@ function LiveChat({
 }): React.ReactNode {
   const theme = useTheme()
   const { columns } = useWindowSize()
-  const lines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, Math.max(20, columns - 4))
+  const width = Math.max(20, columns - 4)
+  const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
-  if (lines.length === 0) {
-    if (!hasTranscript) {
-      return (
-        <Box flexGrow={grow ? 1 : 0} paddingX={1} alignItems="flex-end">
+  // Content lines from committed transcript (skip the header banner — it's for scrollback)
+  const contentLines = committedLines.filter((line) => line.kind !== "header")
+  const allLines = [...contentLines, ...activeLines]
+
+  if (allLines.length === 0) {
+    return (
+      <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-end" paddingX={1}>
+        {!hasTranscript && (
           <Text color={theme.colors.mutedForeground}>Start a conversation, or use /history, /model, and /theme.</Text>
-        </Box>
-      )
-    }
-    return <Box flexGrow={grow ? 1 : 0} />
+        )}
+      </Box>
+    )
   }
 
   return (
-    <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" paddingX={1}>
-      {lines.map((line, index) => (
+    <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-end" paddingX={1}>
+      {allLines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
     </Box>
