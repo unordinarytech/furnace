@@ -120,13 +120,13 @@ export function createToolPermissionRequest(input: {
 }
 
 export function defaultPermissionAction(permission: string): PermissionAction {
-  if (["read", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"].includes(permission)) return "allow"
+  if (["read", "context_retrieve", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"].includes(permission)) return "allow"
   if (["write", "edit", "bash", "skill_manage"].includes(permission)) return "ask"
   return "ask"
 }
 
 function planModePermissionAction(request: PermissionRequest, mode: PlanModeState): PermissionAction {
-  if (["read", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"].includes(request.permission)) return "allow"
+  if (["read", "context_retrieve", "ls", "find", "glob", "grep", "ask_question", "skill", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"].includes(request.permission)) return "allow"
   if (request.permission === "bash") return isPlanModeSafeCommand(stringArg(parseArgs(request.args), "command") || "") ? "allow" : "deny"
   if (request.permission === "write") return isPlanArtifactWrite(request, mode) ? "allow" : "deny"
   if (request.permission === "edit") return isPlanArtifactEdit(request, mode) ? "allow" : "deny"

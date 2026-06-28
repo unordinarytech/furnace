@@ -52,17 +52,33 @@ npm run build
 node dist/cli.js --help
 ```
 
+### Images
+
+Interactive sessions can attach one or more images before sending a prompt:
+
+```bash
+> /image screenshot.png
+> what UI improvements would you suggest?
+```
+
+Furnace supports local JPEG, PNG, GIF, and WebP files, plus remote image URLs. Local images are validated, stored with the session, and sent as multimodal message content. See [docs/image-support.md](docs/image-support.md) for details.
+
 ## Current State
 
-The current implementation is Phase 0 plus a tiny live model path:
+The current implementation has grown into a usable early coding harness:
 
 - TypeScript project setup.
 - `furnace` CLI entrypoint.
 - Base system prompt in `src/prompts/base-system.md`.
 - OpenRouter streaming chat completion call.
-- Simple terminal input/status area.
+- Interactive Ink terminal UI and headless `-p` mode.
+- File/search/edit/bash/web/question/skill/subagent tools.
+- SQLite session persistence with durable tool calls/results.
+- Context compaction for long sessions.
+- Headroom-lite compression for oversized tool outputs and replayed tool results.
+- Multimodal image attachments in interactive sessions.
 - `.env.example` and `.gitignore` for local secret handling.
-- Smoke tests for package wiring and ignored secrets.
+- Tests for package wiring, tools, permissions, sessions, compaction, skills, and compression.
 
 ## Architecture
 
@@ -76,10 +92,12 @@ flowchart TD
   Runtime --> Tools[Tool Registry]
   Runtime --> Permissions[Permission Engine]
   Runtime --> Sessions[Session Store]
+  Runtime --> Compression[Headroom-lite Compression]
   Runtime --> Events[Event Stream]
   Tools --> FileTools[File Tools]
   Tools --> ShellTool[Shell Tool]
   Tools --> SearchTools[Search Tools]
+  Tools --> ContextStore[Context Artifacts]
   Tools --> CustomTools[Custom Tools]
   ShellTool --> Sandbox[Sandbox Adapter]
   Events --> TUI[TUI Renderer]
@@ -125,8 +143,30 @@ The first tool set should be small and boring:
 - `bash`: run a shell command.
 - `glob`: find files by path pattern.
 - `grep`: search file contents.
+- `context_retrieve`: retrieve full original content saved after large tool-output compression.
 
 Each tool owns its schema, permission metadata, execution logic, and result format.
+
+## Headroom-lite Context Compression
+
+Furnace adapts the practical part of Headroom's design: classify large tool outputs, preserve the useful lines, store the full original locally, and give the model a retrieval handle.
+
+Oversized tool output is saved under:
+
+```txt
+.furnace/context-store/ctx_<sha>.txt
+```
+
+The model receives a compressed summary like:
+
+```txt
+Tool output compressed (Headroom-lite).
+Detected content: log
+Full output artifact: ctx_...
+Retrieve with: context_retrieve({"id":"ctx_..."})
+```
+
+The built-in router handles JSON, logs/test output, search output, diffs, and generic text. Pre-model request transforms also compress oversized historical tool results without rewriting the saved transcript. See [docs/headroom-lite.md](docs/headroom-lite.md).
 
 ## Safety Model
 
@@ -140,7 +180,7 @@ Default behavior:
 - Allow `.env.example`.
 - Restrict writes to the workspace.
 - Record permission decisions in the transcript.
-- Truncate large outputs before sending them back to the model.
+- Compress large outputs before sending them back to the model and preserve originals under `.furnace/context-store/` for retrieval.
 
 Later versions should add stronger isolation through Docker and platform-native sandbox helpers.
 
@@ -174,5 +214,6 @@ Furnace borrows lessons from existing coding agents:
 - OpenCode shows why the runtime should be separate from the terminal client.
 - Codex CLI shows how serious sandboxing changes the trust model.
 - Claude Code shows the product shape: terminal, IDE, SDK, hooks, skills, automation, and background agents all sharing one engine.
+- Headroom shows why tool output should be compressed by content type and made reversible through local retrieval handles.
 
 Furnace should learn from these projects without becoming a clone of any single one.

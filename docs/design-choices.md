@@ -46,7 +46,38 @@ Current influences:
 - Pi-style skills: Furnace uses `SKILL.md` directories, explicit `/skill:<name>` invocation, and `disable-model-invocation` manual-only behavior.
 - OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, the idea that subagents are launched through a normal model-callable task tool linked to child sessions, and compact skill guidance plus a `skill` tool.
 - Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, subagent batching/fan-out, background completion re-entry, hidden/scaffolded explicit skill invocation, guarded skill management, and the future direction for SQLite FTS session search.
+- Headroom: content-type-aware tool-output compression, CCR-style local artifact handles, and request-local compression transforms for oversized tool results.
 - Cursor and Claude Code: Furnace discovers their existing user, managed, and plugin-cache skill roots so installed skills can be reused locally.
+
+## Headroom-lite Context Compression
+
+Furnace adapts Headroom's core context-compression lesson without cloning its proxy or ML stack.
+
+Reasoning:
+
+Coding agents waste context on large tool outputs: test logs, search matches, diffs, JSON, and fetched pages. Plain head/tail truncation can drop the actual failure. Headroom's better pattern is to classify content, preserve important or anomalous lines, store the full original, and give the model a retrieval handle. Furnace implements that local-first in TypeScript as Headroom-lite.
+
+Harness provenance:
+
+- Headroom contributed the ContentRouter idea: detect content shape before choosing how to shrink it.
+- Headroom contributed the CCR pattern: compress/cache/retrieve rather than permanently discard omitted content.
+- Headroom contributed the request-transform direction: compress oversized tool results before provider requests while preserving the durable transcript.
+
+Current behavior:
+
+- Oversized tool outputs are stored under `.furnace/context-store/ctx_<sha>.txt`.
+- The model receives a compressed summary with the artifact id and a `context_retrieve` call hint.
+- `context_retrieve` returns full or ranged artifact content by id.
+- The router handles JSON, logs/test output, search-style output, diffs, and generic text.
+- A request-local transform compresses oversized historical tool messages before model calls.
+
+Current implementation:
+
+- `docs/headroom-lite.md` is the canonical design reference.
+- `src/compression/artifacts.ts` stores and retrieves full originals.
+- `src/compression/router.ts` detects content kind and renders compressed summaries.
+- `src/compression/request-transform.ts` runs pre-model request compression.
+- `src/tools/registry.ts` integrates oversized tool-output compression and registers `context_retrieve`.
 
 ## Runtime Context Injection
 

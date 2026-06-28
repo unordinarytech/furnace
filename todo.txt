@@ -1,9 +1,7 @@
 ToDo
 
 session management :
-	- headroom to compact tool outputs [NEXT NEXT NEXT]
 	- forking + multi task like ghost TUI [NEXT NEXT NEXT]
-	- duplicating / forking entire branch
 	- vault typeshi per session
 	- session search / SQLite FTS over messages, tool names, and tool calls
 	- session_search tool to search old sessions and scroll around matches

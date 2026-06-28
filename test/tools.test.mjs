@@ -22,7 +22,7 @@ function sleep(ms) {
 test("tool registry exposes the core primitives", () => {
   assert.deepEqual(
     toolDefinitions.map((tool) => tool.function.name),
-    ["read", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "skill", "skill_manage", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"],
+    ["read", "context_retrieve", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "skill", "skill_manage", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"],
   )
 })
 
@@ -593,7 +593,7 @@ test("webfetch rejects non-http urls and oversized bodies", async () => {
   })
 })
 
-test("large tool outputs are saved with a bounded preview", async () => {
+test("large tool outputs are compressed into retrievable context artifacts", async () => {
   await withWorkspace(async (cwd) => {
     const large = Array.from({ length: 3000 }, (_, index) => `line ${index}`).join("\n")
     const fetchMock = async () => new Response(large, { status: 200, headers: { "content-type": "text/plain" } })
@@ -602,9 +602,18 @@ test("large tool outputs are saved with a bounded preview", async () => {
       { cwd, services: { fetch: fetchMock } },
     )
 
-    assert.match(result.content, /output truncated; full content saved to \.furnace\/tool-output\/tool-/)
-    const savedPath = result.content.match(/full content saved to ([^ ]+) \.\.\./)?.[1]
-    assert.ok(savedPath)
-    assert.equal(await readFile(join(cwd, savedPath), "utf8"), large)
+    assert.match(result.content, /Tool output compressed \(Headroom-lite\)/)
+    assert.match(result.content, /Full output artifact: ctx_[a-f0-9]{24}/)
+    const artifactId = result.content.match(/Full output artifact: (ctx_[a-f0-9]{24})/)?.[1]
+    assert.ok(artifactId)
+    assert.equal(await readFile(join(cwd, ".furnace", "context-store", `${artifactId}.txt`), "utf8"), large)
+
+    const retrieved = await executeToolCall(
+      { name: "context_retrieve", arguments: JSON.stringify({ id: artifactId, offset: 10, limit: 3 }) },
+      { cwd },
+    )
+    assert.match(retrieved.content, new RegExp(`Context artifact ${artifactId}`))
+    assert.match(retrieved.content, /Returned: lines 10-12 of 3000/)
+    assert.match(retrieved.content, /line 9\nline 10\nline 11/)
   })
 })

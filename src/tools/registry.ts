@@ -5,6 +5,8 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { promisify } from "node:util"
 import { Parser } from "htmlparser2"
 import TurndownService from "turndown"
+import { retrieveContextArtifact, storeContextArtifact } from "../compression/artifacts.js"
+import { compressToolOutput } from "../compression/router.js"
 import { formatAskQuestionResult, normalizeAskQuestionRequest, type AskQuestionPrompt } from "../questions.js"
 import type { FileReadFileKey, FileReadReceipt, FileReadRecord, FileReadSnapshot, TodoItem, TodoPriority, TodoStatus } from "../session/types.js"
 import { renderSkillToolOutput } from "../skills/context.js"
@@ -101,6 +103,21 @@ export const registeredTools: RegisteredTool[] = [
       },
     },
     execute: readTool,
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "context_retrieve",
+        description: "Retrieve original full content that Furnace saved after compressing a large tool output. Use the ctx_* id from a compressed tool result; request an offset/limit for targeted ranges.",
+        parameters: objectSchema({
+          id: stringSchema("Artifact id, for example ctx_0123abcd..."),
+          offset: numberSchema("Optional 1-based line offset. Defaults to 1."),
+          limit: numberSchema("Optional number of lines to return. Defaults to 500 to avoid flooding context."),
+        }, ["id"]),
+      },
+    },
+    execute: contextRetrieveTool,
   },
   {
     definition: {
@@ -407,6 +424,22 @@ async function readTool(args: unknown, context: ToolContext): Promise<string> {
   const selected = typeof limit === "number" ? lines.slice(start, start + Math.max(0, limit)) : lines.slice(start)
   recordFileRead(context, file, snapshot, rangeKey, offset, limit)
   return truncate(selected.map((line, index) => `${start + index + 1}|${line}`).join("\n"), maxReadChars)
+}
+
+async function contextRetrieveTool(args: unknown, context: ToolContext): Promise<string> {
+  const id = requiredString(args, "id")
+  const offset = optionalNumber(args, "offset")
+  const limit = optionalNumber(args, "limit") ?? 500
+  const artifact = await retrieveContextArtifact({ cwd: context.cwd, id, offset, limit })
+  const range = artifact.lineCount > 0 ? `lines ${artifact.startLine}-${artifact.endLine} of ${artifact.totalLines}` : `no lines selected from ${artifact.totalLines} total lines`
+  return [
+    `Context artifact ${artifact.id}`,
+    `Path: ${artifact.relativePath}`,
+    `Size: ${artifact.bytes.toLocaleString()} bytes`,
+    `Returned: ${range}`,
+    "",
+    artifact.content,
+  ].join("\n")
 }
 
 async function lsTool(args: unknown, context: ToolContext): Promise<string> {
@@ -1303,14 +1336,8 @@ async function boundToolOutput(value: string, context: ToolContext): Promise<str
   const lines = value.split("\n")
   if (byteLength <= maxToolOutputBytes && lines.length <= maxToolOutputLines) return value
 
-  const outputDir = resolveToolPath(context.cwd, ".furnace/tool-output")
-  await mkdir(outputDir, { recursive: true })
-  const outputPath = resolve(outputDir, `tool-${Date.now()}-${Math.random().toString(36).slice(2, 10)}.txt`)
-  await writeFile(outputPath, value, "utf8")
-
-  const marker = `... output truncated; full content saved to ${displayPath(context.cwd, outputPath)} ...`
-  const preview = boundedPreview(value, marker, maxToolOutputLines, maxToolOutputBytes)
-  return preview
+  const artifact = await storeContextArtifact({ content: value, cwd: context.cwd, label: "tool-output" })
+  return compressToolOutput({ artifact, content: value, maxBytes: maxToolOutputBytes, maxLines: maxToolOutputLines }).content
 }
 
 function boundedPreview(value: string, marker: string, maxLines: number, maxBytes: number): string {

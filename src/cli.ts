@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
+import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { loadConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
@@ -991,8 +992,9 @@ async function runSingleTurn(input: {
         terminal: input.terminal,
         tools: activeTools,
       })
-      updateTerminalContextUsage(input.terminal, input.config, compacted, activeTools)
-      return compacted
+      const transformed = await applyHeadroomLiteRequestTransforms({ cwd: input.cwd, messages: compacted })
+      updateTerminalContextUsage(input.terminal, input.config, transformed.messages, activeTools)
+      return transformed.messages
     },
     onContextOverflow: (_currentMessages, activeTools) => compactMessagesAfterOverflow({
       config: input.config,
@@ -1088,17 +1090,20 @@ async function runSubagentTask(input: {
     signal: input.signal,
     tools: childToolDefinitions,
     todoStore: input.store,
-    onBeforeModelRequest: (currentMessages, activeTools) => compactMessagesBeforeRequest({
-      config: input.config,
-      currentMessages,
-      cwd: input.cwd,
-      reason: "threshold",
-      sessionId: input.record.childSessionId,
-      store: input.store,
-      systemPrompt,
-      terminal,
-      tools: activeTools,
-    }),
+    onBeforeModelRequest: async (currentMessages, activeTools) => {
+      const compacted = await compactMessagesBeforeRequest({
+        config: input.config,
+        currentMessages,
+        cwd: input.cwd,
+        reason: "threshold",
+        sessionId: input.record.childSessionId,
+        store: input.store,
+        systemPrompt,
+        terminal,
+        tools: activeTools,
+      })
+      return (await applyHeadroomLiteRequestTransforms({ cwd: input.cwd, messages: compacted })).messages
+    },
     onContextOverflow: (_currentMessages, activeTools) => compactMessagesAfterOverflow({
       config: input.config,
       cwd: input.cwd,

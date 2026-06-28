@@ -62,7 +62,7 @@ test("hidden messages are replayed to the model but omitted from transcript", ()
     },
   ]
 
-  assert.deepEqual(entriesToTranscript(entries), [{ role: "user", content: "visible user prompt" }])
+  assert.deepEqual(entriesToTranscript(entries), [{ role: "user", content: "visible user prompt", imageCount: 0 }])
   assert.deepEqual(entriesToModelMessages("base system", entries), [
     { role: "system", content: "base system" },
     { role: "user", content: "visible user prompt" },
