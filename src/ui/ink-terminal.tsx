@@ -286,6 +286,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       })
     },
     run() {
+      process.stdout.write("\n".repeat(process.stdout.rows || 24))
       instance = render(<FurnaceRoot onExit={stop} onSubmit={options.onSubmit} store={store} />, {
         alternateScreen: false,
         exitOnCtrlC: false,
@@ -421,52 +422,55 @@ function FurnaceApp({
     [state.transcript],
   )
 
+  const { columns, rows } = useWindowSize()
+
   return (
-    <AppShell>
+    <>
       <Static key={state.staticKey} items={state.committedLines}>
         {(line, index) => <StaticLine key={index} line={line} />}
       </Static>
-      {state.screen.kind === "history" ? (
-        <HistoryScreen screen={state.screen} store={store} />
-      ) : state.screen.kind === "model" ? (
-        <ModelScreen model={state.model} screen={state.screen} store={store} />
-      ) : state.screen.kind === "theme" ? (
-        <ThemeScreen screen={state.screen} store={store} />
-      ) : (
-        <>
+      <Box flexDirection="column" height={rows} width={columns} overflow="hidden">
+        {state.screen.kind === "history" ? (
+          <HistoryScreen screen={state.screen} store={store} />
+        ) : state.screen.kind === "model" ? (
+          <ModelScreen model={state.model} screen={state.screen} store={store} />
+        ) : state.screen.kind === "theme" ? (
+          <ThemeScreen screen={state.screen} store={store} />
+        ) : (
           <LiveChat
+            flexGrow
             hasTranscript={state.transcript.length > 0}
             thinking={state.thinking}
             thinkingMessage={state.thinkingMessage}
             streamingContent={state.streamingContent}
             toolActivities={state.toolActivities}
           />
-          {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
-          {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
-          {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
-          {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
-          {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
-        </>
-      )}
-      {state.lofiEnabled ? <LofiCorner /> : null}
-      <PromptInput
-        active={state.focus === "input"}
-        busy={state.busy}
-        disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
-        autocompleteItems={state.slashCommandItems}
-        historyItems={sentMessages}
-        onChange={(value) => store.update({ inputDraft: value })}
-        onEmptyUp={() => {
-          if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
-        }}
-        onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
-        onSubmit={onSubmit}
-        placeholder={promptPlaceholder(state)}
-        prefix={state.mode === "plan" ? "plan>" : ">"}
-        value={state.inputDraft}
-      />
-      <AppShell.Hints items={hintItemsForState(state)} />
-    </AppShell>
+        )}
+        {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
+        {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
+        {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
+        {!state.approval && state.tasks.length > 0 ? <TaskPanel tasks={state.tasks} store={store} /> : null}
+        {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
+        {state.lofiEnabled ? <LofiCorner /> : null}
+        <PromptInput
+          active={state.focus === "input"}
+          busy={state.busy}
+          disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
+          autocompleteItems={state.slashCommandItems}
+          historyItems={sentMessages}
+          onChange={(value) => store.update({ inputDraft: value })}
+          onEmptyUp={() => {
+            if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
+          }}
+          onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
+          onSubmit={onSubmit}
+          placeholder={promptPlaceholder(state)}
+          prefix={state.mode === "plan" ? "plan>" : ">"}
+          value={state.inputDraft}
+        />
+        <AppShell.Hints items={hintItemsForState(state)} />
+      </Box>
+    </>
   )
 
 }
@@ -1086,12 +1090,14 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 }
 
 function LiveChat({
+  flexGrow: grow,
   hasTranscript,
   streamingContent,
   thinking,
   thinkingMessage,
   toolActivities,
 }: {
+  flexGrow?: boolean
   hasTranscript: boolean
   streamingContent: string
   thinking: boolean
@@ -1105,16 +1111,16 @@ function LiveChat({
   if (lines.length === 0) {
     if (!hasTranscript) {
       return (
-        <Box paddingX={1}>
+        <Box flexGrow={grow ? 1 : 0} paddingX={1} alignItems="flex-end">
           <Text color={theme.colors.mutedForeground}>Start a conversation, or use /history, /model, and /theme.</Text>
         </Box>
       )
     }
-    return null
+    return <Box flexGrow={grow ? 1 : 0} />
   }
 
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" paddingX={1}>
       {lines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
