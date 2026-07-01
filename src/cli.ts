@@ -488,7 +488,7 @@ async function runInteractive(input: {
 
   async function compactCurrentSession(focus: string): Promise<void> {
     clearTransientStatus()
-    terminal.setThinking(true, "compacting context")
+    terminal.setThinking(true, "Compacting context")
     try {
       const activePath = input.store.getActivePath(sessionId)
       const planState = currentPlanModeState(activePath)
@@ -871,7 +871,7 @@ async function runSingleTurn(input: {
   if (input.terminal) {
     input.terminal.clearToolActivities()
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
-    input.terminal.setThinking(true, "thinking")
+    input.terminal.setThinking(true, "Thinking")
   }
   if (!input.hiddenUserMessage) await maybeTitleSession(input.store, input.sessionId, input.config, input.prompt)
   input.terminal?.setTitle(input.store.getSession(input.sessionId).title)
@@ -905,17 +905,17 @@ async function runSingleTurn(input: {
       : undefined,
     onPermissionRequest: terminal
       ? async (request) => {
-          terminal.setThinking(true, `waiting for ${request.toolName} approval`)
+          terminal.setThinking(true, `Waiting for ${request.toolName} approval`)
           const decision = await terminal.requestApproval(request)
-          terminal.setThinking(true, "thinking")
+          terminal.setThinking(true, "Thinking")
           return decision
         }
       : undefined,
     onQuestionRequest: terminal
       ? async (request) => {
-          terminal.setThinking(true, "waiting for your answer")
+          terminal.setThinking(true, "Waiting for your answer")
           const response = await terminal.requestQuestions(request)
-          terminal.setThinking(true, "thinking")
+          terminal.setThinking(true, "Thinking")
           return response
         }
       : undefined,
@@ -953,7 +953,7 @@ async function runSingleTurn(input: {
       })
       toolActivities.push({ args: call.arguments, id: call.id, name: call.name, status: "running" })
       input.terminal?.setToolActivities([...toolActivities])
-      input.terminal?.setThinking(true, `running ${call.name}`)
+      input.terminal?.setThinking(true, `Running ${call.name}`)
     },
     onToolResult: (call, content) => {
       input.store.appendToolResult(input.sessionId, {
@@ -969,7 +969,7 @@ async function runSingleTurn(input: {
       input.terminal?.setToolActivities([...toolActivities])
       streamingText = ""
       terminal?.setStreamingContent("")
-      input.terminal?.setThinking(true, "thinking")
+      input.terminal?.setThinking(true, "Thinking")
     },
   })
   const assistantText = await visibleAssistantTextForMode(input.cwd, result.content, planState)
@@ -1013,17 +1013,17 @@ async function runSubagentTask(input: {
     messages,
     onPermissionRequest: terminal
       ? async (request) => {
-          terminal.setThinking(true, `waiting for subagent ${request.toolName} approval`)
+          terminal.setThinking(true, `Waiting for subagent ${request.toolName} approval`)
           const decision = await terminal.requestApproval(request)
-          terminal.setThinking(true, "thinking")
+          terminal.setThinking(true, "Thinking")
           return decision
         }
       : undefined,
     onQuestionRequest: terminal
       ? async (request) => {
-          terminal.setThinking(true, "waiting for your subagent answer")
+          terminal.setThinking(true, "Waiting for your subagent answer")
           const response = await terminal.requestQuestions(request)
-          terminal.setThinking(true, "thinking")
+          terminal.setThinking(true, "Thinking")
           return response
         }
       : undefined,
@@ -1131,7 +1131,7 @@ async function runCompaction(input: {
   terminal?: FurnaceTerminal
   tools: OpenRouterToolDefinition[]
 }) {
-  input.terminal?.setThinking(true, input.reason === "overflow" ? "compacting after context overflow" : "checking context")
+  input.terminal?.setThinking(true, input.reason === "overflow" ? "Compacting after context overflow" : "Checking context")
   const result = await compactSessionIfNeeded({
     config: input.config,
     cwd: input.cwd,
@@ -1142,8 +1142,8 @@ async function runCompaction(input: {
     systemPrompt: input.systemPrompt,
     tools: input.tools,
   })
-  if (result.entry) input.terminal?.setThinking(true, "compacted context")
-  else input.terminal?.setThinking(true, "thinking")
+  if (result.entry) input.terminal?.setThinking(true, "Compacted context")
+  else input.terminal?.setThinking(true, "Thinking")
   return result
 }
 

@@ -204,7 +204,7 @@ class UiStore {
       theme: themeChoice.theme,
       themeName: themeChoice.name,
       thinking: false,
-      thinkingMessage: "thinking",
+      thinkingMessage: "Thinking",
       title: options.title,
       committedLines: [],
       staticKey: 0,
@@ -308,7 +308,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setMode(mode, planPath) {
       store.update({ mode, planPath })
     },
-    setThinking(thinking, message = "thinking") {
+    setThinking(thinking, message = "Thinking") {
       store.update({ thinking, thinkingMessage: message })
     },
     setQueuedPrompts(prompts) {
@@ -491,35 +491,35 @@ function LofiCorner(): React.ReactNode {
 }
 
 function approvalHintItems(): string[] {
-  return ["up/down navigate", "enter select", "esc deny"]
+  return ["Up/down to navigate", "Enter to select", "Esc to deny"]
 }
 
 function questionHintItems(): string[] {
-  return ["left/right question", "up/down option", "enter select", "esc input"]
+  return ["Left/right to switch question", "Up/down to choose an option", "Enter to select", "Esc to return to input"]
 }
 
 function queueHintItems(): string[] {
-  return ["up/down select", "e edit", "d remove", "enter run next", "esc input"]
+  return ["Up/down to select", "E to edit", "D to remove", "Enter to run next", "Esc to return to input"]
 }
 
 function taskHintItems(state: UiState): string[] {
   const hasForeground = state.tasks.some((task) => task.status === "running")
   const hasBackground = state.tasks.some((task) => task.status === "backgrounded")
-  return ["up/down select", hasForeground ? "ctrl+b background" : hasBackground ? "working in background" : "task status", "esc input"]
+  return ["Up/down to select", hasForeground ? "Ctrl+b to background" : hasBackground ? "Working in background" : "Task status", "Esc to return to input"]
 }
 
 function hintItemsForState(state: UiState): string[] {
   if (state.approval) return approvalHintItems()
-  if (state.focus === "plan_actions" && state.planAction) return ["up/down select", "enter select", "esc stay"]
+  if (state.focus === "plan_actions" && state.planAction) return ["Up/down to select", "Enter to select", "Esc to stay"]
   if (state.focus === "question" && state.question) return questionHintItems()
   if (state.focus === "queue" && state.queuedPrompts.length > 0) return queueHintItems()
   if (state.focus === "tasks" && state.tasks.length > 0) return taskHintItems(state)
   const extras: string[] = []
-  if (state.planAction) extras.push("up plan actions")
-  if (state.question) extras.push("up answer question")
-  if (state.tasks.some((task) => task.status === "running")) extras.push("up task status")
-  if (state.queuedPrompts.length > 0) extras.push("up manage queue")
-  return [...extras, "tab mode", ...hintItems(state.screen.kind)]
+  if (state.planAction) extras.push("Up for plan actions")
+  if (state.question) extras.push("Up to answer question")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("Up for task status")
+  if (state.queuedPrompts.length > 0) extras.push("Up to manage queue")
+  return [...extras, "Tab to switch mode", ...hintItems(state.screen.kind)]
 }
 
 function promptPlaceholder(state: UiState): string {
@@ -631,9 +631,9 @@ function PlanActionPanel({ action, store }: { action: PlanActionState; store: Ui
   const theme = useTheme()
   const active = store.getSnapshot().focus === "plan_actions"
   const items: Array<SelectListItem<PlanAction>> = [
-    { label: "Execute", value: "execute", description: "switch to agent mode and run the plan" },
-    { label: "Refine", value: "refine", description: "keep plan mode and edit the plan" },
-    { label: "Stay in plan mode", value: "stay", description: "dismiss this choice" },
+    { label: "Execute", value: "execute", description: "Switch to agent mode and run the plan" },
+    { label: "Refine", value: "refine", description: "Keep plan mode and edit the plan" },
+    { label: "Stay in plan mode", value: "stay", description: "Dismiss this choice" },
   ]
 
   const resolve = React.useCallback(
@@ -807,12 +807,12 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Questions</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up to answer"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up to answer"}</Text>
       </Box>
       {questions.length > 1 ? (
         <Text color={theme.colors.mutedForeground}>
           {questions.map((item, index) => `${index === questionIndex ? ">" : answers[item.id]?.length ? "*" : "-"} ${item.id}`).join("  ")}
-          {`  ${isReview ? "> " : ""}review`}
+          {`  ${isReview ? "> " : ""}Review`}
         </Text>
       ) : null}
       {isReview ? (
@@ -820,12 +820,12 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
           <Text color={theme.colors.foreground}>Review answers</Text>
           {questions.map((item) => (
             <Text key={item.id} color={answers[item.id]?.length ? theme.colors.foreground : theme.colors.error}>
-              {item.id}: {answers[item.id]?.map((answer) => answer.label).join(", ") || "(not answered)"}
+              {item.id}: {answers[item.id]?.map((answer) => answer.label).join(", ") || "(Not answered)"}
             </Text>
           ))}
           <SelectList
             active={active && !customEditing}
-            items={[{ label: "Submit answers", value: "submit" as const, description: allAnswered ? "send to agent" : "answer all first", disabled: !allAnswered }]}
+            items={[{ label: "Submit answers", value: "submit" as const, description: allAnswered ? "Send to agent" : "Answer all first", disabled: !allAnswered }]}
             maxRows={1}
             onBoundary={(direction) => focusAdjacentPanel(store, direction)}
             onCancel={() => store.update({ focus: "input" })}
@@ -839,7 +839,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
             <Box flexDirection="column">
               <Text color={theme.colors.mutedForeground}>Custom answer:</Text>
               <Text color={theme.colors.foreground}>{customDraft || " "}</Text>
-              <Text color={theme.colors.mutedForeground}>enter save · esc cancel</Text>
+              <Text color={theme.colors.mutedForeground}>Enter to save · Esc to cancel</Text>
             </Box>
           ) : (
             <SelectList
@@ -864,16 +864,16 @@ export function questionChoiceItems(question: AskQuestionItem, answers: AskQuest
     value: `option:${index}`,
     description: option.description,
   }))
-  if (question.allowCustom) items.push({ label: "Other / type your own answer", value: "custom", description: "custom answer" })
+  if (question.allowCustom) items.push({ label: "Other / type your own answer", value: "custom", description: "Custom answer" })
   if (question.allowMultiple) {
     items.push({
       label: "Continue",
       value: "continue",
-      description: answers.length > 0 ? "next question" : "select at least one",
+      description: answers.length > 0 ? "Next question" : "Select at least one",
       disabled: answers.length === 0,
     })
   }
-  items.push({ label: "Refuse to answer", value: "refuse", description: "continue without this answer" })
+  items.push({ label: "Refuse to answer", value: "refuse", description: "Continue without this answer" })
   return items
 }
 
@@ -929,7 +929,7 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Queued prompts</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up to manage"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up to manage"}</Text>
       </Box>
       {queuedPromptPreviewItems(prompts, selected).map((line) => (
         <Text key={line.id} color={line.selected ? theme.colors.primary : theme.colors.mutedForeground}>
@@ -937,7 +937,7 @@ function QueuedPromptPanel({ prompts, store }: { prompts: QueuedPrompt[]; store:
         </Text>
       ))}
       <Text color={theme.colors.mutedForeground}>
-        {active ? "up/down select · e edit · d remove · enter run next · esc input" : "press up from empty input to manage"}
+        {active ? "Up/down to select · E to edit · D to remove · Enter to run next · Esc to return to input" : "Press up from empty input to manage"}
       </Text>
     </Box>
   )
@@ -988,7 +988,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>{title}</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "focused" : "press up for tasks"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up for tasks"}</Text>
       </Box>
       {taskPreviewItems(tasks, selected).map((line) => (
         <Text key={line.id} color={line.selected ? theme.colors.primary : taskStatusColor(theme, line.status)}>
@@ -996,7 +996,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
         </Text>
       ))}
       <Text color={theme.colors.mutedForeground}>
-        {active ? `up/down select · ${canBackground ? "ctrl+b background group" : hasBackgrounded ? "working in background" : "task status"} · esc input` : taskPanelSummary(tasks)}
+        {active ? `Up/down to select · ${canBackground ? "Ctrl+b to background group" : hasBackgrounded ? "Working in background" : "Task status"} · Esc to return to input` : taskPanelSummary(tasks)}
       </Text>
       {selectedTask?.error ? <Text color={theme.colors.error}>{truncateEnd(selectedTask.error, 100)}</Text> : null}
     </Box>
@@ -1034,7 +1034,7 @@ function taskPanelSummary(tasks: TaskRecord[]): string {
     running ? `${running} running` : "",
     backgrounded ? `${backgrounded} working in background` : "",
   ].filter(Boolean)
-  return parts.join(" · ") || "recent task history"
+  return parts.join(" · ") || "Recent task history"
 }
 
 export function queuedPromptPreviewItems(prompts: QueuedPrompt[], selected = 0, maxItems = 3): Array<{ id: string; selected: boolean; text: string }> {
@@ -1054,10 +1054,10 @@ export function formatQueuedPromptPreview(text: string, max = 72): string {
 
 export function approvalChoiceItems(toolName: string): SelectListItem<PermissionDecision>[] {
   return [
-    { label: "Allow once", value: "allow_once", description: "only this call" },
-    { label: `Allow ${toolName} for conversation`, value: "allow_tool_session", description: "future calls of this tool" },
-    { label: "Allow all tools for conversation", value: "allow_all_session", description: "current conversation only" },
-    { label: "Deny", value: "deny", description: "only this call" },
+    { label: "Allow once", value: "allow_once", description: "Only this call" },
+    { label: `Allow ${toolName} for conversation`, value: "allow_tool_session", description: "Future calls of this tool" },
+    { label: "Allow all tools for conversation", value: "allow_all_session", description: "Current conversation only" },
+    { label: "Deny", value: "deny", description: "Only this call" },
   ]
 }
 
@@ -1072,13 +1072,13 @@ function formatApprovalArgs(args: string): string {
   } catch {
     // Fall through to raw argument preview.
   }
-  return args.replace(/\s+/g, " ").trim() || "no arguments"
+  return args.replace(/\s+/g, " ").trim() || "No arguments"
 }
 
 function hintItems(kind: UiScreen["kind"]): string[] {
-  if (kind === "model") return ["type to filter", "enter select", "tab edit", "esc cancel"]
-  if (kind === "theme") return ["up/down navigate", "enter preview", "esc cancel"]
-  if (kind === "history") return ["up/down navigate", "enter open", "esc cancel"]
+  if (kind === "model") return ["Type to filter", "Enter to select", "Tab to edit", "Esc to cancel"]
+  if (kind === "theme") return ["Up/down to navigate", "Enter to preview", "Esc to cancel"]
+  if (kind === "history") return ["Up/down to navigate", "Enter to open", "Esc to cancel"]
   return ["/new", "/resume", "/model", "/theme", "/tasks", "/lofi", "/permissions", "/exit"]
 }
 
@@ -1277,7 +1277,7 @@ function InlineMarkdown({ text }: { text: string }): React.ReactNode {
 }
 
 export function buildTranscriptLinesForTest(transcript: TranscriptMessage[], width: number): TranscriptLineData[] {
-  return buildTranscriptLines(transcript, width, [], false, "thinking", "")
+  return buildTranscriptLines(transcript, width, [], false, "Thinking", "")
 }
 
 function buildTranscriptLines(transcript: TranscriptMessage[], width: number, toolActivities: ToolActivity[], thinking: boolean, thinkingMessage: string, streamingContent = ""): TranscriptLineData[] {
@@ -1299,12 +1299,12 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
   }
 
   if (streamingContent && !thinking) {
-    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "assistant" })
+    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "Assistant" })
     appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, transcript.length, width)
   }
 
   if (thinking) {
-    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "assistant" })
+    lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "Assistant" })
     lines.push({ kind: "spinner", messageIndex: transcript.length, role: "assistant", text: thinkingMessage })
   }
   return lines
@@ -1328,18 +1328,18 @@ function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string
     appendToolLines(lines, toolActivities, 0, width)
   }
   if (streamingContent && !thinking) {
-    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "assistant" })
+    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
     appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, 0, width)
   }
   if (thinking) {
-    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "assistant" })
+    lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
     lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: thinkingMessage })
   }
   return lines
 }
 
 function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMessage, messageIndex: number, width: number): void {
-  lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "user" : "assistant" })
+  lines.push({ kind: "role", messageIndex, role: message.role, text: message.role === "user" ? "User" : "Assistant" })
   if (message.role === "assistant") {
     const planPreview = splitSavedPlanPreview(message.content)
     if (planPreview) {
@@ -1949,7 +1949,7 @@ function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end
       kind: "role",
       messageIndex: first.messageIndex,
       role: first.role,
-      text: `${first.role === "user" ? "user" : "assistant"} (continued)`,
+      text: `${first.role === "user" ? "User" : "Assistant"} (continued)`,
     })
   }
 
@@ -2308,8 +2308,8 @@ function formatRelativeTime(timestamp: number): string {
   const hour = 60 * minute
   const day = 24 * hour
 
-  if (isYesterday(timestamp, now) && diffMs >= 15 * hour) return "yesterday"
-  if (diffMs < minute) return "just now"
+  if (isYesterday(timestamp, now) && diffMs >= 15 * hour) return "Yesterday"
+  if (diffMs < minute) return "Just now"
   if (diffMs < hour) {
     const minutes = Math.max(1, Math.floor(diffMs / minute))
     return `${minutes} min${minutes === 1 ? "" : "s"} ago`

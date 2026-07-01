@@ -165,7 +165,7 @@ test("multi-select question prompt exposes a guarded continue choice", async () 
     ["option:0", "custom", "continue", "refuse"],
   )
   assert.equal(unanswered[2].disabled, true)
-  assert.equal(unanswered[2].description, "select at least one")
+  assert.equal(unanswered[2].description, "Select at least one")
 
   const answered = questionChoiceItems(
     {
@@ -179,7 +179,7 @@ test("multi-select question prompt exposes a guarded continue choice", async () 
   )
 
   assert.equal(answered[2].disabled, false)
-  assert.equal(answered[2].description, "next question")
+  assert.equal(answered[2].description, "Next question")
 })
 
 test("queued prompt previews truncate and track selected item", async () => {
