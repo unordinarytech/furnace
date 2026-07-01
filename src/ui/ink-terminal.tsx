@@ -3,7 +3,7 @@ import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
-import type { PermissionDecision, PermissionRequest } from "../permissions.js"
+import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort } from "../preferences.js"
 import type { AskQuestionAnswer, AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
@@ -40,6 +40,7 @@ export type FurnaceTerminal = {
     onSelect: (model: string, settings: ModelSettings, done: boolean) => void,
     onCancel: () => void,
   ): void
+  showPermissions(grants: PermissionGrantSummary[], onRemove: (grant: PermissionGrantSummary) => void, onClearAll: () => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
   setModel(model: string, settings: ModelSettings): void
   setTheme(theme: string): void
@@ -99,6 +100,13 @@ type UiScreen =
       onCancel: () => void
       onSelect: (model: string, settings: ModelSettings, done: boolean) => void
       settings: ModelSettings
+    }
+  | {
+      kind: "permissions"
+      grants: PermissionGrantSummary[]
+      onCancel: () => void
+      onClearAll: () => void
+      onRemove: (grant: PermissionGrantSummary) => void
     }
 
 type PlanActionState = {
@@ -323,6 +331,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showModelEditor(choice, settings, onSelect, onCancel) {
       store.update({ screen: { kind: "modelEditor", choice, onCancel, onSelect, settings: normalizeModelSettings(settings, choice) } })
     },
+    showPermissions(grants, onRemove, onClearAll, onCancel) {
+      store.update({ screen: { kind: "permissions", grants, onCancel, onClearAll, onRemove } })
+    },
     showPlanActions(planPath, onSelect) {
       store.update((state) => ({ ...state, focus: "plan_actions", planAction: { onSelect, planPath } }))
     },
@@ -422,6 +433,7 @@ function FurnaceApp({
           toolActivities={state.toolActivities}
         />
         {!state.approval && state.screen.kind === "modelEditor" ? <ModelEditorPanel screen={state.screen} store={store} /> : null}
+        {!state.approval && state.screen.kind === "permissions" ? <PermissionsPanel screen={state.screen} store={store} /> : null}
         {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
         {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
         {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
@@ -1059,6 +1071,7 @@ function formatApprovalArgs(args: string): string {
 
 function hintItems(kind: UiScreen["kind"]): string[] {
   if (kind === "modelEditor") return ["Up/down to navigate", "Enter to toggle", "Esc/Tab to apply"]
+  if (kind === "permissions") return ["Up/down to navigate", "Enter to remove", "c to clear all", "Esc to close"]
   return ["/new", "/resume", "/model", "/theme", "/tasks", "/lofi", "/permissions", "/exit"]
 }
 
@@ -2023,6 +2036,61 @@ function ModelEditorPanel({ screen, store }: { screen: Extract<UiScreen, { kind:
       <Text color={theme.colors.mutedForeground}>Esc/Tab to apply and return to chat.</Text>
     </Box>
   )
+}
+
+function PermissionsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "permissions" }>; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const [selectedIndex, setSelectedIndex] = React.useState(0)
+
+  React.useEffect(() => {
+    setSelectedIndex((current) => Math.min(current, Math.max(0, screen.grants.length - 1)))
+  }, [screen.grants.length])
+
+  useInput((input, key) => {
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.upArrow) return setSelectedIndex((current) => Math.max(0, current - 1))
+    if (key.downArrow) return setSelectedIndex((current) => Math.min(screen.grants.length - 1, current + 1))
+    if (key.return) {
+      const grant = screen.grants[selectedIndex]
+      if (grant) screen.onRemove(grant)
+      return
+    }
+    if (!key.ctrl && !key.meta && input.toLowerCase() === "c") {
+      screen.onClearAll()
+    }
+  })
+
+  return (
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
+      <Text color={theme.colors.primary} bold>
+        Permission grants for this conversation
+      </Text>
+      {screen.grants.length === 0 ? (
+        <Text color={theme.colors.mutedForeground}>No permission grants for this conversation.</Text>
+      ) : (
+        screen.grants.map((grant, index) => (
+          <Text key={grantKey(grant, index)} color={index === selectedIndex ? theme.colors.primary : theme.colors.foreground}>
+            {index === selectedIndex ? "› " : "  "}
+            {formatPermissionGrant(grant)}
+          </Text>
+        ))
+      )}
+      <Text color={theme.colors.mutedForeground}>Enter to remove · c to clear all · Esc to close</Text>
+    </Box>
+  )
+}
+
+function grantKey(grant: PermissionGrantSummary, index: number): string {
+  return grant.kind === "allow_all" ? "allow_all" : `${index}-${grant.rule.permission}-${grant.rule.pattern}`
+}
+
+function formatPermissionGrant(grant: PermissionGrantSummary): string {
+  if (grant.kind === "allow_all") return "Allow all tools (this session)"
+  return `${grant.rule.action} ${grant.rule.permission}: ${grant.rule.pattern}`
 }
 
 type ModelEditorRow =

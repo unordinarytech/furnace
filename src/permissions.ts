@@ -12,6 +12,8 @@ export type PermissionRule = {
   sessionId?: string
 }
 
+export type PermissionGrantSummary = { kind: "allow_all" } | { index: number; kind: "rule"; rule: PermissionRule }
+
 export type PermissionRequest = {
   args: string
   callId: string
@@ -67,6 +69,23 @@ export class SessionPermissionStore {
         sessionId: request.sessionId,
       })
     }
+  }
+
+  listSessionGrants(sessionId: string): PermissionGrantSummary[] {
+    const grants: PermissionGrantSummary[] = []
+    if (this.allowAllSessionIds.has(sessionId)) grants.push({ kind: "allow_all" })
+    this.rules.forEach((rule, index) => {
+      if (rule.sessionId === sessionId) grants.push({ index, kind: "rule", rule })
+    })
+    return grants
+  }
+
+  removeGrant(sessionId: string, grant: PermissionGrantSummary): void {
+    if (grant.kind === "allow_all") {
+      this.allowAllSessionIds.delete(sessionId)
+      return
+    }
+    if (this.rules[grant.index] === grant.rule) this.rules.splice(grant.index, 1)
   }
 
   clearSession(sessionId: string): number {

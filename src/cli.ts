@@ -9,7 +9,7 @@ import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashComm
 import { loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
-import { SessionPermissionStore } from "./permissions.js"
+import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveModelPreferences, saveThemePreference, type ModelSettings } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
@@ -297,7 +297,7 @@ async function runInteractive(input: {
         return
       }
       if (command.name === "/permissions") {
-        resetCurrentSessionPermissions()
+        openPermissionsPanel()
         return
       }
       if (command.name === "/theme" && command.argument) {
@@ -334,7 +334,7 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/permissions") {
-      resetCurrentSessionPermissions()
+      openPermissionsPanel()
       return
     }
     if (isHistoryCommand(command.name)) {
@@ -390,9 +390,18 @@ async function runInteractive(input: {
     transientStatusTimer.unref?.()
   }
 
-  function resetCurrentSessionPermissions(): void {
-    const removed = permissions.clearSession(sessionId)
-    showTransientStatus(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation.")
+  function openPermissionsPanel(): void {
+    const onRemove = (grant: PermissionGrantSummary): void => {
+      permissions.removeGrant(sessionId, grant)
+      terminal.showPermissions(permissions.listSessionGrants(sessionId), onRemove, onClearAll, onClose)
+    }
+    const onClearAll = (): void => {
+      const removed = permissions.clearSession(sessionId)
+      showTransientStatus(removed > 0 ? `Reset ${removed} permission grant${removed === 1 ? "" : "s"} for this conversation.` : "No permission grants to reset for this conversation.")
+      terminal.showPermissions(permissions.listSessionGrants(sessionId), onRemove, onClearAll, onClose)
+    }
+    const onClose = (): void => refreshCurrentSession()
+    terminal.showPermissions(permissions.listSessionGrants(sessionId), onRemove, onClearAll, onClose)
   }
 
   function showTaskStatus(): void {

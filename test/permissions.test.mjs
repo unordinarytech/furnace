@@ -184,3 +184,40 @@ test("clearing a session removes only that conversation's grants", async () => {
   assert.equal(store.evaluate(sessionOneBash), "ask")
   assert.equal(store.evaluate(sessionTwoBash), "allow")
 })
+
+test("listSessionGrants and removeGrant expose and revoke individual grants", async () => {
+  const store = new SessionPermissionStore()
+  const bashRequest = createToolPermissionRequest({
+    args: JSON.stringify({ command: "npm test" }),
+    callId: "call-1",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "bash",
+  })
+  const writeRequest = createToolPermissionRequest({
+    args: JSON.stringify({ path: "src/app.ts", content: "changed", overwrite: true }),
+    callId: "call-2",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "write",
+  })
+
+  await store.authorize(bashRequest, async () => "allow_tool_session")
+  assert.deepEqual(store.listSessionGrants("session-1").map((grant) => grant.kind), ["rule"])
+
+  await store.authorize(writeRequest, async () => "allow_all_session")
+  const grants = store.listSessionGrants("session-1")
+  assert.deepEqual(
+    grants.map((grant) => grant.kind),
+    ["allow_all", "rule"],
+  )
+  assert.equal(store.evaluate(bashRequest), "allow")
+
+  store.removeGrant("session-1", grants.find((grant) => grant.kind === "allow_all"))
+  assert.equal(store.evaluate(bashRequest), "allow")
+  assert.equal(store.evaluate(writeRequest), "ask")
+
+  store.removeGrant("session-1", grants.find((grant) => grant.kind === "rule"))
+  assert.equal(store.evaluate(bashRequest), "ask")
+  assert.deepEqual(store.listSessionGrants("session-1"), [])
+})
