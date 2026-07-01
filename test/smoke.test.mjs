@@ -44,6 +44,26 @@ test("termcn theme registry exposes all bundled themes", async () => {
   })
 })
 
+test("filterThemeChoices narrows themes by display label, name, or description as the user types", async () => {
+  const { filterThemeChoices } = await import("../dist/ui/ink-terminal.js")
+  const { themeChoices } = await import("../dist/ui/terminal-themes/index.js")
+
+  assert.deepEqual(filterThemeChoices(themeChoices, ""), themeChoices)
+  assert.deepEqual(
+    filterThemeChoices(themeChoices, "tokyo-night").map((choice) => choice.name),
+    ["tokyo-night"],
+  )
+  assert.deepEqual(
+    filterThemeChoices(themeChoices, "rose pine").map((choice) => choice.name),
+    [],
+  )
+  assert.deepEqual(
+    filterThemeChoices(themeChoices, "Rosé").map((choice) => choice.name),
+    ["rosepine"],
+  )
+  assert.deepEqual(filterThemeChoices(themeChoices, "not-a-real-theme"), [])
+})
+
 test("assistant markdown inline formatting is parsed for terminal rendering", async () => {
   const { parseInlineMarkdown } = await import("../dist/ui/ink-terminal.js")
 
@@ -271,6 +291,22 @@ test("/resume is the primary history command name, with /history kept as an alia
   assert.equal(isHistoryCommand("/history"), true)
   assert.equal(isHistoryCommand("/historu"), false)
   assert.equal(isHistoryCommand("/model"), false)
+})
+
+test("pickerCommandFor detects exact bare-command matches for the inline pickers", async () => {
+  const { pickerCommandFor } = await import("../dist/commands.js")
+
+  assert.equal(pickerCommandFor("/theme"), "theme")
+  assert.equal(pickerCommandFor("/model"), "model")
+  assert.equal(pickerCommandFor("/resume"), "history")
+  assert.equal(pickerCommandFor("/history"), "history")
+
+  assert.equal(pickerCommandFor("/th"), undefined)
+  assert.equal(pickerCommandFor("/theme tokyo-night"), undefined)
+  assert.equal(pickerCommandFor("/model gpt-4"), undefined)
+  assert.equal(pickerCommandFor("hello"), undefined)
+  assert.equal(pickerCommandFor(""), undefined)
+  assert.equal(pickerCommandFor("/permissions"), undefined)
 })
 
 test("skill_manage tool activity renders proposed SKILL.md", async () => {

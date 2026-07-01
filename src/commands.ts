@@ -50,3 +50,15 @@ export function isHistoryCommand(command: string): boolean {
 export function isKnownSlashCommand(command: string): boolean {
   return slashCommandNames.has(command)
 }
+
+export type PickerCommand = "history" | "model" | "theme"
+
+export function pickerCommandFor(value: string): PickerCommand | undefined {
+  if (!value.startsWith("/")) return undefined
+  const command = parseSlashCommand(value)
+  if (command.argument) return undefined
+  if (isHistoryCommand(command.name)) return "history"
+  if (command.name === "/model") return "model"
+  if (command.name === "/theme") return "theme"
+  return undefined
+}

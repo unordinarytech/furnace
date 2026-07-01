@@ -92,6 +92,7 @@ type CreateFurnaceTerminalOptions = {
   onQueueRemove?: (id: string) => void
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
+  onInputChange?: (value: string) => void
   themeName: string
   title: string
   onSubmit: (text: string) => void
@@ -170,6 +171,7 @@ class UiStore {
   readonly modeHandlers: {
     onCycle?: (direction: 1 | -1) => void
   }
+  readonly onInputChange?: (value: string) => void
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -184,6 +186,7 @@ class UiStore {
     this.modeHandlers = {
       onCycle: options.onModeCycle,
     }
+    this.onInputChange = options.onInputChange
     this.state = {
       approval: undefined,
       busy: false,
@@ -428,23 +431,22 @@ function FurnaceApp({
         {(line, index) => <StaticLine key={index} line={line} />}
       </Static>
       <Box flexDirection="column" height={rows} width={columns} overflow="hidden">
-        {state.screen.kind === "history" ? (
+        <LiveChat
+          committedLines={state.committedLines}
+          flexGrow
+          hasTranscript={state.transcript.length > 0}
+          thinking={state.thinking}
+          thinkingMessage={state.thinkingMessage}
+          streamingContent={state.streamingContent}
+          toolActivities={state.toolActivities}
+        />
+        {!state.approval && state.screen.kind === "history" ? (
           <HistoryScreen screen={state.screen} store={store} />
-        ) : state.screen.kind === "model" ? (
+        ) : !state.approval && state.screen.kind === "model" ? (
           <ModelScreen model={state.model} screen={state.screen} store={store} />
-        ) : state.screen.kind === "theme" ? (
+        ) : !state.approval && state.screen.kind === "theme" ? (
           <ThemeScreen screen={state.screen} store={store} />
-        ) : (
-          <LiveChat
-            committedLines={state.committedLines}
-            flexGrow
-            hasTranscript={state.transcript.length > 0}
-            thinking={state.thinking}
-            thinkingMessage={state.thinkingMessage}
-            streamingContent={state.streamingContent}
-            toolActivities={state.toolActivities}
-          />
-        )}
+        ) : null}
         {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
         {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
         {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
@@ -457,7 +459,10 @@ function FurnaceApp({
           disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
           autocompleteItems={state.slashCommandItems}
           historyItems={sentMessages}
-          onChange={(value) => store.update({ inputDraft: value })}
+          onChange={(value) => {
+            store.update({ inputDraft: value })
+            store.onInputChange?.(value)
+          }}
           onEmptyUp={() => {
             if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
           }}
@@ -2015,7 +2020,7 @@ function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "h
   })
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Text color={theme.colors.primary} bold>
         Select a conversation
       </Text>
@@ -2037,16 +2042,24 @@ function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "h
   )
 }
 
+export function filterThemeChoices(choices: ThemeChoice[], filter: string): ThemeChoice[] {
+  const normalized = filter.trim().toLowerCase()
+  if (!normalized) return choices
+  return choices.filter((choice) => `${choice.displayLabel} ${choice.name} ${choice.description || ""}`.toLowerCase().includes(normalized))
+}
+
 function ThemeScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "theme" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
+  const [filter, setFilter] = React.useState("")
+  const filteredChoices = React.useMemo(() => filterThemeChoices(screen.choices, filter), [screen.choices, filter])
   const items: Array<SelectListItem<string>> = React.useMemo(
     () =>
-      screen.choices.map((choice) => ({
+      filteredChoices.map((choice) => ({
         description: choice.description,
         label: choice.displayLabel,
         value: choice.name,
       })),
-    [screen.choices],
+    [filteredChoices],
   )
   const previewTheme = React.useCallback(
     (item: SelectListItem<string>) => {
@@ -2056,11 +2069,28 @@ function ThemeScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "the
     [store],
   )
 
+  useInput((input, key) => {
+    if (key.escape) {
+      const choice = resolveTheme(screen.currentTheme)
+      store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.backspace || key.delete) {
+      setFilter((current) => current.slice(0, -1))
+      return
+    }
+    if (!key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && input) {
+      setFilter((current) => current + input)
+    }
+  })
+
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Text color={theme.colors.primary} bold>
         Select a theme
       </Text>
+      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
       <SelectList
         items={items}
         maxRows={12}
@@ -2075,7 +2105,7 @@ function ThemeScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "the
           store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
           screen.onSelect(choice.name, true)
         }}
-        selectedValue={screen.currentTheme}
+        selectedValue={filter ? null : screen.currentTheme}
       />
     </Box>
   )
@@ -2140,7 +2170,7 @@ function ModelScreen({ model, screen, store }: { model: string; screen: Extract<
   if (editing) return <ModelEditorScreen choice={editing.choice} selectedIndex={editing.selectedIndex} settings={settingsForModel(screen, editing.choice.id)} />
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Text color={theme.colors.primary} bold>
         Available OpenRouter models
       </Text>
@@ -2155,7 +2185,7 @@ function ModelEditorScreen({ choice, selectedIndex, settings }: { choice: ModelC
   const rows = modelEditorRows(choice, settings)
 
   return (
-    <Box flexDirection="column" paddingX={1} paddingY={1}>
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Text color={theme.colors.primary} bold>
         {choice.name} - Edit parameters
       </Text>

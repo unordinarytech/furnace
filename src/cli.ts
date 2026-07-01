@@ -5,10 +5,10 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
-import { isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
-import { loadConfig } from "./config.js"
+import { isHistoryCommand, isKnownSlashCommand, parseSlashCommand, pickerCommandFor, slashCommandDefinitions } from "./commands.js"
+import { loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
-import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterToolDefinition } from "./openrouter.js"
+import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { saveModelPreferences, saveThemePreference } from "./preferences.js"
@@ -78,6 +78,25 @@ program
 
 await program.parseAsync()
 
+type ModelListCache = {
+  promise: Promise<OpenRouterModel[]>
+  settled: boolean
+}
+
+function createModelListCache(config: FurnaceConfig): ModelListCache {
+  const promise = listOpenRouterModels(config)
+  const cache: ModelListCache = { promise, settled: false }
+  promise.then(
+    () => {
+      cache.settled = true
+    },
+    () => {
+      cache.settled = true
+    },
+  )
+  return cache
+}
+
 async function runInteractive(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   cwd: string
@@ -92,6 +111,7 @@ async function runInteractive(input: {
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const queuedPrompts: QueuedPrompt[] = []
   const pendingBackgroundPrompts = new Map<string, string[]>()
+  const modelListCache = createModelListCache(input.config)
   let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
   let queueCounter = 0
   let running = false
@@ -161,6 +181,15 @@ async function runInteractive(input: {
       }
       const current = currentPlanModeState(input.store.getActivePath(sessionId)).mode
       void switchMode(current === "plan" ? "agent" : "plan", { reason: "user", seed: direction > 0 ? "plan" : "agent" }).catch((error) => showTransientStatus(formatError(error)))
+    },
+    onInputChange: (value) => {
+      if (running) return
+      const picker = pickerCommandFor(value)
+      if (!picker) return
+      terminal.setInputDraft("")
+      if (picker === "history") openHistoryPicker()
+      else if (picker === "model") void openModelPicker()
+      else openThemePicker()
     },
     themeName: input.config.theme,
     title: initialSession.title,
@@ -271,22 +300,7 @@ async function runInteractive(input: {
       return
     }
     if (isHistoryCommand(command.name)) {
-      const historyChoices = input.store.listSessions(input.cwd)
-      if (historyChoices.length === 0) {
-        terminal.setTitle("History")
-        terminal.setTranscript([{ role: "assistant", content: "No saved conversations yet." }])
-        return
-      }
-      terminal.showHistory(
-        historyChoices,
-        sessionId,
-        (selectedSessionId) => {
-          sessionId = selectedSessionId
-          refreshCurrentSession()
-          flushPendingBackgroundPrompts()
-        },
-        () => refreshCurrentSession(),
-      )
+      openHistoryPicker()
       return
     }
     if (command.name === "/tasks") {
@@ -302,24 +316,7 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/model") {
-      terminal.setTitle("Model")
-      terminal.setTranscript([{ role: "assistant", content: "Loading OpenRouter models..." }])
-      const models = await listOpenRouterModels(input.config)
-      terminal.showModelPicker(
-        models,
-        input.config.model,
-        input.config.modelSettings,
-        (model, settings, done) => {
-          input.config.model = model
-          input.config.modelSettings = settings
-          terminal.setModel(model, settings)
-          void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
-            terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
-          })
-          if (done) refreshCurrentSession()
-        },
-        () => refreshCurrentSession(),
-      )
+      await openModelPicker()
       return
     }
     if (command.name === "/theme") {
@@ -327,20 +324,7 @@ async function runInteractive(input: {
         await setThemeByName(command.argument)
         return
       }
-
-      terminal.showThemePicker(
-        themeChoices,
-        resolveTheme(input.config.theme).name,
-        (theme, done) => {
-          input.config.theme = theme
-          terminal.setTheme(theme)
-          void saveThemePreference(input.cwd, theme).catch((error) => {
-            terminal.setTranscript([{ role: "assistant", content: `Failed to save theme preference: ${formatError(error)}` }])
-          })
-          if (done) refreshCurrentSession()
-        },
-        () => refreshCurrentSession(),
-      )
+      openThemePicker()
       return
     }
 
@@ -369,6 +353,64 @@ async function runInteractive(input: {
     const status = formatTaskStatusForUser(taskManager.status(sessionId).tasks)
     terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
     terminal.setTasks(taskManager.status(sessionId).tasks)
+  }
+
+  function openHistoryPicker(): void {
+    const historyChoices = input.store.listSessions(input.cwd)
+    if (historyChoices.length === 0) {
+      terminal.setTitle("History")
+      terminal.setTranscript([{ role: "assistant", content: "No saved conversations yet." }])
+      return
+    }
+    terminal.showHistory(
+      historyChoices,
+      sessionId,
+      (selectedSessionId) => {
+        sessionId = selectedSessionId
+        refreshCurrentSession()
+        flushPendingBackgroundPrompts()
+      },
+      () => refreshCurrentSession(),
+    )
+  }
+
+  async function openModelPicker(): Promise<void> {
+    if (!modelListCache.settled) {
+      terminal.setTitle("Model")
+      terminal.setTranscript([{ role: "assistant", content: "Loading OpenRouter models..." }])
+    }
+    const models = await modelListCache.promise
+    terminal.showModelPicker(
+      models,
+      input.config.model,
+      input.config.modelSettings,
+      (model, settings, done) => {
+        input.config.model = model
+        input.config.modelSettings = settings
+        terminal.setModel(model, settings)
+        void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
+          terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
+        })
+        if (done) refreshCurrentSession()
+      },
+      () => refreshCurrentSession(),
+    )
+  }
+
+  function openThemePicker(): void {
+    terminal.showThemePicker(
+      themeChoices,
+      resolveTheme(input.config.theme).name,
+      (theme, done) => {
+        input.config.theme = theme
+        terminal.setTheme(theme)
+        void saveThemePreference(input.cwd, theme).catch((error) => {
+          terminal.setTranscript([{ role: "assistant", content: `Failed to save theme preference: ${formatError(error)}` }])
+        })
+        if (done) refreshCurrentSession()
+      },
+      () => refreshCurrentSession(),
+    )
   }
 
   async function setThemeByName(name: string): Promise<void> {
