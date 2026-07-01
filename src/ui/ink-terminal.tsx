@@ -1140,7 +1140,8 @@ export function chatViewportRows(windowRows: number, reservedRows = 0): number {
 }
 
 type TranscriptLineData = {
-  kind: "blank" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
+  codeFenceOpen?: boolean
+  kind: "blank" | "code" | "code-fence" | "content" | "plan" | "spinner" | "role" | "table" | "tool"
   messageIndex?: number
   planTone?: "border" | "content" | "meta"
   role?: TranscriptMessage["role"]
@@ -1170,6 +1171,10 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     }
     return <Text color={color}>{"  "}{line.text}</Text>
   }
+  if (line.kind === "code-fence") {
+    return <Text color={theme.colors.mutedForeground}>{line.codeFenceOpen ? `┌─${line.text ? ` ${line.text} ` : "─"}` : "└─"}</Text>
+  }
+  if (line.kind === "code") return <Text color={theme.colors.foreground}>{"│ "}{line.text || " "}</Text>
   if (line.kind === "table") {
     if (line.tableTone === "header") return <Text color={theme.colors.primary} bold>{line.text}</Text>
     if (line.tableTone === "divider") return <Text color={theme.colors.border}>{line.text}</Text>
@@ -1358,8 +1363,26 @@ function appendMessageLines(lines: TranscriptLineData[], message: TranscriptMess
 function appendWrappedContentLines(lines: TranscriptLineData[], content: string, message: TranscriptMessage, messageIndex: number, width: number): void {
   const sourceLines = content.split("\n")
   let index = 0
+  let fenceLang: string | undefined
   while (index < sourceLines.length) {
     const line = sourceLines[index]
+    const fence = line.match(/^\s*```(.*)$/)
+
+    if (fence) {
+      const opening = fenceLang === undefined
+      fenceLang = opening ? fence[1].trim() : undefined
+      lines.push({ codeFenceOpen: opening, kind: "code-fence", messageIndex, role: message.role, text: opening ? fenceLang ?? "" : "" })
+      index += 1
+      continue
+    }
+
+    if (fenceLang !== undefined) {
+      for (const wrappedLine of wrapAnsi(line, width, { hard: true, wordWrap: false }).split("\n")) {
+        lines.push({ kind: "code", messageIndex, role: message.role, text: wrappedLine })
+      }
+      index += 1
+      continue
+    }
 
     if (isTableRow(line) && index + 1 < sourceLines.length && isTableSeparator(sourceLines[index + 1])) {
       const block: string[] = []

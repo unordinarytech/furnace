@@ -323,6 +323,35 @@ test("markdown tables render with aligned columns and no horizontal rules", asyn
   assert.equal(lines.some((line) => /^-{3,}$/.test(line.text.trim())), false)
 })
 
+test("fenced code blocks render as distinct lines without inline markdown parsing", async () => {
+  const { buildTranscriptLinesForTest } = await import("../dist/ui/ink-terminal.js")
+  const content = "Before text\n\n```ts\nconst x = *not italic*\nfunction f() {}\n```\n\nAfter text"
+  const lines = buildTranscriptLinesForTest([{ role: "assistant", content }], 80)
+
+  const openFence = lines.find((line) => line.kind === "code-fence" && line.codeFenceOpen)
+  const closeFence = lines.find((line) => line.kind === "code-fence" && !line.codeFenceOpen)
+  assert.ok(openFence)
+  assert.ok(closeFence)
+  assert.equal(openFence.text, "ts")
+
+  const codeLines = lines.filter((line) => line.kind === "code")
+  assert.equal(codeLines.length, 2)
+  assert.equal(codeLines[0].text, "const x = *not italic*")
+  assert.equal(codeLines[1].text, "function f() {}")
+
+  assert.equal(lines.some((line) => line.kind === "content" && line.text === "Before text"), true)
+  assert.equal(lines.some((line) => line.kind === "content" && line.text === "After text"), true)
+})
+
+test("unclosed fenced code blocks still render remaining lines as code", async () => {
+  const { buildTranscriptLinesForTest } = await import("../dist/ui/ink-terminal.js")
+  const content = "```python\nprint('hi')"
+  const lines = buildTranscriptLinesForTest([{ role: "assistant", content }], 80)
+
+  assert.equal(lines.some((line) => line.kind === "code-fence" && line.codeFenceOpen && line.text === "python"), true)
+  assert.equal(lines.some((line) => line.kind === "code" && line.text === "print('hi')"), true)
+})
+
 test("task previews hide child session ids", async () => {
   const { taskPreviewItems } = await import("../dist/ui/ink-terminal.js")
   const previews = taskPreviewItems([
