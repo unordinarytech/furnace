@@ -19,6 +19,7 @@ export type PromptInputProps = {
 }
 
 export type PromptAutocompleteItem = {
+  browsable?: boolean
   description?: string
   insertText?: string
   label: string
@@ -330,10 +331,23 @@ export function slashAutocompleteMatches(
   const token = slashAutocompleteToken(value, cursorOffset)
   if (!token) return []
   const normalized = token.toLowerCase()
-  const exact = items.some((item) => item.value.toLowerCase() === normalized)
+  const exact = items.some((item) => item.value.toLowerCase() === normalized && !item.browsable)
   if (exact) return []
+
+  const spaceIndex = normalized.indexOf(" ")
+  const commandPart = spaceIndex < 0 ? normalized : normalized.slice(0, spaceIndex)
+  const argPart = spaceIndex < 0 ? "" : normalized.slice(spaceIndex + 1).trim()
+
   const matches = items
-    .filter((item) => item.value.toLowerCase().startsWith(normalized))
+    .filter((item) => {
+      const itemValue = item.value.toLowerCase()
+      if (!argPart) return itemValue.startsWith(normalized)
+      if (!itemValue.startsWith(commandPart)) return false
+      const rest = itemValue.slice(commandPart.length).trim()
+      if (rest.startsWith(argPart)) return true
+      const haystack = `${rest} ${(item.label || "").toLowerCase()} ${(item.description || "").toLowerCase()}`
+      return haystack.includes(argPart)
+    })
     .map((item) => ({ ...item, label: item.label || item.value }))
   return matches.map((item, index) => ({ ...item, selected: index === Math.min(Math.max(0, selectedIndex), matches.length - 1) }))
 }

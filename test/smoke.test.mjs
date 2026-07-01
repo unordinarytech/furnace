@@ -284,6 +284,33 @@ test("slash autocomplete filters and inserts command text", async () => {
   assert.equal(window.hiddenBelow, 0)
 })
 
+test("browsable autocomplete items support argument substring matching and stay open on exact match", async () => {
+  const { slashAutocompleteMatches } = await import("../dist/ui/components/prompt-input.js")
+
+  const themeItems = [
+    { browsable: true, label: "Tokyo Night", value: "/theme tokyo-night", description: "Cool blue night palette" },
+    { browsable: true, label: "Gruvbox", value: "/theme gruvbox", description: "Warm retro palette" },
+  ]
+  assert.deepEqual(
+    slashAutocompleteMatches("/theme", 6, themeItems).map((item) => item.value),
+    ["/theme tokyo-night", "/theme gruvbox"],
+  )
+  const exactBrowsable = slashAutocompleteMatches("/theme tokyo-night", 18, themeItems)
+  assert.deepEqual(exactBrowsable.map((item) => item.value), ["/theme tokyo-night"])
+
+  const modelItems = [
+    { browsable: true, label: "Claude 3.5 Sonnet", value: "/model anthropic/claude-3.5-sonnet", description: "" },
+    { browsable: true, label: "GPT-4o", value: "/model openai/gpt-4o", description: "" },
+  ]
+  const substringMatch = slashAutocompleteMatches("/model claude", 13, modelItems)
+  assert.deepEqual(substringMatch.map((item) => item.value), ["/model anthropic/claude-3.5-sonnet"])
+
+  const nonBrowsableExact = slashAutocompleteMatches("/theme", 6, [
+    { label: "/theme [name]", value: "/theme", insertText: "/theme ", description: "Select theme" },
+  ])
+  assert.deepEqual(nonBrowsableExact, [])
+})
+
 test("/resume is the primary history command name, with /history kept as an alias", async () => {
   const { isHistoryCommand } = await import("../dist/commands.js")
 
