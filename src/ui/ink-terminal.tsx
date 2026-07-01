@@ -1377,7 +1377,7 @@ function appendWrappedContentLines(lines: TranscriptLineData[], content: string,
     }
 
     if (fenceLang !== undefined) {
-      for (const wrappedLine of wrapAnsi(line, width, { hard: true, wordWrap: false }).split("\n")) {
+      for (const wrappedLine of wrapAnsi(line, Math.max(1, width - 2), { hard: true, wordWrap: false }).split("\n")) {
         lines.push({ kind: "code", messageIndex, role: message.role, text: wrappedLine })
       }
       index += 1
