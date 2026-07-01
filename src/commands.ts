@@ -51,14 +51,14 @@ export function isKnownSlashCommand(command: string): boolean {
   return slashCommandNames.has(command)
 }
 
-export type PickerCommand = "history" | "model" | "theme"
+export type AutocompleteScope = "history" | "model" | "theme"
 
-export function pickerCommandFor(value: string): PickerCommand | undefined {
+export function argumentScopeFor(value: string): AutocompleteScope | undefined {
   if (!value.startsWith("/")) return undefined
-  const command = parseSlashCommand(value)
-  if (command.argument) return undefined
-  if (isHistoryCommand(command.name)) return "history"
-  if (command.name === "/model") return "model"
-  if (command.name === "/theme") return "theme"
+  const spaceIndex = value.indexOf(" ")
+  const head = (spaceIndex < 0 ? value : value.slice(0, spaceIndex)).toLowerCase()
+  if (isHistoryCommand(head)) return "history"
+  if (head === "/model") return "model"
+  if (head === "/theme") return "theme"
   return undefined
 }

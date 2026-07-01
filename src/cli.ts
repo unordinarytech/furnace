@@ -5,13 +5,13 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
-import { isHistoryCommand, isKnownSlashCommand, parseSlashCommand, pickerCommandFor, slashCommandDefinitions } from "./commands.js"
+import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
-import { saveModelPreferences, saveThemePreference } from "./preferences.js"
+import { saveModelPreferences, saveThemePreference, type ModelSettings } from "./preferences.js"
 import { compactSessionIfNeeded, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
@@ -23,7 +23,7 @@ import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
-import type { PromptAutocompleteItem } from "./ui/components/prompt-input.js"
+import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
 import {
   renderAssistantStart,
@@ -113,6 +113,8 @@ async function runInteractive(input: {
   const pendingBackgroundPrompts = new Map<string, string[]>()
   const modelListCache = createModelListCache(input.config)
   let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
+  let baseAutocompleteItems: PromptAutocompleteItem[] = []
+  let currentAutocompleteScope: ReturnType<typeof argumentScopeFor> | undefined
   let queueCounter = 0
   let running = false
   let activeAbortController: AbortController | undefined
@@ -184,12 +186,48 @@ async function runInteractive(input: {
     },
     onInputChange: (value) => {
       if (running) return
-      const picker = pickerCommandFor(value)
-      if (!picker) return
-      terminal.setInputDraft("")
-      if (picker === "history") openHistoryPicker()
-      else if (picker === "model") void openModelPicker()
-      else openThemePicker()
+      const scope = argumentScopeFor(value)
+      if (!scope) {
+        if (currentAutocompleteScope !== undefined) {
+          currentAutocompleteScope = undefined
+          terminal.setSlashCommandItems(baseAutocompleteItems)
+        }
+        return
+      }
+      if (currentAutocompleteScope === scope) return
+      currentAutocompleteScope = scope
+      if (scope === "theme") {
+        terminal.setSlashCommandItems(themeAutocompleteItems())
+      } else if (scope === "history") {
+        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listSessions(input.cwd)))
+      } else {
+        void modelListCache.promise.then((models) => {
+          if (currentAutocompleteScope === "model") terminal.setSlashCommandItems(modelAutocompleteItems(models))
+        })
+      }
+    },
+    onAutocompleteTab: (match) => {
+      if (!match.value.startsWith("/model ") || !modelListCache.settled) return false
+      const modelId = match.value.slice("/model ".length).trim()
+      void modelListCache.promise.then((models) => {
+        const choice = models.find((entry) => entry.id === modelId)
+        if (!choice) return
+        terminal.showModelEditor(
+          choice,
+          choice.id === input.config.model ? input.config.modelSettings : {},
+          (model, settings, done) => {
+            input.config.model = model
+            input.config.modelSettings = settings
+            terminal.setModel(model, settings)
+            void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
+              terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
+            })
+            if (done) refreshCurrentSession()
+          },
+          () => refreshCurrentSession(),
+        )
+      })
+      return true
     },
     themeName: input.config.theme,
     title: initialSession.title,
@@ -204,7 +242,7 @@ async function runInteractive(input: {
       })
     },
   })
-  terminal.setSlashCommandItems(slashAutocompleteItems(skillCatalog.skills))
+  applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills))
 
   refreshCurrentSession()
   try {
@@ -300,7 +338,11 @@ async function runInteractive(input: {
       return
     }
     if (isHistoryCommand(command.name)) {
-      openHistoryPicker()
+      if (command.argument) {
+        resumeSessionByToken(command.argument)
+        return
+      }
+      showHistoryHint()
       return
     }
     if (command.name === "/tasks") {
@@ -316,7 +358,11 @@ async function runInteractive(input: {
       return
     }
     if (command.name === "/model") {
-      await openModelPicker()
+      if (command.argument) {
+        await setModelByArgument(command.argument)
+        return
+      }
+      showTransientStatus(`Current model: ${input.config.model}. Type /model <name> to change.`)
       return
     }
     if (command.name === "/theme") {
@@ -324,7 +370,7 @@ async function runInteractive(input: {
         await setThemeByName(command.argument)
         return
       }
-      openThemePicker()
+      showTransientStatus(`Current theme: ${resolveTheme(input.config.theme).name}. Type /theme <name> to change.`)
       return
     }
 
@@ -355,62 +401,78 @@ async function runInteractive(input: {
     terminal.setTasks(taskManager.status(sessionId).tasks)
   }
 
-  function openHistoryPicker(): void {
-    const historyChoices = input.store.listSessions(input.cwd)
-    if (historyChoices.length === 0) {
-      terminal.setTitle("History")
-      terminal.setTranscript([{ role: "assistant", content: "No saved conversations yet." }])
+  function applyBaseAutocompleteItems(items: PromptAutocompleteItem[]): void {
+    baseAutocompleteItems = items
+    if (currentAutocompleteScope === undefined) terminal.setSlashCommandItems(baseAutocompleteItems)
+  }
+
+  function themeAutocompleteItems(): PromptAutocompleteItem[] {
+    return themeChoices.map((choice) => ({
+      browsable: true,
+      description: choice.description,
+      label: choice.displayLabel,
+      value: `/theme ${choice.name}`,
+    }))
+  }
+
+  function modelAutocompleteItems(models: OpenRouterModel[]): PromptAutocompleteItem[] {
+    return models.map((model) => ({
+      browsable: true,
+      description: model.contextLength ? `${formatTokenCount(model.contextLength)} context` : undefined,
+      label: model.name || model.id,
+      value: `/model ${model.id}`,
+    }))
+  }
+
+  function resumeAutocompleteItems(sessions: ReturnType<SessionStore["listSessions"]>): PromptAutocompleteItem[] {
+    return sessions.map((session, index) => ({
+      browsable: true,
+      description: formatRelativeTime(session.updatedAt),
+      label: session.title,
+      value: `/resume ${index + 1}`,
+    }))
+  }
+
+  function showHistoryHint(): void {
+    const sessions = input.store.listSessions(input.cwd)
+    if (sessions.length === 0) {
+      showTransientStatus("No saved conversations yet.")
       return
     }
-    terminal.showHistory(
-      historyChoices,
-      sessionId,
-      (selectedSessionId) => {
-        sessionId = selectedSessionId
-        refreshCurrentSession()
-        flushPendingBackgroundPrompts()
-      },
-      () => refreshCurrentSession(),
-    )
+    const lines = sessions.slice(0, 10).map((session, index) => `${index + 1}. ${session.title} (${formatRelativeTime(session.updatedAt)})`)
+    showTransientStatus(`Type /resume <number> to switch, or type /resume and browse with the arrow keys.\n${lines.join("\n")}`)
   }
 
-  async function openModelPicker(): Promise<void> {
-    if (!modelListCache.settled) {
-      terminal.setTitle("Model")
-      terminal.setTranscript([{ role: "assistant", content: "Loading OpenRouter models..." }])
+  function resumeSessionByToken(argument: string): void {
+    const sessions = input.store.listSessions(input.cwd)
+    const index = Number.parseInt(argument.trim(), 10)
+    const target = Number.isInteger(index) ? sessions[index - 1] : undefined
+    if (!target) {
+      showTransientStatus(`Unknown conversation: ${argument}`)
+      return
     }
-    const models = await modelListCache.promise
-    terminal.showModelPicker(
-      models,
-      input.config.model,
-      input.config.modelSettings,
-      (model, settings, done) => {
-        input.config.model = model
-        input.config.modelSettings = settings
-        terminal.setModel(model, settings)
-        void saveModelPreferences(input.cwd, { model, modelSettings: settings }).catch((error) => {
-          terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
-        })
-        if (done) refreshCurrentSession()
-      },
-      () => refreshCurrentSession(),
-    )
+    sessionId = target.id
+    refreshCurrentSession()
+    flushPendingBackgroundPrompts()
   }
 
-  function openThemePicker(): void {
-    terminal.showThemePicker(
-      themeChoices,
-      resolveTheme(input.config.theme).name,
-      (theme, done) => {
-        input.config.theme = theme
-        terminal.setTheme(theme)
-        void saveThemePreference(input.cwd, theme).catch((error) => {
-          terminal.setTranscript([{ role: "assistant", content: `Failed to save theme preference: ${formatError(error)}` }])
-        })
-        if (done) refreshCurrentSession()
-      },
-      () => refreshCurrentSession(),
-    )
+  async function setModelByArgument(argument: string): Promise<void> {
+    const trimmed = argument.trim()
+    const models = await modelListCache.promise
+    const match =
+      models.find((model) => model.id.toLowerCase() === trimmed.toLowerCase()) || models.find((model) => model.name.toLowerCase() === trimmed.toLowerCase())
+    if (!match) {
+      showTransientStatus(`Unknown model: ${argument}`)
+      return
+    }
+    const settings: ModelSettings = {}
+    input.config.model = match.id
+    input.config.modelSettings = settings
+    terminal.setModel(match.id, settings)
+    await saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings }).catch((error) => {
+      terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
+    })
+    refreshCurrentSession()
   }
 
   async function setThemeByName(name: string): Promise<void> {
@@ -525,7 +587,7 @@ async function runInteractive(input: {
 
   async function reloadSkillCatalog(): Promise<void> {
     skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
-    terminal.setSlashCommandItems(slashAutocompleteItems(skillCatalog.skills))
+    applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills))
   }
 
   async function compactCurrentSession(focus: string): Promise<void> {

@@ -9,6 +9,7 @@ export type PromptInputProps = {
   busy?: boolean
   disabled?: boolean
   historyItems?: string[]
+  onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onChange?: (value: string) => void
   onEmptyUp?: () => void
   onModeCycle?: (direction: 1 | -1) => void
@@ -36,6 +37,7 @@ export function PromptInput({
   busy = false,
   disabled = false,
   historyItems = [],
+  onAutocompleteTab,
   onChange,
   onEmptyUp,
   onModeCycle,
@@ -170,6 +172,7 @@ export function PromptInput({
       }
       if (key.tab || key.return) {
         const match = autocompleteMatches[selectedAutocompleteIndex]
+        if (key.tab && browsableActive && onAutocompleteTab?.(match)) return
         const next = applySlashAutocomplete(value, cursorOffset, match)
         if (key.return && browsableActive) {
           setValue("")

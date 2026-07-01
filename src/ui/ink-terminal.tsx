@@ -11,7 +11,7 @@ import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import { truncateEnd } from "./utils.js"
 import { AppShell } from "./components/app-shell.js"
-import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem } from "./components/prompt-input.js"
+import { lofiChibiFrame, PromptInput, slashAutocompleteMatches, type PromptAutocompleteItem, type PromptAutocompleteMatch } from "./components/prompt-input.js"
 import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
@@ -33,15 +33,12 @@ export type FurnaceTerminal = {
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
   setTasks(tasks: TaskRecord[]): void
-  showHistory(choices: HistoryChoice[], currentSessionId: string | null, onSelect: (sessionId: string) => void, onCancel: () => void): void
-  showModelPicker(
-    choices: ModelChoice[],
-    currentModel: string,
-    currentSettings: ModelSettings,
+  showModelEditor(
+    choice: ModelChoice,
+    settings: ModelSettings,
     onSelect: (model: string, settings: ModelSettings, done: boolean) => void,
     onCancel: () => void,
   ): void
-  showThemePicker(choices: ThemeChoice[], currentTheme: string, onSelect: (theme: string, done: boolean) => void, onCancel: () => void): void
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
   setModel(model: string, settings: ModelSettings): void
   setTheme(theme: string): void
@@ -50,12 +47,6 @@ export type FurnaceTerminal = {
   clearTranscriptDisplay(): void
   setStreamingContent(text: string): void
   setTranscript(transcript: TranscriptMessage[]): void
-}
-
-export type HistoryChoice = {
-  id: string
-  title: string
-  updatedAt: number
 }
 
 export type ModelChoice = {
@@ -93,6 +84,7 @@ type CreateFurnaceTerminalOptions = {
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
+  onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   themeName: string
   title: string
   onSubmit: (text: string) => void
@@ -100,16 +92,13 @@ type CreateFurnaceTerminalOptions = {
 
 type UiScreen =
   | { kind: "chat" }
-  | { kind: "history"; choices: HistoryChoice[]; currentSessionId: string | null; onCancel: () => void; onSelect: (sessionId: string) => void }
   | {
-      kind: "model"
-      choices: ModelChoice[]
-      currentModel: string
+      kind: "modelEditor"
+      choice: ModelChoice
       onCancel: () => void
       onSelect: (model: string, settings: ModelSettings, done: boolean) => void
-      settingsByModel: Record<string, ModelSettings>
+      settings: ModelSettings
     }
-  | { kind: "theme"; choices: ThemeChoice[]; currentTheme: string; onCancel: () => void; onSelect: (theme: string, done: boolean) => void }
 
 type PlanActionState = {
   onSelect: (action: PlanAction) => void
@@ -172,6 +161,7 @@ class UiStore {
     onCycle?: (direction: 1 | -1) => void
   }
   readonly onInputChange?: (value: string) => void
+  readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -187,6 +177,7 @@ class UiStore {
       onCycle: options.onModeCycle,
     }
     this.onInputChange = options.onInputChange
+    this.onAutocompleteTab = options.onAutocompleteTab
     this.state = {
       approval: undefined,
       busy: false,
@@ -323,24 +314,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setTasks(tasks) {
       store.update({ tasks: visibleTaskRecords(tasks) })
     },
-    showHistory(choices, currentSessionId, onSelect, onCancel) {
-      store.update({ screen: { kind: "history", choices, currentSessionId, onCancel, onSelect }, title: "History" })
-    },
-    showModelPicker(choices, currentModel, currentSettings, onSelect, onCancel) {
-      store.update({
-        screen: {
-          kind: "model",
-          choices,
-          currentModel,
-          onCancel,
-          onSelect,
-          settingsByModel: { [currentModel]: normalizeModelSettings(currentSettings, findModelChoice(choices, currentModel)) },
-        },
-        title: "Model",
-      })
-    },
-    showThemePicker(choices, currentTheme, onSelect, onCancel) {
-      store.update({ screen: { kind: "theme", choices, currentTheme, onCancel, onSelect }, title: "Theme" })
+    showModelEditor(choice, settings, onSelect, onCancel) {
+      store.update({ screen: { kind: "modelEditor", choice, onCancel, onSelect, settings: normalizeModelSettings(settings, choice) } })
     },
     showPlanActions(planPath, onSelect) {
       store.update((state) => ({ ...state, focus: "plan_actions", planAction: { onSelect, planPath } }))
@@ -440,13 +415,7 @@ function FurnaceApp({
           streamingContent={state.streamingContent}
           toolActivities={state.toolActivities}
         />
-        {!state.approval && state.screen.kind === "history" ? (
-          <HistoryScreen screen={state.screen} store={store} />
-        ) : !state.approval && state.screen.kind === "model" ? (
-          <ModelScreen model={state.model} screen={state.screen} store={store} />
-        ) : !state.approval && state.screen.kind === "theme" ? (
-          <ThemeScreen screen={state.screen} store={store} />
-        ) : null}
+        {!state.approval && state.screen.kind === "modelEditor" ? <ModelEditorPanel screen={state.screen} store={store} /> : null}
         {state.approval ? <ApprovalPrompt request={state.approval} store={store} /> : null}
         {!state.approval && state.planAction ? <PlanActionPanel action={state.planAction} store={store} /> : null}
         {!state.approval && state.question ? <QuestionPrompt request={state.question} store={store} /> : null}
@@ -467,6 +436,7 @@ function FurnaceApp({
             if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
           }}
           onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
+          onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
           onSubmit={onSubmit}
           placeholder={promptPlaceholder(state)}
           prefix={state.mode === "plan" ? "plan>" : ">"}
@@ -1081,9 +1051,7 @@ function formatApprovalArgs(args: string): string {
 }
 
 function hintItems(kind: UiScreen["kind"]): string[] {
-  if (kind === "model") return ["Type to filter", "Enter to select", "Tab to edit", "Esc to cancel"]
-  if (kind === "theme") return ["Up/down to navigate", "Enter to preview", "Esc to cancel"]
-  if (kind === "history") return ["Up/down to navigate", "Enter to open", "Esc to cancel"]
+  if (kind === "modelEditor") return ["Up/down to navigate", "Enter to toggle", "Esc/Tab to apply"]
   return ["/new", "/resume", "/model", "/theme", "/tasks", "/lofi", "/permissions", "/exit"]
 }
 
@@ -1984,210 +1952,43 @@ function visibleTranscriptWindow(lines: TranscriptLineData[], start: number, end
   return visible.slice(0, viewportRows)
 }
 
-function HistoryScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "history" }>; store: UiStore }): React.ReactNode {
+function ModelEditorPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "modelEditor" }>; store: UiStore }): React.ReactNode {
   const theme = useTheme()
-  const [filter, setFilter] = React.useState("")
-
-  const filteredChoices = React.useMemo(() => {
-    const normalized = filter.trim().toLowerCase()
-    if (!normalized) return screen.choices
-    return screen.choices.filter((c) => c.title.toLowerCase().includes(normalized))
-  }, [screen.choices, filter])
-
-  const items: Array<SelectListItem<string>> = React.useMemo(
-    () =>
-      filteredChoices.map((choice) => ({
-        description: formatRelativeTime(choice.updatedAt),
-        label: choice.title,
-        value: choice.id,
-      })),
-    [filteredChoices],
-  )
-
-  useInput((input, key) => {
-    if (key.escape) {
-      store.update({ screen: { kind: "chat" } })
-      screen.onCancel()
-      return
-    }
-    if (key.backspace || key.delete) {
-      setFilter((current) => current.slice(0, -1))
-      return
-    }
-    if (!key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && input) {
-      setFilter((current) => current + input)
-    }
-  })
-
-  return (
-    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
-      <Text color={theme.colors.primary} bold>
-        Select a conversation
-      </Text>
-      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
-      <SelectList
-        items={items}
-        maxRows={12}
-        onCancel={() => {
-          store.update({ screen: { kind: "chat" } })
-          screen.onCancel()
-        }}
-        onSelect={(item) => {
-          store.update({ screen: { kind: "chat" } })
-          screen.onSelect(item.value)
-        }}
-        selectedValue={filter ? null : screen.currentSessionId}
-      />
-    </Box>
-  )
-}
-
-export function filterThemeChoices(choices: ThemeChoice[], filter: string): ThemeChoice[] {
-  const normalized = filter.trim().toLowerCase()
-  if (!normalized) return choices
-  return choices.filter((choice) => `${choice.displayLabel} ${choice.name} ${choice.description || ""}`.toLowerCase().includes(normalized))
-}
-
-function ThemeScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "theme" }>; store: UiStore }): React.ReactNode {
-  const theme = useTheme()
-  const [filter, setFilter] = React.useState("")
-  const filteredChoices = React.useMemo(() => filterThemeChoices(screen.choices, filter), [screen.choices, filter])
-  const items: Array<SelectListItem<string>> = React.useMemo(
-    () =>
-      filteredChoices.map((choice) => ({
-        description: choice.description,
-        label: choice.displayLabel,
-        value: choice.name,
-      })),
-    [filteredChoices],
-  )
-  const previewTheme = React.useCallback(
-    (item: SelectListItem<string>) => {
-      const choice = resolveTheme(item.value)
-      store.update({ theme: choice.theme, themeName: choice.name })
-    },
-    [store],
-  )
-
-  useInput((input, key) => {
-    if (key.escape) {
-      const choice = resolveTheme(screen.currentTheme)
-      store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
-      screen.onCancel()
-      return
-    }
-    if (key.backspace || key.delete) {
-      setFilter((current) => current.slice(0, -1))
-      return
-    }
-    if (!key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && input) {
-      setFilter((current) => current + input)
-    }
-  })
-
-  return (
-    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
-      <Text color={theme.colors.primary} bold>
-        Select a theme
-      </Text>
-      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
-      <SelectList
-        items={items}
-        maxRows={12}
-        onCancel={() => {
-          const choice = resolveTheme(screen.currentTheme)
-          store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
-          screen.onCancel()
-        }}
-        onHighlight={previewTheme}
-        onSelect={(item) => {
-          const choice = resolveTheme(item.value)
-          store.update({ theme: choice.theme, themeName: choice.name, screen: { kind: "chat" } })
-          screen.onSelect(choice.name, true)
-        }}
-        selectedValue={filter ? null : screen.currentTheme}
-      />
-    </Box>
-  )
-}
-
-function ModelScreen({ model, screen, store }: { model: string; screen: Extract<UiScreen, { kind: "model" }>; store: UiStore }): React.ReactNode {
-  const theme = useTheme()
-  const [filter, setFilter] = React.useState("")
-  const [activeIndex, setActiveIndex] = React.useState(0)
-  const [editing, setEditing] = React.useState<{ choice: ModelChoice; selectedIndex: number } | undefined>()
-  const filteredChoices = React.useMemo(() => filterModels(screen.choices, filter), [screen.choices, filter])
-  const selectedChoice = filteredChoices[activeIndex]
+  const [selectedIndex, setSelectedIndex] = React.useState(0)
+  const [settings, setSettings] = React.useState<ModelSettings>(screen.settings)
+  const rows = modelEditorRows(screen.choice, settings)
 
   React.useEffect(() => {
-    setActiveIndex((current) => Math.min(Math.max(0, current), Math.max(0, filteredChoices.length - 1)))
-  }, [filteredChoices.length])
+    setSelectedIndex((current) => Math.min(current, Math.max(0, rows.length - 1)))
+  }, [rows.length])
 
-  useInput((input, key) => {
-    if (editing) {
-      const rows = modelEditorRows(editing.choice, settingsForModel(screen, editing.choice.id))
-      if (key.escape || key.tab) {
-        setEditing(undefined)
-        return
-      }
-      if (key.upArrow) return setEditing({ ...editing, selectedIndex: Math.max(0, editing.selectedIndex - 1) })
-      if (key.downArrow) return setEditing({ ...editing, selectedIndex: Math.min(rows.length - 1, editing.selectedIndex + 1) })
-      if (key.return) {
-        const row = rows[editing.selectedIndex]
-        if (row && !row.disabled) applyModelEditorRow(store, screen, editing.choice, row)
-      }
-      return
-    }
-
-    if (key.escape) {
+  useInput((_input, key) => {
+    if (key.escape || key.tab) {
       store.update({ screen: { kind: "chat" } })
-      screen.onCancel()
+      screen.onSelect(screen.choice.id, settings, true)
       return
     }
-    if (key.upArrow) return setActiveIndex((current) => Math.max(0, current - 1))
-    if (key.downArrow) return setActiveIndex((current) => Math.min(filteredChoices.length - 1, current + 1))
-    if (key.tab) {
-      if (selectedChoice) setEditing({ choice: selectedChoice, selectedIndex: 0 })
-      return
-    }
+    if (key.upArrow) return setSelectedIndex((current) => Math.max(0, current - 1))
+    if (key.downArrow) return setSelectedIndex((current) => Math.min(rows.length - 1, current + 1))
     if (key.return) {
-      if (!selectedChoice) return
-      store.update({ screen: { kind: "chat" } })
-      screen.onSelect(selectedChoice.id, settingsForModel(screen, selectedChoice.id), true)
-      return
-    }
-    if (key.backspace || key.delete) {
-      setFilter((current) => current.slice(0, -1))
-      setActiveIndex(0)
-      return
-    }
-    if (!key.ctrl && !key.meta && input) {
-      setFilter((current) => `${current}${input}`)
-      setActiveIndex(0)
+      const row = rows[selectedIndex]
+      if (!row || row.disabled) return
+      const next =
+        row.kind === "context"
+          ? normalizeModelSettings({ ...settings, contextLength: row.value }, screen.choice)
+          : row.kind === "reasoning"
+            ? normalizeModelSettings({ ...settings, reasoningEffort: row.value }, screen.choice)
+            : normalizeModelSettings({ ...settings, fast: !settings.fast }, screen.choice)
+      setSettings(next)
+      store.update((state) => ({ ...state, model: screen.choice.id, modelSettings: next }))
+      screen.onSelect(screen.choice.id, next, false)
     }
   })
 
-  if (editing) return <ModelEditorScreen choice={editing.choice} selectedIndex={editing.selectedIndex} settings={settingsForModel(screen, editing.choice.id)} />
-
   return (
     <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Text color={theme.colors.primary} bold>
-        Available OpenRouter models
-      </Text>
-      <Text color={theme.colors.mutedForeground}>Filter: {filter || "type to search"}</Text>
-      {renderModelRows(filteredChoices, activeIndex, model)}
-    </Box>
-  )
-}
-
-function ModelEditorScreen({ choice, selectedIndex, settings }: { choice: ModelChoice; selectedIndex: number; settings: ModelSettings }): React.ReactNode {
-  const theme = useTheme()
-  const rows = modelEditorRows(choice, settings)
-
-  return (
-    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
-      <Text color={theme.colors.primary} bold>
-        {choice.name} - Edit parameters
+        {screen.choice.name} - Edit parameters
       </Text>
       {rows.map((row, index) => (
         <Box key={`${row.kind}-${row.label}`} justifyContent="space-between">
@@ -2198,47 +1999,7 @@ function ModelEditorScreen({ choice, selectedIndex, settings }: { choice: ModelC
           <Text color={row.selected ? theme.colors.success : theme.colors.mutedForeground}>{row.selected ? "selected" : row.disabled ? "disabled" : ""}</Text>
         </Box>
       ))}
-    </Box>
-  )
-}
-
-function renderModelRows(choices: ModelChoice[], activeIndex: number, currentModel: string): React.ReactNode {
-  const theme = useTheme()
-  const maxRows = 12
-  const half = Math.floor(maxRows / 2)
-  const maxOffset = Math.max(0, choices.length - maxRows)
-  const offset = Math.min(maxOffset, Math.max(0, activeIndex - half))
-  const visibleChoices = choices.slice(offset, offset + maxRows)
-
-  if (choices.length === 0) return <Text color={theme.colors.mutedForeground}>No matching models.</Text>
-
-  return (
-    <Box flexDirection="column">
-      {visibleChoices.map((choice, visibleIndex) => {
-        const index = offset + visibleIndex
-        const isActive = index === activeIndex
-        const isSelected = choice.id === currentModel
-        return (
-          <Box key={choice.id} justifyContent="space-between">
-            <Box>
-              <Text color={isActive ? theme.colors.primary : theme.colors.mutedForeground}>{isActive ? "› " : "  "}</Text>
-              <Text color={isActive ? theme.colors.primary : isSelected ? theme.colors.success : theme.colors.foreground} bold={isActive || isSelected}>
-                {isSelected ? "* " : ""}
-                {choice.name}
-              </Text>
-            </Box>
-            <Text color={theme.colors.mutedForeground}>
-              {formatContext(choice.contextLength)} {supportsReasoning(choice) ? "reasoning " : ""}
-              {choice.id}
-            </Text>
-          </Box>
-        )
-      })}
-      {choices.length > maxRows ? (
-        <Text color={theme.colors.mutedForeground}>
-          {offset + 1}-{Math.min(choices.length, offset + maxRows)} of {choices.length}
-        </Text>
-      ) : null}
+      <Text color={theme.colors.mutedForeground}>Esc/Tab to apply and return to chat.</Text>
     </Box>
   )
 }
@@ -2247,27 +2008,6 @@ type ModelEditorRow =
   | { kind: "context"; label: string; value: number; selected: boolean; disabled?: boolean }
   | { kind: "reasoning"; label: string; value: ReasoningEffort; selected: boolean; disabled?: boolean }
   | { kind: "fast"; label: string; selected: boolean; disabled?: boolean }
-
-function settingsForModel(screen: Extract<UiScreen, { kind: "model" }>, model: string): ModelSettings {
-  const choice = findModelChoice(screen.choices, model)
-  const normalized = normalizeModelSettings(screen.settingsByModel[model] || {}, choice)
-  screen.settingsByModel[model] = normalized
-  return normalized
-}
-
-function applyModelEditorRow(store: UiStore, screen: Extract<UiScreen, { kind: "model" }>, choice: ModelChoice, row: ModelEditorRow): void {
-  const current = settingsForModel(screen, choice.id)
-  const next =
-    row.kind === "context"
-      ? normalizeModelSettings({ ...current, contextLength: row.value }, choice)
-      : row.kind === "reasoning"
-        ? normalizeModelSettings({ ...current, reasoningEffort: row.value }, choice)
-        : normalizeModelSettings({ ...current, fast: !current.fast }, choice)
-
-  const nextScreen = { ...screen, currentModel: choice.id, settingsByModel: { ...screen.settingsByModel, [choice.id]: next } }
-  store.update((state) => ({ ...state, model: choice.id, modelSettings: next, screen: nextScreen }))
-  screen.onSelect(choice.id, next, false)
-}
 
 function modelEditorRows(choice: ModelChoice, settings: ModelSettings): ModelEditorRow[] {
   const rows: ModelEditorRow[] = []
@@ -2286,16 +2026,6 @@ function modelEditorRows(choice: ModelChoice, settings: ModelSettings): ModelEdi
 
   rows.push({ kind: "fast", label: "Fast provider routing", selected: Boolean(settings.fast), disabled: !supportsFastContext(settings.contextLength) })
   return rows
-}
-
-function filterModels(choices: ModelChoice[], filter: string): ModelChoice[] {
-  const normalized = filter.trim().toLowerCase()
-  if (!normalized) return choices
-  return choices.filter((choice) => `${choice.id} ${choice.name}`.toLowerCase().includes(normalized))
-}
-
-function findModelChoice(choices: ModelChoice[], model: string): ModelChoice | undefined {
-  return choices.find((choice) => choice.id === model)
 }
 
 function formatContext(contextLength: number | null | undefined): string {
@@ -2352,35 +2082,6 @@ function normalizeModelSettings(settings: ModelSettings, choice: ModelChoice | u
 
 function supportsFastContext(contextLength: number | undefined): boolean {
   return !contextLength || contextLength <= 300_000
-}
-
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now()
-  const diffMs = Math.max(0, now - timestamp)
-  const minute = 60 * 1000
-  const hour = 60 * minute
-  const day = 24 * hour
-
-  if (isYesterday(timestamp, now) && diffMs >= 15 * hour) return "Yesterday"
-  if (diffMs < minute) return "Just now"
-  if (diffMs < hour) {
-    const minutes = Math.max(1, Math.floor(diffMs / minute))
-    return `${minutes} min${minutes === 1 ? "" : "s"} ago`
-  }
-  if (diffMs < day) {
-    const hours = Math.max(1, Math.floor(diffMs / hour))
-    return `${hours} hour${hours === 1 ? "" : "s"} ago`
-  }
-
-  const days = Math.max(1, Math.floor(diffMs / day))
-  return `${days} day${days === 1 ? "" : "s"} ago`
-}
-
-function isYesterday(timestamp: number, now: number): boolean {
-  const date = new Date(timestamp)
-  const yesterday = new Date(now)
-  yesterday.setDate(yesterday.getDate() - 1)
-  return date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()
 }
 
 function shortenHome(path: string): string {
