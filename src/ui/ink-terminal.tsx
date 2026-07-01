@@ -1096,9 +1096,23 @@ function LiveChat({
 
   if (allLines.length === 0) {
     return (
-      <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-end" paddingX={1}>
+      <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-start" paddingX={1}>
         {!hasTranscript && (
-          <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
+          <Box flexDirection="column">
+            {columns >= furnaceBannerWidth
+              ? furnaceAsciiBanner().map((row, index) => (
+                  <Text key={index} color={theme.colors.primary} bold>
+                    {row}
+                  </Text>
+                ))
+              : (
+                  <Text color={theme.colors.primary} bold>
+                    FURNACE
+                  </Text>
+                )}
+            <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
+            <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
+          </Box>
         )}
       </Box>
     )
@@ -2040,6 +2054,27 @@ function formatContext(contextLength: number | null | undefined): string {
   if (contextLength >= 1_000_000) return `${Math.round(contextLength / 1_000_000)}M`
   if (contextLength >= 1_000) return `${Math.round(contextLength / 1_000)}K`
   return String(contextLength)
+}
+
+const furnaceGlyphs: Record<string, string[]> = {
+  A: [" ███ ", "█   █", "█████", "█   █", "█   █"],
+  C: [" ████", "█    ", "█    ", "█    ", " ████"],
+  E: ["█████", "█    ", "████ ", "█    ", "█████"],
+  F: ["█████", "█    ", "███  ", "█    ", "█    "],
+  N: ["█   █", "██  █", "█ █ █", "█  ██", "█   █"],
+  R: ["████ ", "█   █", "████ ", "█  █ ", "█   █"],
+  U: ["█   █", "█   █", "█   █", "█   █", " ███ "],
+}
+
+const furnaceBannerWidth = 42
+
+function furnaceAsciiBanner(): string[] {
+  const rows = ["", "", "", "", ""]
+  for (const letter of "FURNACE") {
+    const glyph = furnaceGlyphs[letter] || ["     ", "     ", "     ", "     ", "     "]
+    for (let row = 0; row < 5; row += 1) rows[row] += `${glyph[row]} `
+  }
+  return rows.map((row) => row.trimEnd())
 }
 
 function formatContextUsagePercent(usage: number): string {
