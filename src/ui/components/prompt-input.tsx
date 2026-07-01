@@ -49,12 +49,17 @@ export function PromptInput({
   const [cursorOffset, setCursorOffset] = React.useState(0)
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = React.useState(0)
   const [historyIndex, setHistoryIndex] = React.useState(-1)
+  const [browsableAnchor, setBrowsableAnchor] = React.useState<{ cursorOffset: number; value: string } | undefined>(undefined)
   const historySavedDraft = React.useRef("")
   const previousControlledValue = React.useRef(controlledValue)
+  const arrowRewriteInFlight = React.useRef(false)
   const value = controlledValue ?? localValue
   const enabled = active && !disabled
-  const autocompleteMatches = slashAutocompleteMatches(value, cursorOffset, autocompleteItems, selectedAutocompleteIndex)
+  const anchorValue = browsableAnchor?.value ?? value
+  const anchorCursorOffset = browsableAnchor?.cursorOffset ?? cursorOffset
+  const autocompleteMatches = slashAutocompleteMatches(anchorValue, anchorCursorOffset, autocompleteItems, selectedAutocompleteIndex)
   const autocompleteActive = enabled && autocompleteMatches.length > 0
+  const browsableActive = autocompleteActive && autocompleteMatches.some((item) => item.browsable)
 
   const setValue = React.useCallback(
     (next: string | ((current: string) => string)) => {
@@ -76,6 +81,11 @@ export function PromptInput({
   }, [controlledValue])
 
   React.useEffect(() => {
+    if (arrowRewriteInFlight.current) {
+      arrowRewriteInFlight.current = false
+      return
+    }
+    setBrowsableAnchor({ cursorOffset, value })
     setSelectedAutocompleteIndex(0)
   }, [autocompleteItems, value])
 
@@ -140,18 +150,34 @@ export function PromptInput({
         setValue("")
         setSelectedAutocompleteIndex(0)
         setCursorOffset(0)
+        setBrowsableAnchor(undefined)
         return
       }
-      if (key.upArrow) {
-        setSelectedAutocompleteIndex((current) => Math.max(0, current - 1))
-        return
-      }
-      if (key.downArrow) {
-        setSelectedAutocompleteIndex((current) => Math.min(autocompleteMatches.length - 1, current + 1))
+      if (key.upArrow || key.downArrow) {
+        const direction = key.upArrow ? -1 : 1
+        const nextIndex = Math.min(autocompleteMatches.length - 1, Math.max(0, selectedAutocompleteIndex + direction))
+        if (browsableActive) {
+          const match = autocompleteMatches[nextIndex]
+          if (match) {
+            const next = applySlashAutocomplete(anchorValue, anchorCursorOffset, match)
+            arrowRewriteInFlight.current = true
+            setValue(next)
+            setCursorOffset(next.length)
+          }
+        }
+        setSelectedAutocompleteIndex(nextIndex)
         return
       }
       if (key.tab || key.return) {
-        const next = applySlashAutocomplete(value, cursorOffset, autocompleteMatches[selectedAutocompleteIndex])
+        const match = autocompleteMatches[selectedAutocompleteIndex]
+        const next = applySlashAutocomplete(value, cursorOffset, match)
+        if (key.return && browsableActive) {
+          setValue("")
+          setCursorOffset(0)
+          setBrowsableAnchor(undefined)
+          onSubmit(next.trim())
+          return
+        }
         setValue(next)
         setCursorOffset(next.length)
         return
