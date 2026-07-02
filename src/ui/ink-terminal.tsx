@@ -1366,11 +1366,13 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number, to
   if (streamingContent && !thinking) {
     lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "Assistant" })
     appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, transcript.length, width)
+    lines.push({ kind: "blank", messageIndex: transcript.length, role: "assistant", text: "" })
   }
 
   if (thinking) {
     lines.push({ kind: "role", messageIndex: transcript.length, role: "assistant", text: "Assistant" })
     lines.push({ kind: "spinner", messageIndex: transcript.length, role: "assistant", text: thinkingMessage })
+    lines.push({ kind: "blank", messageIndex: transcript.length, role: "assistant", text: "" })
   }
   return lines
 }
@@ -1395,10 +1397,12 @@ function buildLiveLines(toolActivities: ToolActivity[], streamingContent: string
   if (streamingContent && !thinking) {
     lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
     appendWrappedContentLines(lines, streamingContent, { role: "assistant", content: streamingContent }, 0, width)
+    lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   }
   if (thinking) {
     lines.push({ kind: "role", messageIndex: 0, role: "assistant", text: "Assistant" })
     lines.push({ kind: "spinner", messageIndex: 0, role: "assistant", text: thinkingMessage })
+    lines.push({ kind: "blank", messageIndex: 0, role: "assistant", text: "" })
   }
   return lines
 }
