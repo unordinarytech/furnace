@@ -535,7 +535,7 @@ function FurnaceApp({
       if (state.queuedPrompts.length === 0) return
       store.update((s) => ({ ...s, focus: s.focus === "queue" ? "input" : "queue" }))
     }
-    if (key.ctrl && _input === "/") {
+    if (key.ctrl && _input === "b") {
       const next = !state.sidebarEnabled
       store.update({ sidebarEnabled: next })
       store.onSidebarToggle?.(next)
@@ -713,7 +713,7 @@ function hintItemsForState(state: UiState): string[] {
   if (state.question) extras.push("Up to answer question")
   if (state.tasks.some((task) => task.status === "running")) extras.push("Up for task status")
   if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
-  return [...extras, "Tab to switch mode", "Ctrl+/ sidebar", ...hintItems(state.screen.kind)]
+  return [...extras, "Tab to switch mode", "Ctrl+b sidebar", ...hintItems(state.screen.kind)]
 }
 
 function promptPlaceholder(state: UiState): string {
