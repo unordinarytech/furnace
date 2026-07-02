@@ -507,7 +507,7 @@ function FurnaceApp({
         {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
         {state.lofiEnabled ? <LofiCorner /> : null}
         {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
-        <Box flexShrink={0}>
+        <Box flexShrink={0} flexDirection="column">
           <PromptInput
             active={state.focus === "input"}
             busy={state.busy}
@@ -544,8 +544,6 @@ function FurnaceApp({
             splitMode
             value={state.inputDraft}
           />
-        </Box>
-        <Box flexShrink={0}>
           <AppShell.Header
             contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
             cwd={shortenHome(state.cwd)}
