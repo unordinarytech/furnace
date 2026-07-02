@@ -35,8 +35,9 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
 
 function Header({ contextUsage, cwd, model, settings, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
+  const { columns } = useWindowSize()
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1} width={columns}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.mutedForeground}>{model}</Text>
         <Text color={theme.colors.primary} bold>
@@ -66,7 +67,7 @@ function Hints({ items }: AppShellHintsProps): React.ReactNode {
   const { columns } = useWindowSize()
   const text = truncateEnd(items.join("  ·  "), Math.max(1, columns - 4))
   return (
-    <Box borderStyle="single" borderColor={theme.colors.mutedForeground} paddingX={1}>
+    <Box borderStyle="single" borderColor={theme.colors.mutedForeground} paddingX={1} width={columns}>
       <Text color={theme.colors.mutedForeground}>{text}</Text>
     </Box>
   )

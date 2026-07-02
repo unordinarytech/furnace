@@ -1,6 +1,14 @@
 import readline from "node:readline/promises"
 import { stdin as input, stdout as output } from "node:process"
-import type { TranscriptMessage } from "../session/types.js"
+import type { MessageContentBlock, TranscriptMessage } from "../session/types.js"
+
+function contentToString(content: string | MessageContentBlock[]): string {
+  if (typeof content === "string") return content
+  return content
+    .map((b) => (b.type === "text" ? b.text : b.type === "image_url" ? "[image]" : ""))
+    .join("\n")
+    .trim()
+}
 
 const colors = {
   accent: "\x1b[38;5;149m",
@@ -139,8 +147,9 @@ function renderTranscriptArea(transcript: TranscriptMessage[], reserveLines = 0)
 
 function renderTranscript(transcript: TranscriptMessage[], width = Math.max(60, output.columns || 80)): void {
   for (const message of transcript) {
-    if (message.role === "user") renderUserBlock(message.content, width)
-    else renderAssistantBlock(message.content, width)
+    const text = contentToString(message.content)
+    if (message.role === "user") renderUserBlock(text, width)
+    else renderAssistantBlock(text, width)
     output.write("\n")
   }
 }
@@ -168,7 +177,7 @@ function buildTranscriptLines(transcript: TranscriptMessage[], width: number): s
     // terminal width, and clipping ANSI-colored strings can leak escape codes.
     lines.push(`${label}${"─".repeat(Math.max(0, width - label.length))}`)
     lines.push("")
-    lines.push(...wrap(message.content, width))
+    lines.push(...wrap(contentToString(message.content), width))
     lines.push("")
   }
 

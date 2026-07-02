@@ -55,7 +55,12 @@ export function SelectList<TValue extends string>({
     if (key.upArrow) {
       setActiveIndex((current) => {
         const next = previousEnabled(items, current)
-        if (next === current) onBoundary?.("up")
+        if (next === current) {
+          // wrap around to bottom
+          const wrapped = lastEnabled(items)
+          if (wrapped !== current) return wrapped
+          onBoundary?.("up")
+        }
         return next
       })
       return
@@ -63,7 +68,12 @@ export function SelectList<TValue extends string>({
     if (key.downArrow) {
       setActiveIndex((current) => {
         const next = nextEnabled(items, current)
-        if (next === current) onBoundary?.("down")
+        if (next === current) {
+          // wrap around to top
+          const wrapped = firstEnabled(items)
+          if (wrapped !== current) return wrapped
+          onBoundary?.("down")
+        }
         return next
       })
       return
@@ -138,4 +148,18 @@ function nextEnabled<TValue extends string>(items: SelectListItem<TValue>[], ind
     if (!items[next]?.disabled) return next
   }
   return index
+}
+
+function firstEnabled<TValue extends string>(items: SelectListItem<TValue>[]): number {
+  for (let i = 0; i < items.length; i += 1) {
+    if (!items[i]?.disabled) return i
+  }
+  return 0
+}
+
+function lastEnabled<TValue extends string>(items: SelectListItem<TValue>[]): number {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    if (!items[i]?.disabled) return i
+  }
+  return 0
 }
