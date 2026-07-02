@@ -753,7 +753,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
   const active = store.getSnapshot().focus === "question"
   const questions = request.questions
   const reviewIndex = questions.length
-  const isReview = questions.length > 1 && questionIndex === reviewIndex
+  const isReview = questionIndex === reviewIndex
   const question = isReview ? undefined : questions[questionIndex]
   const allAnswered = questions.every((item) => (answers[item.id]?.length ?? 0) > 0)
   const choices = React.useMemo(() => question ? questionChoiceItems(question, answers[question.id] || []) : [], [answers, question])
@@ -786,10 +786,6 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     }
     if (value === "continue") {
       if ((answers[question.id]?.length ?? 0) === 0) return
-      if (questions.length === 1) {
-        resolve({ answers: answers[question.id] || [] })
-        return
-      }
       advanceAfterAnswer()
       return
     }
@@ -800,10 +796,6 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     }
     if (value === "refuse") {
       const answer = { answer: "Refuse to answer", kind: "refuse", label: "Refuse to answer", questionId: question.id } satisfies QuestionDraftAnswer
-      if (questions.length === 1) {
-        resolve({ answers: [answer] })
-        return
-      }
       setQuestionAnswer(question, [answer])
       advanceAfterAnswer()
       return
@@ -821,10 +813,6 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
           [question.id]: present ? existing.filter((item) => item.optionId !== option.id) : [...existing, answer],
         }
       })
-      return
-    }
-    if (questions.length === 1) {
-      resolve({ answers: [answer] })
       return
     }
     setQuestionAnswer(question, [answer])
@@ -851,10 +839,6 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
         const trimmed = customDraft.trim()
         if (trimmed) {
           const answer = { answer: trimmed, kind: "custom", label: trimmed, questionId: question.id } satisfies QuestionDraftAnswer
-          if (!question.allowMultiple && questions.length === 1) {
-            resolve({ answers: [answer] })
-            return
-          }
           setQuestionAnswer(question, question.allowMultiple ? [...(answers[question.id] || []).filter((item) => item.kind !== "custom"), answer] : [answer])
           setCustomEditing(false)
           setCustomDraft("")
