@@ -549,6 +549,10 @@ function FurnaceApp({
       store.update({ sidebarEnabled: next })
       store.onSidebarToggle?.(next)
     }
+    if (key.ctrl && _input === "t") {
+      if (state.tasks.length === 0) return
+      store.update((s) => ({ ...s, focus: s.focus === "tasks" ? "input" : "tasks" }))
+    }
   })
 
   const sentMessages = React.useMemo(
@@ -722,7 +726,7 @@ function hintItemsForState(state: UiState): string[] {
   const extras: string[] = []
   if (state.planAction) extras.push("Up for plan actions")
   if (state.question) extras.push("Up to answer question")
-  if (state.tasks.some((task) => task.status === "running")) extras.push("Up for task status")
+  if (state.tasks.some((task) => task.status === "running")) extras.push("Ctrl+T tasks")
   if (state.queuedPrompts.length > 0) extras.push("Ctrl+Q to manage queue")
   return [...extras, "Tab to switch mode", "Ctrl+b sidebar", ...hintItems(state.screen.kind)]
 }
@@ -1157,6 +1161,9 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
     }
     if (key.ctrl && input === "b" && canBackground) {
       store.taskHandlers.onBackground?.()
+      store.update({ focus: "input" })
+    }
+    if (key.ctrl && input === "t") {
       store.update({ focus: "input" })
     }
   }, { isActive: active })
