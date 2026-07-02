@@ -562,6 +562,22 @@ export function PromptInput({
     const visibleSidebarItems = sidebarItems.slice(windowBegin, windowBegin + SIDEBAR_VISIBLE_ITEMS)
     const indent = " ".repeat(prefixCols)
 
+    // ── ghost-text suggestion ─────────────────────────────────────────────────
+    // Show the portion of the top autocomplete match that extends beyond what
+    // the user has already typed, rendered in muted color after the cursor.
+    // Only shown on the cursor's visual line and only when there's exactly one
+    // "/" prefix (slash-command mode).
+    const topMatch = sidebarItems[safeIndex]
+    const ghostSuffix = (() => {
+      if (!topMatch || !value || !value.startsWith("/")) return ""
+      const typed = value.toLowerCase()
+      const label = ("/" + topMatch.label).toLowerCase()
+      if (label.startsWith(typed) && typed.length < label.length) {
+        return ("/" + topMatch.label).slice(value.length)
+      }
+      return ""
+    })()
+
     return (
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
@@ -616,6 +632,10 @@ export function PromptInput({
                           {line.text[cursorVisCol] ?? " "}
                         </Text>
                         {line.text.slice(cursorVisCol + 1)}
+                        {/* ghost-text: only on last wrapped line of the value */}
+                        {absIdx === allVisualLines.length - 1 && ghostSuffix ? (
+                          <Text color={theme.colors.mutedForeground}>{ghostSuffix}</Text>
+                        ) : null}
                       </Text>
                     ) : (
                       <Text color={theme.colors.foreground}>{line.text}</Text>

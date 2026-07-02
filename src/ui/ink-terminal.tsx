@@ -415,7 +415,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         if (prefixMatches) {
           const newMessages = transcript.slice(prev.length)
           const toolLines = state.toolActivities.length > 0 ? toolActivitiesToLines(state.toolActivities, prev.length, width) : []
-          const messageLines = newMessages.flatMap((message, index) => messageToLines(message, prev.length + index, width))
+          let messageLines = newMessages.flatMap((message, index) => messageToLines(message, prev.length + index, width))
+          // If tool lines already opened an "Assistant" block, drop the redundant
+          // role header at the start of the first new assistant message so the
+          // text narration flows directly under the tool activity lines.
+          if (toolLines.length > 0 && messageLines[0]?.kind === "role" && messageLines[0]?.role === "assistant") {
+            messageLines = messageLines.slice(1)
+          }
           const appended = [...toolLines, ...messageLines]
           if (appended.length === 0) {
             return { ...state, screen: { kind: "chat" }, transcript, streamingContent: "" }
