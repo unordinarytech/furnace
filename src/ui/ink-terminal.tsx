@@ -472,7 +472,6 @@ function FurnaceApp({
         <LiveChat
           committedLines={state.committedLines}
           flexGrow
-          hasTranscript={state.transcript.length > 0}
           thinking={state.thinking}
           thinkingMessage={state.thinkingMessage}
           streamingContent={state.streamingContent}
@@ -1137,7 +1136,6 @@ function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
 function LiveChat({
   committedLines = [],
   flexGrow: grow,
-  hasTranscript,
   streamingContent,
   thinking,
   thinkingMessage,
@@ -1145,7 +1143,6 @@ function LiveChat({
 }: {
   committedLines?: TranscriptLineData[]
   flexGrow?: boolean
-  hasTranscript: boolean
   streamingContent: string
   thinking: boolean
   thinkingMessage: string
@@ -1157,35 +1154,33 @@ function LiveChat({
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
   const allLines = [...committedLines, ...activeLines]
-
-  if (allLines.length === 0) {
-    return (
-      <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-start" paddingX={1}>
-        {!hasTranscript && (
-          <Box flexDirection="column">
-            <Newline />
-            {columns >= furnaceBannerWidth
-              ? furnaceAsciiBanner().map((row, index) => (
-                  <Text key={index} color={theme.colors.primary} bold>
-                    {row}
-                  </Text>
-                ))
-              : (
-                  <Text color={theme.colors.primary} bold>
-                    FURNACE
-                  </Text>
-                )}
-            <Newline />
-            <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
-            <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
-          </Box>
-        )}
-      </Box>
-    )
-  }
+  const hasLines = allLines.length > 0
 
   return (
-    <Box flexDirection="column" flexGrow={grow ? 1 : 0} overflow="hidden" justifyContent="flex-end" paddingX={1}>
+    <Box
+      flexDirection="column"
+      flexGrow={grow ? 1 : 0}
+      overflow="hidden"
+      justifyContent={hasLines ? "flex-end" : "flex-start"}
+      paddingX={1}
+    >
+      <Box flexDirection="column">
+        <Newline />
+        {columns >= furnaceBannerWidth
+          ? furnaceAsciiBanner().map((row, index) => (
+              <Text key={index} color={theme.colors.primary} bold>
+                {row}
+              </Text>
+            ))
+          : (
+              <Text color={theme.colors.primary} bold>
+                FURNACE
+              </Text>
+            )}
+        <Newline />
+        <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
+        <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
+      </Box>
       {allLines.map((line, index) => (
         <TranscriptLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
       ))}
