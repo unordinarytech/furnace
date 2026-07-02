@@ -571,9 +571,12 @@ export function PromptInput({
     const ghostSuffix = (() => {
       if (!topMatch || !value || !value.startsWith("/")) return ""
       const typed = value.toLowerCase()
-      const label = ("/" + topMatch.label).toLowerCase()
+      // Labels may or may not start with "/". Normalize so the comparison always
+      // works regardless of whether it's a built-in command or a skill/custom cmd.
+      const labelOrig = topMatch.label.startsWith("/") ? topMatch.label : "/" + topMatch.label
+      const label = labelOrig.toLowerCase()
       if (label.startsWith(typed) && typed.length < label.length) {
-        return ("/" + topMatch.label).slice(value.length)
+        return labelOrig.slice(typed.length)
       }
       return ""
     })()
