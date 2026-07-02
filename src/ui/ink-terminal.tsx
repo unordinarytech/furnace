@@ -302,7 +302,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     requestQuestions(request) {
       return new Promise<AskQuestionResponse>((resolve) => {
-        store.update((state) => ({ ...state, focus: "input", question: { ...request, resolve } }))
+        store.update((state) => ({ ...state, focus: "question", question: { ...request, resolve } }))
       })
     },
     requestApproval(request) {
@@ -486,37 +486,41 @@ function FurnaceApp({
         {!state.approval && state.queuedPrompts.length > 0 ? <QueuedPromptPanel prompts={state.queuedPrompts} store={store} /> : null}
         {state.lofiEnabled ? <LofiCorner /> : null}
         {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
-        <PromptInput
-          active={state.focus === "input"}
-          busy={state.busy}
-          disabled={state.screen.kind !== "chat" || Boolean(state.approval)}
-          autocompleteItems={state.slashCommandItems}
-          historyItems={sentMessages}
-          onChange={(value) => {
-            store.update({ inputDraft: value })
-            store.onInputChange?.(value)
-          }}
-          onEmptyUp={() => {
-            if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
-          }}
-          onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
-          onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
-          onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
-          onCopy={() => store.onCopy?.()}
-          inputMode={state.inputMode}
-          onSubmit={onSubmit}
-          placeholder={promptPlaceholder(state)}
-          planMode={state.mode === "plan"}
-          prefix={state.mode === "plan" ? "plan>" : ">"}
-          value={state.inputDraft}
-        />
-        <AppShell.Header
-          contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
-          cwd={shortenHome(state.cwd)}
-          model={state.modelDisplayName || state.model}
-          settings={`mode: ${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
-          title={state.title}
-        />
+        <Box flexShrink={0}>
+          <PromptInput
+            active={state.focus === "input"}
+            busy={state.busy}
+            disabled={state.screen.kind !== "chat" || Boolean(state.approval) || Boolean(state.question)}
+            autocompleteItems={state.slashCommandItems}
+            historyItems={sentMessages}
+            onChange={(value) => {
+              store.update({ inputDraft: value })
+              store.onInputChange?.(value)
+            }}
+            onEmptyUp={() => {
+              if (!state.chatCanScrollUp) focusPanelAboveInput(store, state)
+            }}
+            onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
+            onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
+            onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
+            onCopy={() => store.onCopy?.()}
+            inputMode={state.inputMode}
+            onSubmit={onSubmit}
+            placeholder={promptPlaceholder(state)}
+            planMode={state.mode === "plan"}
+            prefix={state.mode === "plan" ? "plan>" : ">"}
+            value={state.inputDraft}
+          />
+        </Box>
+        <Box flexShrink={0}>
+          <AppShell.Header
+            contextUsage={formatContextUsage(state.contextTokens, state.contextWindowTokens)}
+            cwd={shortenHome(state.cwd)}
+            model={state.modelDisplayName || state.model}
+            settings={`mode: ${modeLabel(state)} · ${formatFooterSettings(state.modelSettings)} · theme: ${findTheme(state.themeName)?.displayLabel ?? state.themeName}`}
+            title={state.title}
+          />
+        </Box>
       </Box>
     </>
   )
@@ -833,7 +837,7 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
     }
 
     if (key.escape) {
-      store.update({ focus: "input" })
+      // don't drop back to chat input while a question is pending — just no-op
       return
     }
     if (key.leftArrow) {
@@ -845,6 +849,11 @@ function QuestionPrompt({ request, store }: { request: QuestionPromptState; stor
       return
     }
     if (isReview && key.return && allAnswered) submitAnswers()
+    // Any printable character while not customEditing → jump into custom answer
+    if (!customEditing && question && !key.ctrl && !key.meta && !key.escape && input && input.trim()) {
+      setCustomEditing(true)
+      setCustomDraft(input)
+    }
   }, { isActive: active })
 
   return (
@@ -1179,7 +1188,7 @@ function LiveChat({
                 </Text>
               )}
           <Newline />
-          <Text color={theme.colors.mutedForeground}>Welcome to Furnace, a terminal-first coding agent.</Text>
+          <Text color={theme.colors.mutedForeground}>Welcome to Furnace. Let's turn up the heat.</Text>
           <Text color={theme.colors.mutedForeground}>Start a conversation, or use /resume, /model, and /theme.</Text>
         </Box>
       </Box>
@@ -1190,6 +1199,7 @@ function LiveChat({
     <Box
       flexDirection="column"
       flexGrow={grow ? 1 : 0}
+      minHeight={5}
       overflow="hidden"
       justifyContent="flex-end"
       paddingX={1}
@@ -1230,12 +1240,7 @@ const TranscriptLine = React.memo(function TranscriptLine({ line }: { line: Tran
     if (line.toolTone === "meta" || line.toolTone === "context") return <Text color={theme.colors.mutedForeground}>{"  "}{line.text}</Text>
     const color = line.status === "failed" ? theme.colors.error : line.status === "done" ? theme.colors.success : theme.colors.warning
     if (line.toolTone === "summary") {
-      return (
-        <Text>
-          <Text color={theme.colors.mutedForeground}>{"  │ "}</Text>
-          <Text color={color} bold>{line.text}</Text>
-        </Text>
-      )
+      return <Text color={color} bold>{"  "}{line.text}</Text>
     }
     return <Text color={color}>{"  "}{line.text}</Text>
   }
@@ -1715,6 +1720,27 @@ export function formatToolActivity(activity: ToolActivity, width: number): Rende
   }
 
   return [{ text: `${statusSymbol(activity.status)} ${activity.name}${formatToolArgs(activity.args, width)}${formatToolResult(activity.result, width)}`, tone: "summary" }]
+}
+
+function friendlyToolName(name: string): string {
+  const labels: Record<string, string> = {
+    read: "Read File",
+    write: "Write File",
+    edit: "Edit File",
+    ls: "List Directory",
+    find: "Find Files",
+    glob: "Glob Files",
+    grep: "Grep",
+    bash: "Run Command",
+    websearch: "Web Search",
+    webfetch: "Fetch URL",
+    skill: "Load Skill",
+    skill_manage: "Save Skill",
+    task: "Spawn Tasks",
+    task_status: "Task Status",
+    ask_question: "Ask Question",
+  }
+  return labels[name] ?? name
 }
 
 function formatEditActivity(activity: ToolActivity, width: number): RenderedToolLine[] {

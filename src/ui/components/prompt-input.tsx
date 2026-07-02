@@ -1,4 +1,4 @@
-import { Box, Text, useInput, usePaste } from "ink"
+import { Box, Text, useInput, usePaste, useWindowSize } from "ink"
 import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
@@ -403,9 +403,25 @@ export function PromptInput({
   }, { isActive: enabled })
 
   const display = value || placeholder
-  const before = value.slice(0, cursorOffset)
-  const cursor = value[cursorOffset] ?? " "
-  const after = value.slice(cursorOffset + 1)
+
+  // Compute per-line cursor position for multiline rendering
+  const valueLines = value ? value.split("\n") : null
+  let cursorLineIdx = 0
+  let cursorColIdx = cursorOffset
+  if (value) {
+    const lines = value.split("\n")
+    let remaining = cursorOffset
+    for (let i = 0; i < lines.length; i++) {
+      if (remaining <= lines[i].length) {
+        cursorLineIdx = i
+        cursorColIdx = remaining
+        break
+      }
+      remaining -= lines[i].length + 1
+    }
+  }
+
+  const { columns } = useWindowSize()
 
   const historySearchMatches: PromptAutocompleteMatch[] = historySearchActive
     ? historyItems
@@ -420,33 +436,68 @@ export function PromptInput({
         : autocompleteActive
           ? <PromptAutocompleteMenu items={autocompleteMatches} />
           : null}
-      <Box borderStyle="round" borderColor={enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border} paddingX={1}>
-        {isVim ? (
-          <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
-            [{vimMode === "normal" ? "N" : "I"}]{" "}
-          </Text>
-        ) : null}
-        <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
-          {prefix}{" "}
-        </Text>
-        <Box flexGrow={1}>
-          {value ? (
-            <Text color={theme.colors.foreground}>
-              {before}
-              <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                {cursor}
+      <Box
+        borderStyle="round"
+        borderColor={enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border}
+        paddingX={1}
+        flexDirection="column"
+        width={columns}
+      >
+        {valueLines ? (
+          valueLines.map((line, lineIdx) => {
+            const hasCursor = cursorLineIdx === lineIdx
+            const isFirst = lineIdx === 0
+            const indentWidth = prefix.length + 1 + (isVim ? 4 : 0)
+            return (
+              <Box key={lineIdx}>
+                {isFirst && isVim ? (
+                  <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
+                    [{vimMode === "normal" ? "N" : "I"}]{" "}
+                  </Text>
+                ) : null}
+                {isFirst ? (
+                  <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
+                    {prefix}{" "}
+                  </Text>
+                ) : (
+                  <Text>{" ".repeat(indentWidth)}</Text>
+                )}
+                <Box flexGrow={1}>
+                  {hasCursor ? (
+                    <Text color={theme.colors.foreground}>
+                      {line.slice(0, cursorColIdx)}
+                      <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                        {line[cursorColIdx] ?? " "}
+                      </Text>
+                      {line.slice(cursorColIdx + 1)}
+                    </Text>
+                  ) : (
+                    <Text color={theme.colors.foreground}>{line}</Text>
+                  )}
+                </Box>
+              </Box>
+            )
+          })
+        ) : (
+          <Box>
+            {isVim ? (
+              <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
+                [{vimMode === "normal" ? "N" : "I"}]{" "}
               </Text>
-              {after}
+            ) : null}
+            <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
+              {prefix}{" "}
             </Text>
-          ) : (
-            <Text color={theme.colors.mutedForeground}>
-              <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                {display[0] ?? " "}
+            <Box flexGrow={1}>
+              <Text color={theme.colors.mutedForeground}>
+                <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                  {display[0] ?? " "}
+                </Text>
+                {display.slice(1)}
               </Text>
-              {display.slice(1)}
-            </Text>
-          )}
-        </Box>
+            </Box>
+          </Box>
+        )}
       </Box>
     </>
   )
