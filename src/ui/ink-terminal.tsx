@@ -461,6 +461,13 @@ function FurnaceApp({
 }): React.ReactNode {
   const app = useApp()
   const theme = useTheme()
+
+  React.useEffect(() => {
+    const title = state.title && state.title !== "New Chat" ? `Furnace — ${state.title}` : "Furnace"
+    process.stdout.write(`\x1b]0;${title}\x07`)
+    return () => { process.stdout.write("\x1b]0;Furnace\x07") }
+  }, [state.title])
+
   useInput((_input, key) => {
     if (key.ctrl && _input === "c") {
       onExit()
