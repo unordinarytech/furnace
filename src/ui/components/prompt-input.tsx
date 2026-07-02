@@ -429,22 +429,24 @@ export function PromptInput({
         <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
           {prefix}{" "}
         </Text>
-        {value ? (
-          <Text color={theme.colors.foreground}>
-            {before}
-            <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-              {cursor}
+        <Box flexGrow={1}>
+          {value ? (
+            <Text color={theme.colors.foreground}>
+              {before}
+              <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                {cursor}
+              </Text>
+              {after}
             </Text>
-            {after}
-          </Text>
-        ) : (
-          <Text color={theme.colors.mutedForeground}>
-            <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-              {display[0] ?? " "}
+          ) : (
+            <Text color={theme.colors.mutedForeground}>
+              <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                {display[0] ?? " "}
+              </Text>
+              {display.slice(1)}
             </Text>
-            {display.slice(1)}
-          </Text>
-        )}
+          )}
+        </Box>
       </Box>
     </>
   )
