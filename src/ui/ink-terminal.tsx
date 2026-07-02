@@ -1475,7 +1475,7 @@ function InlineMarkdown({ text }: { text: string }): React.ReactNode {
       {parts.map((part, index) => {
         if (part.kind === "code") {
           return (
-            <Text key={index} color={theme.colors.accentForeground} backgroundColor={theme.colors.muted}>
+            <Text key={index} color={theme.colors.accentForeground} backgroundColor={theme.colors.accent}>
               {part.text}
             </Text>
           )
