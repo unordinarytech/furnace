@@ -496,90 +496,150 @@ export function PromptInput({
   const prefixColor = enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground
 
   if (splitMode) {
-    // Two-panel layout: left input (flexGrow) + right sidebar (fixed width).
-    // Height is NOT fixed: right panel sizes to its content; left panel stretches to match.
-    const SIDEBAR_WIDTH = 44  // fixed sidebar width; input gets all remaining space
-    const SIDEBAR_VISIBLE_ITEMS = 6  // items shown in command list
+    const SIDEBAR_WIDTH = 44
+    const INPUT_HEIGHT = 9                      // total left panel height (borders included)
+    const CONTENT_ROWS = INPUT_HEIGHT - 2       // 7 usable text rows
     const leftWidth = Math.max(20, columns - SIDEBAR_WIDTH)
+    const prefixCols = (isVim ? 4 : 0) + prefix.length + 1   // "[N] > " or "> "
+    const textWidth = Math.max(10, leftWidth - prefixCols - 4) // subtract borders+padding+prefix
 
-    // Compute visible portion of the current line (keep cursor visible)
-    const prefixCols = (isVim ? 4 : 0) + prefix.length + 1  // "[N] " or "" + "> "
-    const textWidth = Math.max(10, leftWidth - prefixCols - 4)  // 4 for borders+padding
-    const currentLineText = valueLines ? (valueLines[cursorLineIdx] ?? "") : ""
-    const linesAbove = cursorLineIdx
-
-    // Clip so cursor stays visible: shift window start so cursorColIdx is in view
-    let windowStart = 0
-    if (currentLineText.length > textWidth) {
-      windowStart = Math.max(0, Math.min(cursorColIdx - Math.floor(textWidth * 0.6), currentLineText.length - textWidth))
+    // ── wrap value into visual lines, tracking char offsets ──────────────────
+    type VLine = { text: string; charStart: number }
+    const allVisualLines: VLine[] = []
+    if (value) {
+      let offset = 0
+      for (const seg of value.split("\n")) {
+        if (seg.length === 0) {
+          allVisualLines.push({ text: "", charStart: offset })
+        } else {
+          for (let i = 0; i < seg.length; i += textWidth) {
+            allVisualLines.push({ text: seg.slice(i, i + textWidth), charStart: offset + i })
+          }
+        }
+        offset += seg.length + 1 // +1 for the \n
+      }
     }
-    const charsHidden = windowStart
-    const displayCurrentLine = currentLineText.slice(windowStart)
-    const displayCursorCol = cursorColIdx - windowStart
+    if (allVisualLines.length === 0) allVisualLines.push({ text: "", charStart: 0 })
 
-    // Indicator line: shows hidden context
-    const parts: string[] = []
-    if (linesAbove > 0) parts.push(`${linesAbove} line${linesAbove > 1 ? "s" : ""} above`)
-    if (charsHidden > 0) parts.push(`${charsHidden} chars`)
-    const indicatorText = parts.length > 0 ? `[${parts.join(", ")}]` : ""
+    // ── find cursor visual line + col ─────────────────────────────────────────
+    let cursorVisLine = allVisualLines.length - 1
+    let cursorVisCol = (value ?? "").length - (allVisualLines.at(-1)?.charStart ?? 0)
+    for (let i = 0; i < allVisualLines.length; i++) {
+      const lineEnd = i + 1 < allVisualLines.length
+        ? allVisualLines[i + 1]!.charStart - 1  // -1 to exclude the \n char
+        : (value ?? "").length
+      if (cursorOffset <= lineEnd) {
+        cursorVisLine = i
+        cursorVisCol = cursorOffset - allVisualLines[i]!.charStart
+        break
+      }
+    }
+    cursorVisCol = Math.max(0, cursorVisCol)
 
+    // ── viewport: always show the cursor, overflow from the top ───────────────
+    const total = allVisualLines.length
+    const hasOverflow = total > CONTENT_ROWS
+    const textRows = hasOverflow ? CONTENT_ROWS - 1 : CONTENT_ROWS  // reserve row for indicator
+    // Scroll so cursor is always in the last visible text row
+    const vpStart = hasOverflow
+      ? Math.max(0, Math.min(cursorVisLine - textRows + 1, total - textRows))
+      : 0
+    const visLines = allVisualLines.slice(vpStart, vpStart + textRows)
+    const hiddenChars = vpStart > 0 ? (allVisualLines[vpStart]?.charStart ?? 0) : 0
+
+    // ── sidebar window ────────────────────────────────────────────────────────
+    const SIDEBAR_VISIBLE_ITEMS = CONTENT_ROWS - 1  // header + 6 items = 7 rows
     const safeIndex = Math.max(0, Math.min(selectedAutocompleteIndex, sidebarItems.length - 1))
     const windowBegin = Math.max(0, Math.min(safeIndex - Math.floor(SIDEBAR_VISIBLE_ITEMS / 2), sidebarItems.length - SIDEBAR_VISIBLE_ITEMS))
     const visibleSidebarItems = sidebarItems.slice(windowBegin, windowBegin + SIDEBAR_VISIBLE_ITEMS)
+    const indent = " ".repeat(prefixCols)
 
     return (
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
         <Box flexDirection="row" width={columns}>
-          {/* Left panel: input — no fixed height; stretches to match right panel */}
+          {/* Left panel: full-height textarea */}
           <Box
             flexGrow={1}
+            height={INPUT_HEIGHT}
             borderStyle="round"
             borderColor={borderColor}
             paddingX={1}
             flexDirection="column"
-            justifyContent="flex-end"
           >
-            {pendingImageAttachment ? (
+            {/* Top indicator row — only rendered when text overflows */}
+            {hasOverflow ? (
+              <Text color={theme.colors.mutedForeground}>
+                {pendingImageAttachment ? "📎 " : ""}
+                {`[${hiddenChars} chars]`}
+              </Text>
+            ) : pendingImageAttachment ? (
               <Text color={theme.colors.mutedForeground}>📎 image attached · Esc to remove</Text>
             ) : null}
-            {indicatorText ? (
-              <Text color={theme.colors.mutedForeground}>{indicatorText}</Text>
-            ) : null}
-            <Box>
-              {isVim ? (
-                <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
-                  [{vimMode === "normal" ? "N" : "I"}]{" "}
-                </Text>
-              ) : null}
-              <Text color={prefixColor} bold>{prefix}{" "}</Text>
-              <Box flexGrow={1}>
-                {value ? (
-                  <Text color={theme.colors.foreground}>
-                    {displayCurrentLine.slice(0, displayCursorCol)}
-                    <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
-                      {displayCurrentLine[displayCursorCol] ?? " "}
-                    </Text>
-                    {displayCurrentLine.slice(displayCursorCol + 1)}
+
+            {/* Visible text rows */}
+            {value ? visLines.map((line, i) => {
+              const absIdx = vpStart + i
+              const hasCursor = absIdx === cursorVisLine
+              const isFirstAbsolute = absIdx === 0
+              return (
+                <Box key={absIdx}>
+                  {isFirstAbsolute ? (
+                    <>
+                      {isVim && (
+                        <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
+                          [{vimMode === "normal" ? "N" : "I"}]{" "}
+                        </Text>
+                      )}
+                      <Text color={prefixColor} bold>{prefix}{" "}</Text>
+                    </>
+                  ) : (
+                    <Text>{indent}</Text>
+                  )}
+                  <Box flexGrow={1} overflow="hidden">
+                    {hasCursor ? (
+                      <Text color={theme.colors.foreground}>
+                        {line.text.slice(0, cursorVisCol)}
+                        <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
+                          {line.text[cursorVisCol] ?? " "}
+                        </Text>
+                        {line.text.slice(cursorVisCol + 1)}
+                      </Text>
+                    ) : (
+                      <Text color={theme.colors.foreground}>{line.text}</Text>
+                    )}
+                  </Box>
+                </Box>
+              )
+            }) : (
+              /* Placeholder */
+              <Box>
+                {isVim && (
+                  <Text color={theme.colors.mutedForeground} bold>
+                    [{vimMode === "normal" ? "N" : "I"}]{" "}
                   </Text>
-                ) : (
+                )}
+                <Text color={prefixColor} bold>{prefix}{" "}</Text>
+                <Box flexGrow={1} overflow="hidden">
                   <Text color={theme.colors.mutedForeground}>
                     <Text color={theme.colors.selectionForeground} backgroundColor={theme.colors.selection}>
                       {display[0] ?? " "}
                     </Text>
                     {display.slice(1)}
                   </Text>
-                )}
+                </Box>
               </Box>
-            </Box>
+            )}
           </Box>
-          {/* Right panel: override (approval / question / settings) or default command sidebar */}
+
+          {/* Right panel: override or command sidebar */}
           <Box
             width={SIDEBAR_WIDTH}
             borderStyle="round"
             borderColor={sidebarOverride ? theme.colors.warning : theme.colors.border}
             paddingX={1}
             flexDirection="column"
+            overflow="hidden"
           >
             {sidebarOverride ?? (
               <>
