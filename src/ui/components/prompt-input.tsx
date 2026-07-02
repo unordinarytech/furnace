@@ -488,8 +488,8 @@ export function PromptInput({
   if (splitMode) {
     // Two-panel fixed-height layout: left input + right sidebar
     const PANEL_HEIGHT = 9
-    const SIDEBAR_WIDTH = Math.min(48, Math.floor(columns * 0.4))
-    const leftWidth = columns - SIDEBAR_WIDTH
+    const SIDEBAR_WIDTH = 44  // fixed sidebar width; input gets all remaining space
+    const leftWidth = Math.max(20, columns - SIDEBAR_WIDTH)
 
     // Compute visible portion of the current line (keep cursor visible)
     const prefixCols = (isVim ? 4 : 0) + prefix.length + 1  // "[N] " or "" + "> "
