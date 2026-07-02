@@ -1292,14 +1292,19 @@ function LiveChat({
   toolActivities: ToolActivity[]
 }): React.ReactNode {
   const theme = useTheme()
-  const { columns } = useWindowSize()
+  const { columns, rows } = useWindowSize()
   const width = Math.max(20, columns - 4)
+  const viewportRows = chatViewportRows(rows)
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
   const allLines = [...committedLines, ...activeLines]
   const hasLines = allLines.length > 0
-  // Virtual scroll: slice off the most-recent scrollOffset lines so the user sees history
-  const displayLines = scrollOffset > 0 ? allLines.slice(0, Math.max(0, allLines.length - scrollOffset)) : allLines
+  // Explicit viewport window: only render the lines that fit on screen.
+  // Relying on Ink's justifyContent="flex-end" + overflow="hidden" to clip thousands
+  // of accumulated lines causes layout bugs where the view gets stuck.
+  const endIndex = Math.max(0, allLines.length - scrollOffset)
+  const startIndex = Math.max(0, endIndex - viewportRows)
+  const displayLines = visibleTranscriptWindow(allLines, startIndex, endIndex, viewportRows)
 
   if (!hasLines) {
     return (
