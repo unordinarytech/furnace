@@ -521,7 +521,7 @@ export function PromptInput({
     return (
       <>
         {historySearchActive ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} /> : null}
-        <Box flexDirection="row">
+        <Box flexDirection="row" width={columns}>
           {/* Left panel: input */}
           <Box
             flexGrow={1}
