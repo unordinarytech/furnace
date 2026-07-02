@@ -650,10 +650,15 @@ export function PromptInput({
                 {visibleSidebarItems.map((item, i) => {
                   const absIdx = windowBegin + i
                   const isSelected = absIdx === safeIndex
-                  const labelWidth = Math.floor(SIDEBAR_WIDTH * 0.45)
-                  const descWidth = SIDEBAR_WIDTH - labelWidth - 6
+                  // Inner content width: total - 2 borders - 2 paddingX
+                  const innerWidth = SIDEBAR_WIDTH - 4
+                  // 2 prefix + 1 separator = 3 overhead; split remainder 50/50
+                  const available = innerWidth - 3
+                  const labelWidth = Math.floor(available * 0.5)
+                  const descWidth = available - labelWidth
                   return (
-                    <Box key={item.value}>
+                    // Single Text with wrap=truncate ensures the row never exceeds one line
+                    <Text key={item.value} wrap="truncate">
                       <Text
                         color={isSelected ? theme.colors.primary : theme.colors.foreground}
                         bold={isSelected}
@@ -666,7 +671,7 @@ export function PromptInput({
                           {" "}{truncateSidebar(item.description, descWidth)}
                         </Text>
                       ) : null}
-                    </Box>
+                    </Text>
                   )
                 })}
                 {sidebarItems.length === 0 && (
