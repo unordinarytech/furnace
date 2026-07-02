@@ -37,14 +37,15 @@ export function AppShell({ children }: AppShellProps): React.ReactNode {
 function Header({ contextUsage, cwd, model, settings, status, title }: AppShellHeaderProps): React.ReactNode {
   const theme = useTheme()
   const { columns } = useWindowSize()
+  const modelText = truncateMiddle(model, Math.max(1, columns - "Furnace".length - 8))
   const statusText = contextUsage ? `${contextUsage} · ${settings}` : truncateEnd(`${status ?? ""} · ${settings}`, 80)
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.colors.border} paddingX={1} width={columns}>
       <Box justifyContent="space-between">
-        <Text color={theme.colors.mutedForeground}>{model}</Text>
         <Text color={theme.colors.primary} bold>
           Furnace
         </Text>
+        <Text color={theme.colors.mutedForeground}>{modelText}</Text>
       </Box>
       <Box justifyContent="space-between">
         <Text color={theme.colors.foreground}>{truncateMiddle(`${cwd} · ${title}`, 96)}</Text>
