@@ -247,7 +247,10 @@ function serializeEntriesForSummary(entries: EntryRecord[]): string {
 function truncateEntryForSummary(entry: EntryRecord): string {
   if (entry.type === "message") {
     const data = entry.data as MessageEntryData
-    return truncateForSummary(data.content)
+    const text = Array.isArray(data.content)
+      ? data.content.filter((b) => b.type === "text").map((b) => (b as { type: "text"; text: string }).text).join("\n")
+      : data.content
+    return truncateForSummary(text)
   }
   if (entry.type === "tool_call") {
     const data = entry.data as ToolCallEntryData

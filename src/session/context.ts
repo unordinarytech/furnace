@@ -1,5 +1,5 @@
-import type { OpenRouterMessage } from "../openrouter.js"
-import type { CompactionEntryData, EntryRecord, MessageEntryData, ToolCallEntryData, ToolResultEntryData, TranscriptMessage } from "./types.js"
+import type { OpenRouterContentBlock, OpenRouterMessage } from "../openrouter.js"
+import type { CompactionEntryData, EntryRecord, MessageContentBlock, MessageEntryData, ToolCallEntryData, ToolResultEntryData, TranscriptMessage } from "./types.js"
 
 export type RuntimeContextInput = {
   cwd: string
@@ -60,7 +60,14 @@ export function renderCompactionSummaryForModel(summary: string): string {
 function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
   if (entry.type === "message" && (entry.role === "user" || entry.role === "assistant")) {
     const data = entry.data as MessageEntryData
-    return [{ role: entry.role, content: data.content }]
+    const content: string | OpenRouterContentBlock[] | null =
+      Array.isArray(data.content)
+        ? (data.content as MessageContentBlock[]).map((block) => {
+            if (block.type === "text") return { type: "text" as const, text: block.text }
+            return { type: "image_url" as const, image_url: block.image_url }
+          })
+        : data.content
+    return [{ role: entry.role, content }]
   }
   if (entry.type === "tool_call") {
     const data = entry.data as ToolCallEntryData

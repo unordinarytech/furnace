@@ -158,7 +158,7 @@ export class SessionStore {
   appendMessage(
     sessionId: string,
     role: "user" | "assistant",
-    content: string,
+    content: string | import("./types.js").MessageContentBlock[],
     modelOrOptions?: string | { hidden?: boolean; model?: string; source?: string; usage?: import("./types.js").TurnUsage },
   ): EntryRecord<MessageEntryData> {
     const options = typeof modelOrOptions === "string" ? { model: modelOrOptions } : modelOrOptions || {}

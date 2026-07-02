@@ -35,12 +35,16 @@ export type TurnUsage = {
 }
 
 export type MessageEntryData = {
-  content: string
+  content: string | MessageContentBlock[]
   hidden?: boolean
   model?: string
   source?: string
   usage?: TurnUsage
 }
+
+export type MessageContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
 
 export type FileSnapshot = {
   existed: boolean
@@ -107,5 +111,5 @@ export type FileReadFileKey = {
 
 export type TranscriptMessage = {
   role: "user" | "assistant"
-  content: string
+  content: string | MessageContentBlock[]
 }

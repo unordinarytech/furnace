@@ -2,11 +2,15 @@ import type { FurnaceConfig } from "./config.js"
 
 export type OpenRouterMessage = {
   role: "system" | "user" | "assistant" | "tool"
-  content: string | null
+  content: string | OpenRouterContentBlock[] | null
   name?: string
   tool_call_id?: string
   tool_calls?: OpenRouterToolCall[]
 }
+
+export type OpenRouterContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
 
 export type OpenRouterToolDefinition = {
   type: "function"
