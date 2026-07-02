@@ -1,5 +1,5 @@
 import type { FurnaceConfig } from "../config.js"
-import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouterMessage, type OpenRouterToolChoice } from "../openrouter.js"
+import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouterMessage, type OpenRouterToolChoice, type OpenRouterUsage } from "../openrouter.js"
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
@@ -26,6 +26,7 @@ export type RunAgentTurnInput = {
 
 export type RunAgentTurnResult = {
   content: string
+  usage?: OpenRouterUsage
 }
 
 export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTurnResult> {
@@ -33,6 +34,8 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
   const tools = input.tools || toolDefinitions
   let iteration = 0
   let overflowRecoveryAttempted = false
+  let accumulatedPromptTokens = 0
+  let lastCompletionTokens = 0
 
   while (true) {
     messages = input.onBeforeModelRequest ? await input.onBeforeModelRequest(messages, tools) : messages
@@ -55,8 +58,15 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       throw error
     }
 
+    if (response.usage) {
+      accumulatedPromptTokens += response.usage.promptTokens
+      lastCompletionTokens = response.usage.completionTokens
+    }
     if (response.toolCalls.length === 0) {
-      return { content: response.content }
+      const usage = accumulatedPromptTokens > 0 || lastCompletionTokens > 0
+        ? { promptTokens: accumulatedPromptTokens, completionTokens: lastCompletionTokens }
+        : undefined
+      return { content: response.content, usage }
     }
 
     messages.push({

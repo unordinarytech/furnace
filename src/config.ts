@@ -12,8 +12,10 @@ const titlePromptPath = join(promptsDir, "title-system.md")
 
 export type FurnaceConfig = {
   appName: string
+  inputMode: "standard" | "vim"
   model: string
   modelSettings: ModelSettings
+  notifications: boolean
   openRouterApiKey: string
   siteUrl: string
   skillPaths: string[]
@@ -36,7 +38,9 @@ export async function loadConfig(): Promise<FurnaceConfig> {
 
   return {
     appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
+    inputMode: preferences.inputMode || "standard",
     model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4.6",
+    notifications: preferences.notifications === true,
     modelSettings: preferences.modelSettings || {},
     openRouterApiKey,
     siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",

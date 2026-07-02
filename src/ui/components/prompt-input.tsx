@@ -9,10 +9,13 @@ export type PromptInputProps = {
   busy?: boolean
   disabled?: boolean
   historyItems?: string[]
+  inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onChange?: (value: string) => void
+  onCopy?: () => void
   onEmptyUp?: () => void
   onModeCycle?: (direction: 1 | -1) => void
+  onOpenEditor?: (draft: string) => Promise<string>
   onSubmit: (value: string) => void
   placeholder?: string
   planMode?: boolean
@@ -38,10 +41,13 @@ export function PromptInput({
   busy = false,
   disabled = false,
   historyItems = [],
+  inputMode = "standard",
   onAutocompleteTab,
   onChange,
+  onCopy,
   onEmptyUp,
   onModeCycle,
+  onOpenEditor,
   onSubmit,
   placeholder = "Ask Furnace...",
   planMode = false,
@@ -54,7 +60,15 @@ export function PromptInput({
   const [selectedAutocompleteIndex, setSelectedAutocompleteIndex] = React.useState(0)
   const [historyIndex, setHistoryIndex] = React.useState(-1)
   const [browsableAnchor, setBrowsableAnchor] = React.useState<{ cursorOffset: number; value: string } | undefined>(undefined)
+  const [historySearchActive, setHistorySearchActive] = React.useState(false)
+  const [historySearchQuery, setHistorySearchQuery] = React.useState("")
+  const [historySearchIndex, setHistorySearchIndex] = React.useState(0)
+  const [vimMode, setVimMode] = React.useState<"normal" | "insert">("insert")
+  const lastKeyRef = React.useRef<string>("")
   const historySavedDraft = React.useRef("")
+  const historySearchSavedDraft = React.useRef("")
+
+  const isVim = inputMode === "vim"
   const previousControlledValue = React.useRef(controlledValue)
   const arrowRewriteInFlight = React.useRef(false)
   const value = controlledValue ?? localValue
@@ -126,6 +140,37 @@ export function PromptInput({
         setCursorOffset(value.length)
         return
       }
+      if (input === "j") {
+        // Ctrl+J: insert a literal newline without submitting
+        setValue((current) => current.slice(0, cursorOffset) + "\n" + current.slice(cursorOffset))
+        setCursorOffset((current) => current + 1)
+        return
+      }
+      if (input === "r") {
+        // Ctrl+R: activate history fuzzy search
+        if (historyItems.length > 0 && !historySearchActive) {
+          historySearchSavedDraft.current = value
+          setHistorySearchActive(true)
+          setHistorySearchQuery("")
+          setHistorySearchIndex(0)
+        }
+        return
+      }
+      if (input === "g") {
+        // Ctrl+G: open $EDITOR to compose the prompt
+        if (onOpenEditor && !busy) {
+          void onOpenEditor(value).then((result) => {
+            setValue(result)
+            setCursorOffset(result.length)
+          })
+        }
+        return
+      }
+      if (input === "o") {
+        // Ctrl+O: copy last assistant response to clipboard
+        onCopy?.()
+        return
+      }
       if (input === "k") {
         setValue((current) => current.slice(0, cursorOffset))
         return
@@ -148,6 +193,43 @@ export function PromptInput({
       return
     }
     if (key.meta) return
+
+    if (historySearchActive) {
+      const filteredHistory = historyItems.filter((item) => item.toLowerCase().includes(historySearchQuery.toLowerCase()))
+      if (key.escape) {
+        setHistorySearchActive(false)
+        setHistorySearchQuery("")
+        setValue(historySearchSavedDraft.current)
+        setCursorOffset(historySearchSavedDraft.current.length)
+        return
+      }
+      if (key.return) {
+        const selected = filteredHistory[historySearchIndex]
+        setHistorySearchActive(false)
+        setHistorySearchQuery("")
+        if (selected !== undefined) {
+          setValue(selected)
+          setCursorOffset(selected.length)
+        }
+        return
+      }
+      if (key.upArrow || key.downArrow) {
+        const direction = key.upArrow ? -1 : 1
+        setHistorySearchIndex((i) => Math.min(Math.max(0, i + direction), Math.max(0, filteredHistory.length - 1)))
+        return
+      }
+      if (key.backspace || key.delete) {
+        setHistorySearchQuery((q) => q.slice(0, -1))
+        setHistorySearchIndex(0)
+        return
+      }
+      if (input && !key.ctrl && !key.meta) {
+        setHistorySearchQuery((q) => q + input)
+        setHistorySearchIndex(0)
+        return
+      }
+      return
+    }
 
     if (autocompleteActive) {
       if (key.escape) {
@@ -269,11 +351,52 @@ export function PromptInput({
       return
     }
     if (key.escape) {
+      if (isVim && vimMode === "insert") {
+        setVimMode("normal")
+        return
+      }
       setValue("")
       setCursorOffset(0)
       return
     }
+    if (isVim && vimMode === "normal") {
+      const last = lastKeyRef.current
+      lastKeyRef.current = input
+      if (input === "h") { setCursorOffset((c) => Math.max(0, c - 1)); return }
+      if (input === "l") { setCursorOffset((c) => Math.min(value.length, c + 1)); return }
+      if (input === "i") { setVimMode("insert"); return }
+      if (input === "a") { setCursorOffset((c) => Math.min(value.length, c + 1)); setVimMode("insert"); return }
+      if (input === "x") {
+        if (cursorOffset < value.length) {
+          setValue((v) => v.slice(0, cursorOffset) + v.slice(cursorOffset + 1))
+        }
+        return
+      }
+      if (input === "d" && last === "d") {
+        setValue("")
+        setCursorOffset(0)
+        lastKeyRef.current = ""
+        return
+      }
+      if (input === "0") { setCursorOffset(0); return }
+      if (input === "$") { setCursorOffset(value.length); return }
+      if (input === "w") {
+        const after = value.slice(cursorOffset)
+        const match = after.match(/^[^ ]*[ ]+/)
+        setCursorOffset((c) => c + (match ? match[0].length : after.length))
+        return
+      }
+      if (input === "b") {
+        const before = value.slice(0, cursorOffset)
+        const trimmed = before.trimEnd()
+        const lastSpace = trimmed.lastIndexOf(" ")
+        setCursorOffset(lastSpace < 0 ? 0 : lastSpace + 1)
+        return
+      }
+      return
+    }
     if (input) {
+      if (isVim) lastKeyRef.current = ""
       setValue((current) => current.slice(0, cursorOffset) + input + current.slice(cursorOffset))
       setCursorOffset((current) => current + input.length)
     }
@@ -284,10 +407,25 @@ export function PromptInput({
   const cursor = value[cursorOffset] ?? " "
   const after = value.slice(cursorOffset + 1)
 
+  const historySearchMatches: PromptAutocompleteMatch[] = historySearchActive
+    ? historyItems
+        .filter((item) => item.toLowerCase().includes(historySearchQuery.toLowerCase()))
+        .map((item, index) => ({ label: item, value: item, selected: index === historySearchIndex }))
+    : []
+
   return (
     <>
-      {autocompleteActive ? <PromptAutocompleteMenu items={autocompleteMatches} /> : null}
+      {historySearchActive
+        ? <HistorySearchMenu items={historySearchMatches} query={historySearchQuery} />
+        : autocompleteActive
+          ? <PromptAutocompleteMenu items={autocompleteMatches} />
+          : null}
       <Box borderStyle="round" borderColor={enabled ? (planMode ? theme.colors.warning : theme.colors.focusRing) : theme.colors.border} paddingX={1}>
+        {isVim ? (
+          <Text color={vimMode === "normal" ? theme.colors.warning : theme.colors.mutedForeground} bold>
+            [{vimMode === "normal" ? "N" : "I"}]{" "}
+          </Text>
+        ) : null}
         <Text color={enabled ? (planMode ? theme.colors.warning : theme.colors.primary) : theme.colors.mutedForeground} bold>
           {prefix}{" "}
         </Text>
@@ -335,6 +473,28 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
             </Text>
           ) : null}
         </Box>
+      ))}
+      {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
+    </Box>
+  )
+}
+
+function HistorySearchMenu({ items, query }: { items: PromptAutocompleteMatch[]; query: string }): React.ReactNode {
+  const theme = useTheme()
+  const window = autocompleteWindow(items)
+  return (
+    <Box borderStyle="round" borderColor={theme.colors.border} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>History search: {query || "…"}</Text>
+        <Text color={theme.colors.mutedForeground}>enter to load</Text>
+      </Box>
+      {items.length === 0
+        ? <Text color={theme.colors.mutedForeground}>  No matches</Text>
+        : null}
+      {window.visible.map((item, i) => (
+        <Text key={i} color={item.selected ? theme.colors.primary : theme.colors.foreground} bold={item.selected} wrap="truncate">
+          {item.selected ? "› " : "  "}{item.label}
+        </Text>
       ))}
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>

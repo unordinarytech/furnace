@@ -1,3 +1,7 @@
+import { spawnSync } from "node:child_process"
+import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Box, Newline, Static, Text, render, useAnimation, useApp, useInput, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 import wrapAnsi from "wrap-ansi"
@@ -50,6 +54,7 @@ export type FurnaceTerminal = {
   setStreamingContent(text: string): void
   setStatusNotice(content?: string): void
   setTranscript(transcript: TranscriptMessage[]): void
+  suspendForEditor(draft: string): Promise<string>
 }
 
 export type ModelChoice = {
@@ -87,7 +92,10 @@ type CreateFurnaceTerminalOptions = {
   onTaskBackground?: () => void
   onModeCycle?: (direction: 1 | -1) => void
   onInputChange?: (value: string) => void
+  inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  onOpenEditor?: (draft: string) => Promise<string>
+  onCopy?: () => void
   themeName: string
   title: string
   onSubmit: (text: string) => void
@@ -128,6 +136,7 @@ type UiFocus = "input" | "plan_actions" | "question" | "queue" | "tasks"
 type UiState = {
   approval?: ApprovalPromptState
   busy: boolean
+  inputMode: "standard" | "vim"
   chatCanScrollUp: boolean
   contextTokens: number
   contextWindowTokens: number
@@ -176,6 +185,8 @@ class UiStore {
   }
   readonly onInputChange?: (value: string) => void
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
+  readonly onOpenEditor?: (draft: string) => Promise<string>
+  readonly onCopy?: () => void
 
   constructor(options: CreateFurnaceTerminalOptions) {
     const themeChoice = resolveTheme(options.themeName)
@@ -192,10 +203,13 @@ class UiStore {
     }
     this.onInputChange = options.onInputChange
     this.onAutocompleteTab = options.onAutocompleteTab
+    this.onOpenEditor = options.onOpenEditor
+    this.onCopy = options.onCopy
     this.state = {
       approval: undefined,
       busy: false,
       chatCanScrollUp: false,
+      inputMode: options.inputMode || "standard",
       contextTokens: 0,
       contextWindowTokens: 0,
       cwd: options.cwd,
@@ -366,6 +380,27 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setStatusNotice(content) {
       store.update({ statusNotice: content })
     },
+    async suspendForEditor(draft) {
+      const editor = process.env.EDITOR || process.env.VISUAL
+      if (!editor) return draft
+      let tmpDir: string | undefined
+      let tmpFile: string | undefined
+      try {
+        tmpDir = mkdtempSync(join(tmpdir(), "furnace-editor-"))
+        tmpFile = join(tmpDir, "prompt.md")
+        writeFileSync(tmpFile, draft, "utf8")
+        if (typeof process.stdin.setRawMode === "function") process.stdin.setRawMode(false)
+        const result = spawnSync(editor, [tmpFile], { stdio: "inherit" })
+        if (typeof process.stdin.setRawMode === "function") process.stdin.setRawMode(true)
+        if (result.status !== 0) return draft
+        return readFileSync(tmpFile, "utf8")
+      } catch {
+        return draft
+      } finally {
+        try { if (tmpFile) unlinkSync(tmpFile) } catch { /* ignore */ }
+        try { if (tmpDir) { const { rmdirSync } = await import("node:fs"); rmdirSync(tmpDir) } } catch { /* ignore */ }
+      }
+    },
     setTranscript(transcript) {
       const width = Math.max(20, (process.stdout.columns || 80) - 4)
       store.update((state) => {
@@ -467,6 +502,9 @@ function FurnaceApp({
           }}
           onModeCycle={(direction) => store.modeHandlers.onCycle?.(direction)}
           onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
+          onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
+          onCopy={() => store.onCopy?.()}
+          inputMode={state.inputMode}
           onSubmit={onSubmit}
           placeholder={promptPlaceholder(state)}
           planMode={state.mode === "plan"}

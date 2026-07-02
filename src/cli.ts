@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
-import { Command } from "commander"
-import { readFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { readFile, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
+import { Command } from "commander"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
@@ -11,11 +13,13 @@ import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
-import { saveModelPreferences, saveThemePreference, type ModelSettings } from "./preferences.js"
+import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, type ModelSettings } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
+import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-commands/loader.js"
+import type { CustomCommand } from "./custom-commands/types.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
@@ -43,20 +47,51 @@ program
   .option("--continue", "continue the latest local session instead of starting fresh")
   .option("--new-session", "start a new local session; this is now the default")
   .option("--no-clear", "do not clear the terminal before rendering")
+  .option("--session <id>", "resume a specific saved session by id")
+  .option("--output-format <format>", "output format for headless mode: text (default) or json")
   .version("0.0.0")
-  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean }) => {
+  .addCommand(
+    new Command("completion")
+      .argument("<shell>", "shell type: bash, zsh, or fish")
+      .description("Print shell completion script for the furnace CLI")
+      .action((shell: string) => {
+        const scripts: Record<string, string> = {
+          bash: '# Add to ~/.bash_completion or source in ~/.bashrc\n_furnace_completions() {\n  local cur="${COMP_WORDS[COMP_CWORD]}"\n  local opts="--print --continue --new-session --no-clear --session --output-format --version --help"\n  COMPREPLY=( $(compgen -W "$opts" -- "$cur") )\n}\ncomplete -F _furnace_completions furnace\n',
+          zsh: `#compdef furnace\n_furnace() {\n  local -a opts\n  opts=(--print --continue --new-session --no-clear --session --output-format --version --help)\n  _arguments '*: :->args' && return\n  case $state in args) _values "option" $opts ;; esac\n}\n_furnace "$@"\n`,
+          fish: `# Save to ~/.config/fish/completions/furnace.fish\ncomplete -c furnace -l print -d "Run a single prompt"\ncomplete -c furnace -l continue -d "Continue latest session"\ncomplete -c furnace -l new-session -d "Start new session"\ncomplete -c furnace -l no-clear -d "Do not clear terminal"\ncomplete -c furnace -l session -d "Resume session by id" -r\ncomplete -c furnace -l output-format -d "Output format (text or json)" -r\ncomplete -c furnace -l version -d "Show version"\n`,
+        }
+        const script = scripts[shell.toLowerCase()]
+        if (!script) {
+          process.stderr.write(`Unknown shell: ${shell}. Supported: bash, zsh, fish\n`)
+          process.exitCode = 1
+          return
+        }
+        process.stdout.write(script)
+      }),
+  )
+  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string }) => {
     try {
       const config = await loadConfig()
       const cwd = process.cwd()
       const { SessionStore } = await import("./session/store.js")
       const store = SessionStore.open(cwd)
       store.deleteEmptySessions(cwd)
-      const session = options.continue ? store.getOrCreateLatestSession(cwd) : store.createSession({ cwd, title: "New Chat" })
+      let session
+      if (options.session) {
+        try { session = store.getSession(options.session) } catch {
+          process.stderr.write(`Session not found: ${options.session}\n`)
+          process.exitCode = 1
+          return
+        }
+      } else {
+        session = options.continue ? store.getOrCreateLatestSession(cwd) : store.createSession({ cwd, title: "New Chat" })
+      }
       const prompt = options.print || promptParts.join(" ")
+      const outputFormat = options.outputFormat?.toLowerCase() === "json" ? "json" : "text"
 
       try {
         if (prompt.trim()) {
-          await runSingleTurn({ config, cwd, prompt, sessionId: session.id, store })
+          await runSingleTurn({ config, cwd, prompt, sessionId: session.id, store, outputFormat })
           return
         }
 
@@ -113,6 +148,7 @@ async function runInteractive(input: {
   const pendingBackgroundPrompts = new Map<string, string[]>()
   const modelListCache = createModelListCache(input.config)
   let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
+  let customCommands: CustomCommand[] = await loadCustomCommands(input.cwd)
   let baseAutocompleteItems: PromptAutocompleteItem[] = []
   let currentAutocompleteScope: ReturnType<typeof argumentScopeFor> | undefined
   let queueCounter = 0
@@ -161,6 +197,7 @@ async function runInteractive(input: {
   })
   terminal = createFurnaceTerminal({
     cwd: input.cwd,
+    inputMode: input.config.inputMode,
     model: input.config.model,
     modelSettings: input.config.modelSettings,
     onQueueEdit: (id) => {
@@ -229,6 +266,24 @@ async function runInteractive(input: {
       })
       return true
     },
+    onOpenEditor: (draft) => {
+      if (running) {
+        showTransientStatus("Editor is available after the current turn finishes.")
+        return Promise.resolve(draft)
+      }
+      return terminal.suspendForEditor(draft)
+    },
+    onCopy: () => {
+      const activePath = input.store.getActivePath(sessionId)
+      const lastAssistant = [...activePath].reverse().find((entry) => entry.type === "message" && entry.role === "assistant")
+      if (!lastAssistant) {
+        showTransientStatus("Nothing to copy yet.")
+        return
+      }
+      const content = (lastAssistant.data as { content: string }).content
+      copyToClipboard(content)
+      showTransientStatus("Copied to clipboard.")
+    },
     themeName: input.config.theme,
     title: initialSession.title,
     onSubmit: (prompt) => {
@@ -242,10 +297,15 @@ async function runInteractive(input: {
       })
     },
   })
-  applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills))
+  applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   void modelListCache.promise.then((models) => {
     const match = models.find((model) => model.id === input.config.model)
     if (match) terminal.setModel(input.config.model, input.config.modelSettings, match.name)
+  })
+
+  // Non-blocking startup update check
+  void checkForUpdate().then((notice) => {
+    if (notice) showTransientStatus(notice, 6000)
   })
 
   refreshCurrentSession()
@@ -377,6 +437,64 @@ async function runInteractive(input: {
       showTransientStatus(`Current theme: ${resolveTheme(input.config.theme).name}. Type /theme <name> to change.`)
       return
     }
+    if (command.name === "/status") {
+      showStatusSummary()
+      return
+    }
+    if (command.name === "/export") {
+      await exportConversation(command.argument)
+      return
+    }
+    if (command.name === "/diff") {
+      await showSessionDiff()
+      return
+    }
+    if (command.name === "/undo") {
+      await undoLastFileChange()
+      return
+    }
+    if (command.name === "/copy") {
+      const activePath = input.store.getActivePath(sessionId)
+      const lastAssistant = [...activePath].reverse().find((entry) => entry.type === "message" && entry.role === "assistant")
+      if (!lastAssistant) { showTransientStatus("Nothing to copy yet."); return }
+      const content = (lastAssistant.data as { content: string }).content
+      copyToClipboard(content)
+      showTransientStatus("Copied to clipboard.")
+      return
+    }
+    if (command.name === "/cost") {
+      await showCostSummary()
+      return
+    }
+    if (command.name === "/editor") {
+      if (running) { showTransientStatus("Editor is available after the current turn finishes."); return }
+      const current = ""
+      const result = await terminal.suspendForEditor(current)
+      if (result.trim()) await runPromptQueue(result.trim())
+      return
+    }
+    if (command.name === "/bug") {
+      const title = command.argument.trim()
+      const url = `https://github.com/amoreX/furnace/issues/new${title ? `?title=${encodeURIComponent(title)}` : ""}`
+      const opener = process.platform === "darwin" ? "open" : "xdg-open"
+      const result = spawnSync(opener, [url])
+      if (result.status !== 0) showTransientStatus(`File a bug at: ${url}`, 8000)
+      else showTransientStatus("Opening browser for bug report.")
+      return
+    }
+
+    // Custom user-defined slash commands
+    const customCmd = customCommands.find((c) => `/${c.name}` === command.name)
+    if (customCmd) {
+      if (running) {
+        showTransientStatus(`/${customCmd.name} is available after the current turn finishes.`)
+        return
+      }
+      clearTransientStatus()
+      const rendered = renderCustomCommandTemplate(customCmd.template, command.argument)
+      await runPromptQueue({ hidden: true, source: "custom_command", text: rendered })
+      return
+    }
 
     clearTransientStatus()
     await runPromptQueue(prompt)
@@ -470,34 +588,49 @@ async function runInteractive(input: {
   }
 
   async function setModelByArgument(argument: string): Promise<void> {
-    const trimmed = argument.trim()
+    const isGlobal = argument.trimStart().startsWith("--global ")
+    const trimmed = (isGlobal ? argument.trimStart().slice("--global ".length) : argument).trim()
     const models = await modelListCache.promise
     const match =
       models.find((model) => model.id.toLowerCase() === trimmed.toLowerCase()) || models.find((model) => model.name.toLowerCase() === trimmed.toLowerCase())
     if (!match) {
-      showTransientStatus(`Unknown model: ${argument}`)
+      showTransientStatus(`Unknown model: ${trimmed}`)
       return
     }
     const settings: ModelSettings = {}
     input.config.model = match.id
     input.config.modelSettings = settings
     terminal.setModel(match.id, settings, match.name)
-    await saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings }).catch((error) => {
-      terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
-    })
+    if (isGlobal) {
+      await saveGlobalPreferences({ model: match.id, modelSettings: settings }).catch((error) => {
+        terminal.setTranscript([{ role: "assistant", content: `Failed to save global model preference: ${formatError(error)}` }])
+      })
+      showTransientStatus(`Model set globally to ${match.name}.`)
+    } else {
+      await saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings }).catch((error) => {
+        terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
+      })
+    }
     refreshCurrentSession()
   }
 
   async function setThemeByName(name: string): Promise<void> {
-    const choice = findTheme(name)
+    const isGlobal = name.trimStart().startsWith("--global ")
+    const themeName = (isGlobal ? name.trimStart().slice("--global ".length) : name).trim()
+    const choice = findTheme(themeName)
     if (!choice) {
-      terminal.setTranscript([{ role: "assistant", content: `Unknown theme: ${name}\nAvailable themes: ${themeChoices.map((theme) => theme.name).join(", ")}` }])
+      terminal.setTranscript([{ role: "assistant", content: `Unknown theme: ${themeName}\nAvailable themes: ${themeChoices.map((theme) => theme.name).join(", ")}` }])
       return
     }
     input.config.theme = choice.name
     terminal.setTheme(choice.name)
-    await saveThemePreference(input.cwd, choice.name)
-    showTransientStatus(`Theme set to ${choice.name}.`)
+    if (isGlobal) {
+      await saveGlobalPreferences({ theme: choice.name })
+      showTransientStatus(`Theme set globally to ${choice.name}.`)
+    } else {
+      await saveThemePreference(input.cwd, choice.name)
+      showTransientStatus(`Theme set to ${choice.name}.`)
+    }
   }
 
   async function handleModeCommand(argument: string): Promise<void> {
@@ -600,7 +733,8 @@ async function runInteractive(input: {
 
   async function reloadSkillCatalog(): Promise<void> {
     skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
-    applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills))
+    customCommands = await loadCustomCommands(input.cwd)
+    applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
   }
 
   async function compactCurrentSession(focus: string): Promise<void> {
@@ -639,6 +773,160 @@ async function runInteractive(input: {
     if (!transientStatusTimer) return
     clearTimeout(transientStatusTimer)
     transientStatusTimer = undefined
+  }
+
+  function showStatusSummary(): void {
+    const session = input.store.getSession(sessionId)
+    const activePath = input.store.getActivePath(sessionId)
+    const state = currentPlanModeState(activePath)
+    const usage = estimateContextUsage()
+    const grantCount = permissions.listSessionGrants(sessionId).length
+    const lines = [
+      `Session:  ${session.id}`,
+      `Title:    ${session.title}`,
+      `Cwd:      ${input.cwd}`,
+      `Model:    ${input.config.model}`,
+      `Mode:     ${state.mode}`,
+      `Context:  ${formatTokenCompact(usage.tokens)} / ${formatTokenCompact(usage.window)}`,
+      `Theme:    ${resolveTheme(input.config.theme).name}`,
+      `Grants:   ${grantCount} permission grant${grantCount === 1 ? "" : "s"}`,
+    ]
+    terminal.setTranscript([...entriesToTranscript(activePath), { role: "assistant", content: lines.join("\n") }])
+  }
+
+  async function exportConversation(argument: string): Promise<void> {
+    const args = argument.trim().toLowerCase().split(/\s+/)
+    const isJson = args.includes("json")
+    const pathArg = args.find((a) => a !== "json" && a.length > 0)
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+    const defaultPath = resolve(input.cwd, `furnace-export-${timestamp}.${isJson ? "json" : "md"}`)
+    const outPath = pathArg ? resolve(input.cwd, pathArg) : defaultPath
+    const activePath = input.store.getActivePath(sessionId)
+    const session = input.store.getSession(sessionId)
+    const transcript = entriesToTranscript(activePath)
+    let content: string
+    if (isJson) {
+      content = JSON.stringify({ sessionId, title: session.title, messages: transcript }, null, 2) + "\n"
+    } else {
+      const lines = [`# ${session.title}`, ""]
+      for (const msg of transcript) {
+        lines.push(`### ${msg.role === "user" ? "You" : "Furnace"}`, "", msg.content, "")
+      }
+      content = lines.join("\n")
+    }
+    try {
+      await writeFile(outPath, content, "utf8")
+      showTransientStatus(`Exported to ${outPath}`, 5000)
+    } catch (error) {
+      showTransientStatus(`Export failed: ${formatError(error)}`)
+    }
+  }
+
+  async function showSessionDiff(): Promise<void> {
+    const activePath = input.store.getActivePath(sessionId)
+    const writeCalls = activePath.filter(
+      (entry) => entry.type === "tool_call" &&
+        ["write", "edit"].includes((entry.data as { name: string }).name) &&
+        (entry.data as { fileSnapshot?: { path: string; existed: boolean; previousContent?: string } }).fileSnapshot,
+    )
+    if (writeCalls.length === 0) {
+      terminal.setTranscript([...entriesToTranscript(activePath), { role: "assistant", content: "No file changes this session." }])
+      return
+    }
+    // Group by path, keeping earliest snapshot per path (pre-session state)
+    const earliest = new Map<string, { path: string; existed: boolean; previousContent?: string }>()
+    for (const entry of writeCalls) {
+      const snap = (entry.data as { fileSnapshot: { path: string; existed: boolean; previousContent?: string } }).fileSnapshot
+      if (!earliest.has(snap.path)) earliest.set(snap.path, snap)
+    }
+    const patches: string[] = []
+    for (const [filePath, snap] of earliest) {
+      const absPath = resolve(input.cwd, filePath)
+      let current = ""
+      try { current = readFileSync(absPath, "utf8") } catch { /* file deleted */ }
+      const prev = snap.previousContent ?? ""
+      if (prev === current) continue
+      patches.push(simpleDiff(filePath, prev, current))
+    }
+    const output = patches.length > 0 ? patches.join("\n") : "No uncommitted changes for tracked files."
+    terminal.setTranscript([...entriesToTranscript(activePath), { role: "assistant", content: output }])
+  }
+
+  async function undoLastFileChange(): Promise<void> {
+    const activePath = input.store.getActivePath(sessionId)
+    // Find undone entries
+    const undoneToolIds = new Set(
+      activePath
+        .filter((e) => e.type === "custom" && (e.data as { kind?: string }).kind === "undo")
+        .map((e) => (e.data as { toolCallId: string }).toolCallId),
+    )
+    // Find last non-undone write/edit with a snapshot
+    const candidate = [...activePath].reverse().find(
+      (entry) =>
+        entry.type === "tool_call" &&
+        ["write", "edit"].includes((entry.data as { name: string }).name) &&
+        (entry.data as { fileSnapshot?: unknown }).fileSnapshot &&
+        !undoneToolIds.has(entry.id),
+    )
+    if (!candidate) {
+      showTransientStatus("Nothing to undo.")
+      return
+    }
+    const snap = (candidate.data as { fileSnapshot: { path: string; existed: boolean; previousContent?: string } }).fileSnapshot
+    const absPath = resolve(input.cwd, snap.path)
+    try {
+      if (snap.existed && snap.previousContent !== undefined) {
+        writeFileSync(absPath, snap.previousContent, "utf8")
+      } else {
+        try { unlinkSync(absPath) } catch { /* already gone */ }
+      }
+      input.store.appendEntry(sessionId, "custom", null, { kind: "undo", toolCallId: candidate.id })
+      showTransientStatus(`Undid: ${snap.path}`)
+    } catch (error) {
+      showTransientStatus(`Undo failed: ${formatError(error)}`)
+    }
+  }
+
+  async function showCostSummary(): Promise<void> {
+    const activePath = input.store.getActivePath(sessionId)
+    type UsageData = { promptTokens?: number; completionTokens?: number; costUsd?: number | null }
+    // Resolve pricing for cost computation
+    const models = await modelListCache.promise.catch(() => [])
+    const modelEntry = models.find((m) => m.id === input.config.model)
+    const pricing = modelEntry?.pricing
+
+    const sumEntries = (entries: ReturnType<typeof input.store.getActivePath>): { prompt: number; completion: number; cost: number; unknown: number } => {
+      let prompt = 0; let completion = 0; let cost = 0; let unknown = 0
+      for (const e of entries.filter((e) => e.type === "message" && e.role === "assistant")) {
+        const u = (e.data as { usage?: UsageData }).usage
+        if (!u) { unknown++; continue }
+        prompt += u.promptTokens ?? 0
+        completion += u.completionTokens ?? 0
+        // Recompute cost with current pricing if costUsd was saved as null
+        if (u.costUsd !== null && u.costUsd !== undefined) {
+          cost += u.costUsd
+        } else if (pricing) {
+          cost += (u.promptTokens ?? 0) * pricing.prompt + (u.completionTokens ?? 0) * pricing.completion
+        }
+      }
+      return { prompt, completion, cost, unknown }
+    }
+
+    const session = sumEntries(activePath)
+    const allSessions = input.store.listSessions(input.cwd)
+    const lifetime = { prompt: 0, completion: 0, cost: 0, unknown: 0 }
+    for (const sess of allSessions) {
+      const s = sumEntries(input.store.getActivePath(sess.id))
+      lifetime.prompt += s.prompt; lifetime.completion += s.completion; lifetime.cost += s.cost; lifetime.unknown += s.unknown
+    }
+    const fmt = (n: number): string => `$${n.toFixed(4)}`
+    const hasPricing = Boolean(pricing)
+    const fmtTokens = (p: number, c: number): string => `${formatTokenCompact(p)} prompt + ${formatTokenCompact(c)} completion = ${formatTokenCompact(p + c)} tokens`
+    const lines = [
+      `Session:  ${fmtTokens(session.prompt, session.completion)}, ~${hasPricing ? fmt(session.cost) : "?"} USD${session.unknown > 0 ? ` (${session.unknown} turns with unknown cost)` : ""}`,
+      `Lifetime: ${fmtTokens(lifetime.prompt, lifetime.completion)}, ~${hasPricing ? fmt(lifetime.cost) : "?"} USD${lifetime.unknown > 0 ? ` (${lifetime.unknown} turns with unknown cost)` : ""}`,
+    ]
+    terminal.setTranscript([...entriesToTranscript(activePath), { role: "assistant", content: lines.join("\n") }])
   }
 
   function enqueuePrompt(text: string, options: { hidden?: boolean; source?: string } = {}): void {
@@ -957,6 +1245,7 @@ async function runSingleTurn(input: {
   cwd: string
   hiddenUserMessage?: boolean
   hiddenUserMessageSource?: string
+  outputFormat?: "text" | "json"
   permissions?: SessionPermissionStore
   prompt: string
   sessionId: string
@@ -1076,8 +1365,10 @@ async function runSingleTurn(input: {
     onToolStart: (call) => {
       streamingText = ""
       terminal?.setStreamingContent("")
+      const fileSnapshot = captureFileSnapshot(call.name, call.arguments, input.cwd)
       input.store.appendToolCall(input.sessionId, {
         arguments: call.arguments,
+        fileSnapshot,
         name: call.name,
         toolCallId: call.id,
       })
@@ -1104,13 +1395,26 @@ async function runSingleTurn(input: {
   })
   const assistantText = await visibleAssistantTextForMode(input.cwd, result.content, planState)
 
-  input.store.appendMessage(input.sessionId, "assistant", assistantText, input.config.model)
+  const turnUsage = result.usage
+    ? { promptTokens: result.usage.promptTokens, completionTokens: result.usage.completionTokens, costUsd: null as number | null }
+    : undefined
+
+  input.store.appendMessage(input.sessionId, "assistant", assistantText, { model: input.config.model, usage: turnUsage })
   if (input.terminal) {
     input.terminal.setThinking(false)
     input.terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     if (planState.mode === "plan" && planState.planPath) {
       input.onPlanReady?.(planState.planPath)
     }
+  } else if (input.outputFormat === "json") {
+    const output = {
+      content: result.content,
+      model: input.config.model,
+      sessionId: input.sessionId,
+      promptTokens: result.usage?.promptTokens ?? null,
+      completionTokens: result.usage?.completionTokens ?? null,
+    }
+    process.stdout.write(JSON.stringify(output, null, 2) + "\n")
   } else {
     renderConversation(entriesToTranscript(input.store.getActivePath(input.sessionId)))
     renderDone()
@@ -1340,13 +1644,19 @@ function formatTaskElapsed(ms: number): string {
   return `${minutes}m${(seconds % 60).toString().padStart(2, "0")}s`
 }
 
-function slashAutocompleteItems(skills: Skill[]): PromptAutocompleteItem[] {
+function slashAutocompleteItems(skills: Skill[], customCmds: CustomCommand[] = []): PromptAutocompleteItem[] {
   return [
     ...slashCommandDefinitions.map((command) => ({
       description: command.description,
       insertText: command.insertText,
       label: command.usage || command.name,
       value: command.name,
+    })),
+    ...customCmds.map((cmd) => ({
+      description: cmd.description || `Custom command (${cmd.provenance})`,
+      insertText: `/${cmd.name} `,
+      label: `/${cmd.name}`,
+      value: `/${cmd.name}`,
     })),
     ...skills.flatMap((skill) => [
       {
@@ -1475,4 +1785,99 @@ function isYesterday(timestamp: number, now: number): boolean {
   const yesterday = new Date(now)
   yesterday.setDate(yesterday.getDate() - 1)
   return date.getFullYear() === yesterday.getFullYear() && date.getMonth() === yesterday.getMonth() && date.getDate() === yesterday.getDate()
+}
+
+function captureFileSnapshot(toolName: string, args: string, cwd: string): { existed: boolean; path: string; previousContent?: string } | undefined {
+  if (toolName !== "write" && toolName !== "edit") return undefined
+  try {
+    const parsed = JSON.parse(args) as Record<string, unknown>
+    let filePath: string | undefined
+    if (toolName === "write") {
+      filePath = typeof parsed.path === "string" ? parsed.path : undefined
+    } else {
+      const patch = typeof parsed.patch === "string" ? parsed.patch : ""
+      const match = patch.match(/^\*\*\* (?:Update|Add) File: (.+)$/m)
+      filePath = match?.[1]?.trim()
+    }
+    if (!filePath) return undefined
+    const absPath = resolve(cwd, filePath)
+    if (!existsSync(absPath)) return { existed: false, path: filePath }
+    const previousContent = readFileSync(absPath, "utf8")
+    return { existed: true, path: filePath, previousContent }
+  } catch {
+    return undefined
+  }
+}
+
+function formatTokenCompact(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    const v = tokens / 1_000_000
+    return Number.isInteger(v) ? `${v}M` : `${v.toFixed(1)}M`
+  }
+  if (tokens >= 1_000) {
+    const v = tokens / 1_000
+    return Number.isInteger(v) ? `${v}K` : `${v.toFixed(1)}K`
+  }
+  return String(tokens)
+}
+
+function simpleDiff(filePath: string, before: string, after: string): string {
+  const beforeLines = before.split("\n")
+  const afterLines = after.split("\n")
+  const lines: string[] = [`--- a/${filePath}`, `+++ b/${filePath}`]
+  // Minimal line-by-line diff (shows all changed hunks, no context)
+  const maxLen = Math.max(beforeLines.length, afterLines.length)
+  let hunkStart = -1
+  for (let i = 0; i <= maxLen; i++) {
+    const same = i < maxLen && beforeLines[i] === afterLines[i]
+    if (!same && hunkStart < 0) hunkStart = i
+    if ((same || i === maxLen) && hunkStart >= 0) {
+      lines.push(`@@ -${hunkStart + 1},${i - hunkStart} +${hunkStart + 1},${i - hunkStart} @@`)
+      for (let j = hunkStart; j < i; j++) {
+        if (j < beforeLines.length) lines.push(`-${beforeLines[j]}`)
+        if (j < afterLines.length) lines.push(`+${afterLines[j]}`)
+      }
+      hunkStart = -1
+    }
+  }
+  return lines.join("\n")
+}
+
+function copyToClipboard(text: string): void {
+  try {
+    if (process.platform === "darwin") {
+      const proc = spawnSync("pbcopy", { input: text })
+      if (proc.status === 0) return
+    } else {
+      let proc = spawnSync("xclip", ["-selection", "clipboard"], { input: text })
+      if (proc.status === 0) return
+      proc = spawnSync("xsel", ["--clipboard", "--input"], { input: text })
+    }
+  } catch { /* clipboard tool unavailable */ }
+}
+
+async function checkForUpdate(): Promise<string | undefined> {
+  try {
+    const { createRequire } = await import("node:module")
+    const req = createRequire(import.meta.url)
+    const pkg = req("../package.json") as { version?: string; name?: string }
+    const currentVersion = pkg.version || "0.0.0"
+    const pkgName = pkg.name || "furnace"
+    const res = await fetch(`https://registry.npmjs.org/${pkgName}/latest`, { signal: AbortSignal.timeout(2000) })
+    if (!res.ok) return undefined
+    const data = (await res.json()) as { version?: string }
+    const latest = data.version
+    if (!latest || latest === currentVersion) return undefined
+    if (semverGt(latest, currentVersion)) return `Furnace ${latest} available — run npm i -g ${pkgName} to upgrade.`
+  } catch { /* network unavailable or timeout */ }
+  return undefined
+}
+
+function semverGt(a: string, b: string): boolean {
+  const parse = (v: string): number[] => v.split(".").map(Number)
+  const [aMaj = 0, aMin = 0, aPat = 0] = parse(a)
+  const [bMaj = 0, bMin = 0, bPat = 0] = parse(b)
+  if (aMaj !== bMaj) return aMaj > bMaj
+  if (aMin !== bMin) return aMin > bMin
+  return aPat > bPat
 }

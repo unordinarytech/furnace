@@ -30,6 +30,14 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
   { name: "/permissions", description: "Clear conversation approvals" },
+  { name: "/status", description: "Show session status (model, mode, context, cwd)" },
+  { name: "/export", description: "Export conversation to file", insertText: "/export ", usage: "/export [json] [path]" },
+  { name: "/diff", description: "Show diff of files changed this session" },
+  { name: "/undo", description: "Revert the most recent file-changing tool call" },
+  { name: "/copy", description: "Copy last assistant response to clipboard" },
+  { name: "/cost", description: "Show token and cost usage for this session" },
+  { name: "/editor", description: "Open $EDITOR to compose a message" },
+  { name: "/bug", description: "File a bug report", insertText: "/bug ", usage: "/bug [message]" },
   { name: "/exit", aliases: ["/quit"], description: "Exit Furnace" },
 ]
 

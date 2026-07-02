@@ -29,6 +29,7 @@ export type OpenRouterToolCall = {
 export type OpenRouterAssistantResponse = {
   content: string
   toolCalls: OpenRouterToolCall[]
+  usage?: OpenRouterUsage
 }
 
 export type OpenRouterToolChoice =
@@ -40,11 +41,22 @@ export type OpenRouterToolChoice =
       }
     }
 
+export type OpenRouterModelPricing = {
+  completion: number
+  prompt: number
+}
+
 export type OpenRouterModel = {
   id: string
   name: string
   contextLength: number | null
+  pricing?: OpenRouterModelPricing
   supportedParameters: string[]
+}
+
+export type OpenRouterUsage = {
+  completionTokens: number
+  promptTokens: number
 }
 
 type ModelsResponse = {
@@ -52,6 +64,7 @@ type ModelsResponse = {
     id?: string
     name?: string
     context_length?: number
+    pricing?: { prompt?: string; completion?: string }
     supported_parameters?: string[]
   }>
   error?: {
@@ -75,6 +88,10 @@ type ChatCompletionChunk = {
     }
     finish_reason?: string | null
   }>
+  usage?: {
+    prompt_tokens?: number
+    completion_tokens?: number
+  }
   error?: {
     message?: string
   }
@@ -209,6 +226,7 @@ export async function completeOpenRouterToolResponse(
       tool_choice: options.toolChoice || "auto",
       ...requestOptions(config),
       stream: true,
+      usage: { include: true },
     }),
   })
 
@@ -220,6 +238,7 @@ export async function completeOpenRouterToolResponse(
   type PartialToolCall = { id: string; name: string; arguments: string }
   const toolCallsAccum = new Map<number, PartialToolCall>()
   let textContent = ""
+  let usageData: OpenRouterUsage | undefined
 
   const decoder = new TextDecoder()
   let buffer = ""
@@ -239,6 +258,9 @@ export async function completeOpenRouterToolResponse(
         const parsed = parseChunk(data)
         if (parsed.error?.message) throw new Error(parsed.error.message)
         const delta = parsed.choices?.[0]?.delta
+        if (parsed.usage?.prompt_tokens !== undefined) {
+          usageData = { promptTokens: parsed.usage.prompt_tokens ?? 0, completionTokens: parsed.usage.completion_tokens ?? 0 }
+        }
         if (delta?.content) {
           textContent += delta.content
           options.onTextDelta?.(delta.content)
@@ -268,7 +290,7 @@ export async function completeOpenRouterToolResponse(
       return [{ id: tc.id, type: "function" as const, function: { name: tc.name, arguments: tc.arguments } }]
     })
 
-  return { content: textContent.trim(), toolCalls }
+  return { content: textContent.trim(), toolCalls, usage: usageData }
 }
 
 export async function listOpenRouterModels(config: FurnaceConfig): Promise<OpenRouterModel[]> {
@@ -291,11 +313,19 @@ export async function listOpenRouterModels(config: FurnaceConfig): Promise<OpenR
   return (parsed.data || [])
     .flatMap((model) => {
       if (!model.id) return []
+      const pricingRaw = model.pricing
+      const pricing = pricingRaw
+        ? {
+            prompt: parseFloat(pricingRaw.prompt ?? "0") || 0,
+            completion: parseFloat(pricingRaw.completion ?? "0") || 0,
+          }
+        : undefined
       return [
         {
           id: model.id,
           name: model.name || model.id,
           contextLength: typeof model.context_length === "number" ? model.context_length : null,
+          pricing,
           supportedParameters: Array.isArray(model.supported_parameters) ? model.supported_parameters : [],
         },
       ]
