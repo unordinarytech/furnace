@@ -1165,7 +1165,7 @@ function TaskPanel({ tasks, store }: { tasks: TaskRecord[]; store: UiStore }): R
     <Box borderStyle="round" borderColor={active ? theme.colors.primary : theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>{title}</Text>
-        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Press up for tasks"}</Text>
+        <Text color={theme.colors.mutedForeground}>{active ? "Focused" : "Ctrl+K to focus"}</Text>
       </Box>
       {taskPreviewItems(tasks, selected).map((line) => (
         <Box key={line.id} justifyContent="space-between">
@@ -1286,7 +1286,7 @@ function LiveChat({
   toolActivities: ToolActivity[]
 }): React.ReactNode {
   const theme = useTheme()
-  const { columns } = useWindowSize()
+  const { columns, rows } = useWindowSize()
   const width = Math.max(20, columns - 4)
   const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
 
@@ -1297,7 +1297,7 @@ function LiveChat({
       <Box
         flexDirection="column"
         flexGrow={grow ? 1 : 0}
-        overflow="hidden"
+        minHeight={Math.max(20, rows - 10)}
         justifyContent="center"
         alignItems="center"
         paddingX={1}
