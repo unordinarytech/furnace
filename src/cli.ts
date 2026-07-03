@@ -406,6 +406,7 @@ async function runInteractive(input: {
       const session = input.store.getSession(sessionId)
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
       sessionId = next.id
+      terminal.clearTranscriptDisplay()
       refreshCurrentSession()
       flushPendingBackgroundPrompts()
       return
