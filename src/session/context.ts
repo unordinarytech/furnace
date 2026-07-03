@@ -58,19 +58,59 @@ export function renderCompactionSummaryForModel(summary: string): string {
   ].join("\n")
 }
 
+const IMAGE_TOKEN_PATTERN = /\[Image #(\S+?)\]/g
+
+function imageEntryToContentBlock(img: NonNullable<MessageEntryData["images"]>[number]): ContentBlock | null {
+  if (img.type === "base64" && img.media_type && img.data) {
+    return { type: "image_url", image_url: { url: `data:${img.media_type};base64,${img.data}` } }
+  }
+  if (img.type === "url" && img.url) {
+    return { type: "image_url", image_url: { url: img.url } }
+  }
+  return null
+}
+
+function interleaveImageTokens(content: string, images: NonNullable<MessageEntryData["images"]>): ContentBlock[] | null {
+  const byLabel = new Map(images.filter((img) => img.label).map((img) => [img.label as string, img]))
+  if (byLabel.size === 0) return null
+
+  IMAGE_TOKEN_PATTERN.lastIndex = 0
+  let hasMatch = false
+  const blocks: ContentBlock[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = IMAGE_TOKEN_PATTERN.exec(content))) {
+    const img = byLabel.get(match[1])
+    if (!img) continue
+    hasMatch = true
+    if (match.index > lastIndex) {
+      blocks.push({ type: "text", text: content.slice(lastIndex, match.index) })
+    }
+    const block = imageEntryToContentBlock(img)
+    if (block) blocks.push(block)
+    lastIndex = match.index + match[0].length
+  }
+  if (!hasMatch) return null
+  if (lastIndex < content.length) {
+    blocks.push({ type: "text", text: content.slice(lastIndex) })
+  }
+  return blocks
+}
+
 function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
   if (entry.type === "message" && (entry.role === "user" || entry.role === "assistant")) {
     const data = entry.data as MessageEntryData
     if (!data.images || data.images.length === 0) {
       return [{ role: entry.role, content: data.content }]
     }
+    const interleaved = interleaveImageTokens(data.content, data.images)
+    if (interleaved) {
+      return [{ role: entry.role, content: interleaved }]
+    }
     const contentBlocks: ContentBlock[] = [{ type: "text", text: data.content }]
     for (const img of data.images) {
-      if (img.type === "base64" && img.media_type && img.data) {
-        contentBlocks.push({ type: "image_url", image_url: { url: `data:${img.media_type};base64,${img.data}` } })
-      } else if (img.type === "url" && img.url) {
-        contentBlocks.push({ type: "image_url", image_url: { url: img.url } })
-      }
+      const block = imageEntryToContentBlock(img)
+      if (block) contentBlocks.push(block)
     }
     return [{ role: entry.role, content: contentBlocks }]
   }

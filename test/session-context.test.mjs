@@ -124,6 +124,113 @@ test("model messages replay persisted tool calls and results", () => {
   ])
 })
 
+test("model messages interleave [Image #N] tokens with matching image blocks in order", () => {
+  const messages = entriesToModelMessages("base system", [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: {
+        content: "compare [Image #1] to [Image #2] please",
+        images: [
+          { type: "base64", media_type: "image/png", data: "AAA", label: "1" },
+          { type: "base64", media_type: "image/png", data: "BBB", label: "2" },
+        ],
+      },
+      createdAt: 0,
+    },
+  ])
+
+  assert.deepEqual(messages[1], {
+    role: "user",
+    content: [
+      { type: "text", text: "compare " },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      { type: "text", text: " to " },
+      { type: "image_url", image_url: { url: "data:image/png;base64,BBB" } },
+      { type: "text", text: " please" },
+    ],
+  })
+})
+
+test("model messages omit empty leading/trailing text blocks around a boundary image token", () => {
+  const messages = entriesToModelMessages("base system", [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: {
+        content: "[Image #1] what is this",
+        images: [{ type: "base64", media_type: "image/png", data: "AAA", label: "1" }],
+      },
+      createdAt: 0,
+    },
+  ])
+
+  assert.deepEqual(messages[1], {
+    role: "user",
+    content: [
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      { type: "text", text: " what is this" },
+    ],
+  })
+})
+
+test("model messages fall back to trailing image append when content has no image tokens", () => {
+  const messages = entriesToModelMessages("base system", [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: {
+        content: "no tokens here",
+        images: [{ type: "base64", media_type: "image/png", data: "AAA" }],
+      },
+      createdAt: 0,
+    },
+  ])
+
+  assert.deepEqual(messages[1], {
+    role: "user",
+    content: [
+      { type: "text", text: "no tokens here" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+    ],
+  })
+})
+
+test("model messages keep an unmatched image token as literal text", () => {
+  const messages = entriesToModelMessages("base system", [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: {
+        content: "see [Image #1] and [Image #9]",
+        images: [{ type: "base64", media_type: "image/png", data: "AAA", label: "1" }],
+      },
+      createdAt: 0,
+    },
+  ])
+
+  assert.deepEqual(messages[1], {
+    role: "user",
+    content: [
+      { type: "text", text: "see " },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      { type: "text", text: " and [Image #9]" },
+    ],
+  })
+})
+
 test("model messages project latest compaction summary plus kept suffix", () => {
   const entries = [
     {

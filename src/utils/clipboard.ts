@@ -75,7 +75,7 @@ async function macOSHasImage(): Promise<boolean> {
 
 async function macOSPngpaste(dest: string): Promise<boolean> {
   try {
-    execSync(`pngpaste "${dest}"`, { timeout: 3000 })
+    execSync(`pngpaste "${dest}"`, { timeout: 3000, stdio: "ignore" })
     return existsSync(dest)
   } catch {
     return false
@@ -248,7 +248,7 @@ async function waylandSave(dest: string): Promise<boolean> {
 
     if (!mime) return false
 
-    execSync(`wl-paste --type ${mime} > "${dest}"`, { timeout: 5000 })
+    execSync(`wl-paste --type ${mime} > "${dest}"`, { timeout: 5000, stdio: "ignore" })
     return existsSync(dest)
   } catch {
     return false
@@ -271,7 +271,7 @@ async function xclipSave(dest: string): Promise<boolean> {
       return false
     }
 
-    execSync(`xclip -selection clipboard -t image/png -o > "${dest}"`, { timeout: 5000 })
+    execSync(`xclip -selection clipboard -t image/png -o > "${dest}"`, { timeout: 5000, stdio: "ignore" })
     return existsSync(dest)
   } catch {
     return false

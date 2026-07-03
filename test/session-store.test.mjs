@@ -36,6 +36,34 @@ test("session store appends entries as a Pi-style active leaf chain", async () =
   }
 })
 
+test("session store persists an image attachment's label through appendMessage", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
+
+  try {
+    const store = SessionStore.open(dir)
+    const session = store.createSession({ cwd: dir, title: "Test session" })
+
+    const entry = store.appendMessage(session.id, "user", "check [Image #1]", {
+      images: [
+        {
+          id: "img-1",
+          source: { type: "base64", media_type: "image/png", data: "AAA" },
+          label: "1",
+        },
+      ],
+    })
+
+    assert.equal(entry.data.images[0].label, "1")
+
+    const [reloaded] = store.getActivePath(session.id).slice(-1)
+    assert.equal(reloaded.data.images[0].label, "1")
+
+    store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test("session store hides and cleans up empty sessions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
 

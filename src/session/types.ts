@@ -41,6 +41,7 @@ export type MessageEntryData = {
     media_type?: string
     data?: string
     url?: string
+    label?: string
   }>
   hidden?: boolean
   model?: string

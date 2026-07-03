@@ -10,6 +10,7 @@ export type ImageAttachment = {
   source: ImageSource
   displayName?: string
   size?: number
+  label?: string
 }
 
 const SUPPORTED_FORMATS = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
@@ -104,12 +105,16 @@ export function parseImageUrl(text: string): string | null {
   }
 }
 
-export function createImageAttachment(source: ImageSource, options?: { displayName?: string; size?: number }): ImageAttachment {
+export function createImageAttachment(
+  source: ImageSource,
+  options?: { displayName?: string; size?: number; label?: string },
+): ImageAttachment {
   return {
     id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     source,
     displayName: options?.displayName,
     size: options?.size,
+    label: options?.label,
   }
 }
 

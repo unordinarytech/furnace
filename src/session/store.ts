@@ -172,11 +172,13 @@ export class SessionStore {
           type: "base64" as const,
           media_type: img.source.media_type,
           data: img.source.data,
+          label: img.label,
         }
       }
       return {
         type: "url" as const,
         url: img.source.url,
+        label: img.label,
       }
     })
     return this.appendEntry<MessageEntryData>(sessionId, "message", role, { content, images, ...entryOptions })
