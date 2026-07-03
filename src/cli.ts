@@ -28,7 +28,6 @@ import { TaskManager, makeTaskId } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import { createFurnaceTerminal, type FurnaceTerminal, type QueuedPrompt, type ToolActivity } from "./ui/ink-terminal.js"
-import { readClipboardImage } from "./clipboard-image.js"
 import type { PromptAutocompleteItem, PromptAutocompleteMatch } from "./ui/components/prompt-input.js"
 import type { ImageAttachment } from "./utils/images.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
@@ -294,19 +293,10 @@ async function runInteractive(input: {
       copyToClipboard(content)
       showTransientStatus("Copied to clipboard.")
     },
-    onImagePaste: () => {
-      const img = readClipboardImage()
-      if (!img) {
-        showTransientStatus("No image found in clipboard. Copy an image first, then paste.")
-        return
-      }
-      terminal.setPendingImage(img)
-      showTransientStatus("Image attached — send your message to include it.")
-    },
     themeName: input.config.theme,
     title: initialSession.title,
-    onSubmit: (prompt, pendingImage) => {
-      void handleInteractiveSubmit(prompt, pendingImage).catch((error) => {
+    onSubmit: (prompt, images) => {
+      void handleInteractiveSubmit(prompt, images).catch((error) => {
         running = false
         activeAbortController = undefined
         terminal.setBusy(false)
@@ -335,7 +325,7 @@ async function runInteractive(input: {
     lofi.stop()
   }
 
-  async function handleInteractiveSubmit(prompt: string, pendingImage?: import("./clipboard-image.js").ClipboardImage): Promise<void> {
+  async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[]): Promise<void> {
     const command = parseSlashCommand(prompt)
 
     if (command.name === "/exit" || command.name === "/quit") {
@@ -539,7 +529,7 @@ async function runInteractive(input: {
     }
 
     clearTransientStatus()
-    await runPromptQueue(prompt, pendingImage)
+    await runPromptQueue(prompt, images)
   }
 
   function showTransientStatus(content: string, ttlMs = 3000): void {
@@ -784,30 +774,25 @@ async function runInteractive(input: {
       showTransientStatus("Usage: /image <path|url>")
       return
     }
-    const { loadImageAsBase64, parseImageUrl, createImageAttachment } = await import("./utils/images.js")
+    const { loadImageAsBase64, parseImageUrl } = await import("./utils/images.js")
     const path = argument.trim()
-    
+
     // Check if it's a URL
     const url = parseImageUrl(path)
     if (url) {
-      const attachment = createImageAttachment({ type: "url", url }, { displayName: path })
-      terminal.addImageAttachment(attachment)
+      terminal.insertImageAttachment({ type: "url", url }, { displayName: path })
       showTransientStatus(`Added image from URL: ${path}`)
       return
     }
-    
+
     // Try to load as local file
     const result = await loadImageAsBase64(path)
     if (!result.success) {
       showTransientStatus(`Error loading image: ${result.error}`)
       return
     }
-    
-    const attachment = createImageAttachment(result.source, {
-      displayName: path,
-      size: result.size,
-    })
-    terminal.addImageAttachment(attachment)
+
+    terminal.insertImageAttachment(result.source, { displayName: path, size: result.size })
     const sizeStr = result.size < 1024 ? `${result.size} B` : result.size < 1024 * 1024 ? `${(result.size / 1024).toFixed(1)} KB` : `${(result.size / (1024 * 1024)).toFixed(1)} MB`
     showTransientStatus(`Added image: ${path} (${sizeStr})`)
   }
@@ -1081,11 +1066,11 @@ async function runInteractive(input: {
     }
   }
 
-  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; images?: ImageAttachment[]; source?: string; text: string }, pendingImage?: import("./clipboard-image.js").ClipboardImage): Promise<void> {
+  async function runPromptQueue(firstPrompt: string | { hidden?: boolean; images?: ImageAttachment[]; source?: string; text: string }, submittedImages?: ImageAttachment[]): Promise<void> {
     const promptText = typeof firstPrompt === "string" ? firstPrompt : firstPrompt.text
     const hidden = typeof firstPrompt === "string" ? false : Boolean(firstPrompt.hidden)
     const source = typeof firstPrompt === "string" ? undefined : firstPrompt.source
-    const images = typeof firstPrompt === "string" ? undefined : firstPrompt.images
+    const images = typeof firstPrompt === "string" ? submittedImages : firstPrompt.images
     queuedPrompts.unshift({
       createdAt: Date.now(),
       hidden,
@@ -1098,9 +1083,6 @@ async function runInteractive(input: {
 
     running = true
     terminal.setBusy(true)
-    // Capture and clear the pending image before the turn loop starts
-    const turnImage = pendingImage
-    terminal.setPendingImage(undefined)
     try {
       let isFirstTurn = true
       while (queuedPrompts.length > 0) {
@@ -1116,7 +1098,7 @@ async function runInteractive(input: {
             cwd: input.cwd,
             hiddenUserMessage: next.hidden,
             hiddenUserMessageSource: next.hidden ? next.source || "hidden_prompt" : undefined,
-            image: isFirstTurn ? turnImage : undefined,
+            images: next.images,
             permissions,
             prompt: next.text,
             sessionId,
@@ -1335,7 +1317,7 @@ async function runSingleTurn(input: {
   cwd: string
   hiddenUserMessage?: boolean
   hiddenUserMessageSource?: string
-  image?: import("./clipboard-image.js").ClipboardImage
+  images?: ImageAttachment[]
   outputFormat?: "text" | "json"
   permissions?: SessionPermissionStore
   prompt: string
@@ -1377,13 +1359,10 @@ async function runSingleTurn(input: {
       executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager: taskRunner, terminal: input.terminal }),
     })
 
-  const clipImage = input.image
-  const userImages: ImageAttachment[] | undefined = clipImage
-    ? [{ id: `clip-${Date.now()}`, displayName: "clipboard", source: { type: "base64", media_type: clipImage.mediaType, data: clipImage.base64 } }]
-    : undefined
+  const referencedImages = (input.images ?? []).filter((img) => img.label && input.prompt.includes(`[Image #${img.label}]`))
   input.store.appendMessage(input.sessionId, "user", input.prompt, {
     ...(input.hiddenUserMessage ? { hidden: true, source: input.hiddenUserMessageSource || "hidden_prompt" } : {}),
-    ...(userImages ? { images: userImages } : {}),
+    ...(referencedImages.length > 0 ? { images: referencedImages } : {}),
   })
 
   if (input.terminal) {

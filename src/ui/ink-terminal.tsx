@@ -20,8 +20,7 @@ import { SelectList, type SelectListItem } from "./components/select-list.js"
 import { Spinner } from "./components/spinner.js"
 import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider.js"
 import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
-import { ImageAttachments } from "./components/image-attachments.js"
-import type { ImageAttachment } from "../utils/images.js"
+import { createImageAttachment, type ImageAttachment, type ImageSource } from "../utils/images.js"
 
 export type FurnaceTerminal = {
   clearToolActivities(): void
@@ -59,10 +58,7 @@ export type FurnaceTerminal = {
   setStatusNotice(content?: string): void
   setTranscript(transcript: TranscriptMessage[]): void
   suspendForEditor(draft: string): Promise<string>
-  setPendingImage(image: import("../clipboard-image.js").ClipboardImage | undefined): void
-  addImageAttachment(attachment: ImageAttachment): void
-  removeImageAttachment(id: string): void
-  clearImageAttachments(): void
+  insertImageAttachment(source: ImageSource, options?: { displayName?: string; size?: number }): void
 }
 
 export type HistoryChoice = {
@@ -119,11 +115,10 @@ type CreateFurnaceTerminalOptions = {
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   onOpenEditor?: (draft: string) => Promise<string>
   onCopy?: () => void
-  onImagePaste?: () => void
   onInterrupt?: () => void
   themeName: string
   title: string
-  onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
+  onSubmit: (text: string, images?: ImageAttachment[]) => void
 }
 
 type UiScreen =
@@ -173,7 +168,8 @@ type UiState = {
   contextUsage?: ContextUsage
   cwd: string
   focus: UiFocus
-  imageAttachments: ImageAttachment[]
+  pastedImages: ImageAttachment[]
+  nextImageLabel: number
   inputDraft: string
   lofiEnabled: boolean
   mode: AgentMode
@@ -182,7 +178,6 @@ type UiState = {
   modelSettings: ModelSettings
   planAction?: PlanActionState
   planPath?: string
-  pendingImage?: import("../clipboard-image.js").ClipboardImage
   question?: QuestionPromptState
   queuedPrompts: QueuedPrompt[]
   screen: UiScreen
@@ -220,7 +215,6 @@ class UiStore {
   readonly onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
   readonly onOpenEditor?: (draft: string) => Promise<string>
   readonly onCopy?: () => void
-  readonly onImagePaste?: () => void
   readonly onInterrupt?: () => void
   readonly onSidebarToggle?: (enabled: boolean) => void
 
@@ -241,7 +235,6 @@ class UiStore {
     this.onAutocompleteTab = options.onAutocompleteTab
     this.onOpenEditor = options.onOpenEditor
     this.onCopy = options.onCopy
-    this.onImagePaste = options.onImagePaste
     this.onInterrupt = options.onInterrupt
     this.onSidebarToggle = options.onSidebarToggle
     this.state = {
@@ -254,7 +247,8 @@ class UiStore {
       contextUsage: undefined,
       cwd: options.cwd,
       focus: "input",
-      imageAttachments: [],
+      pastedImages: [],
+      nextImageLabel: 1,
       inputDraft: "",
       lofiEnabled: false,
       mode: "agent",
@@ -424,7 +418,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       // Static only ever appends to the real terminal output and never
       // retracts previously flushed lines, so a shrinking items array needs a
       // new component identity to start a visually clean history.
-      store.update((state) => ({ ...state, committedLines: [], transcriptGeneration: state.transcriptGeneration + 1 }))
+      store.update((state) => ({
+        ...state,
+        committedLines: [],
+        transcriptGeneration: state.transcriptGeneration + 1,
+        pastedImages: [],
+        nextImageLabel: 1,
+      }))
     },
     setStreamingContent(text) {
       store.update({ streamingContent: text })
@@ -478,28 +478,23 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         return { ...state, screen: { kind: "chat" }, committedLines: allLines, transcript, toolActivities: [], streamingContent: "" }
       })
     },
-    setPendingImage(image) {
-      store.update({ pendingImage: image })
-    },
-    addImageAttachment(attachment) {
-      store.update((state) => ({
-        ...state,
-        imageAttachments: [...state.imageAttachments, attachment],
-      }))
-    },
-    removeImageAttachment(id) {
-      store.update((state) => ({
-        ...state,
-        imageAttachments: state.imageAttachments.filter((img) => img.id !== id),
-      }))
-    },
-    clearImageAttachments() {
-      store.update({ imageAttachments: [] })
+    insertImageAttachment(source, options) {
+      store.update((state) => {
+        const label = String(state.nextImageLabel)
+        const attachment = createImageAttachment(source, { ...options, label })
+        const needsSpace = state.inputDraft.length > 0 && !/\s$/.test(state.inputDraft)
+        return {
+          ...state,
+          pastedImages: [...state.pastedImages, attachment],
+          nextImageLabel: state.nextImageLabel + 1,
+          inputDraft: `${state.inputDraft}${needsSpace ? " " : ""}[Image #${label}] `,
+        }
+      })
     },
   }
 }
 
-function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void; store: UiStore }): React.ReactNode {
+function FurnaceRoot({ onExit, onSubmit, store }: { onExit: () => void; onSubmit: (text: string, images?: ImageAttachment[]) => void; store: UiStore }): React.ReactNode {
   const state = React.useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
   return (
     <ThemeProvider theme={state.theme}>
@@ -525,7 +520,7 @@ function FurnaceApp({
   store,
 }: {
   onExit: () => void
-  onSubmit: (text: string, pendingImage?: import("../clipboard-image.js").ClipboardImage) => void
+  onSubmit: (text: string, images?: ImageAttachment[]) => void
   state: UiState
   store: UiStore
 }): React.ReactNode {
@@ -568,41 +563,42 @@ function FurnaceApp({
   )
   
   
-  const handleClipboardImage = React.useCallback(async () => {
+  const attachClipboardImage = React.useCallback(async (): Promise<{ label: string } | undefined> => {
     try {
       const { saveClipboardImage } = await import("../utils/clipboard.js")
-      const { createImageAttachment } = await import("../utils/images.js")
-      
-      // Save to .furnace/images/clip_TIMESTAMP_counter.png
+      const { loadImageAsBase64 } = await import("../utils/images.js")
+
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
-      const counter = state.imageAttachments.length + 1
+      const unique = Math.random().toString(36).slice(2, 8)
       const furnaceDir = state.cwd + "/.furnace/images"
-      const imagePath = `${furnaceDir}/clip_${timestamp}_${counter}.png`
-      
-      console.log('[CLIPBOARD] Attempting to save clipboard image to:', imagePath)
+      const imagePath = `${furnaceDir}/clip_${timestamp}_${unique}.png`
+
       const success = await saveClipboardImage(imagePath)
-      console.log('[CLIPBOARD] Save result:', success)
-      if (success) {
-        const { loadImageAsBase64 } = await import("../utils/images.js")
-        const result = await loadImageAsBase64(imagePath)
-        console.log('[CLIPBOARD] Load result:', result.success ? 'success' : result.error)
-        if (result.success) {
-          const attachment = createImageAttachment(result.source, {
-            displayName: `Image ${counter}`,
-            size: result.size,
-          })
-          console.log('[CLIPBOARD] Created attachment:', attachment.id, attachment.displayName)
-          store.update((s) => ({
-            ...s,
-            imageAttachments: [...s.imageAttachments, attachment],
-          }))
-          console.log('[CLIPBOARD] Updated store with attachment')
+      if (!success) return undefined
+
+      const result = await loadImageAsBase64(imagePath)
+      if (!result.success) return undefined
+
+      let assignedLabel: string | undefined
+      store.update((s) => {
+        const label = String(s.nextImageLabel)
+        assignedLabel = label
+        const attachment = createImageAttachment(result.source, {
+          displayName: `Image ${label}`,
+          size: result.size,
+          label,
+        })
+        return {
+          ...s,
+          pastedImages: [...s.pastedImages, attachment],
+          nextImageLabel: s.nextImageLabel + 1,
         }
-      }
-    } catch (error) {
-      console.error('[CLIPBOARD] Error:', error)
+      })
+      return assignedLabel ? { label: assignedLabel } : undefined
+    } catch {
+      return undefined
     }
-  }, [state.cwd, state.imageAttachments.length, store])
+  }, [state.cwd, store])
 
   const { columns } = useWindowSize()
 
@@ -652,14 +648,14 @@ function FurnaceApp({
             onAutocompleteTab={(match) => store.onAutocompleteTab?.(match) ?? false}
             onOpenEditor={(draft) => store.onOpenEditor?.(draft) ?? Promise.resolve(draft)}
             onCopy={() => store.onCopy?.()}
-            onImagePaste={() => store.onImagePaste?.()}
-            imageAttachments={state.imageAttachments ?? []}
-            onClipboardImage={() => { void handleClipboardImage() }}
+            onImageAttach={attachClipboardImage}
             onInterrupt={() => store.onInterrupt?.()}
-            pendingImageAttachment={Boolean(state.pendingImage)}
-            onClearAttachment={() => store.update({ pendingImage: undefined })}
             inputMode={state.inputMode}
-            onSubmit={(text) => onSubmit(text, state.pendingImage)}
+            onSubmit={(text) => {
+              const images = store.getSnapshot().pastedImages
+              store.update({ pastedImages: [] })
+              onSubmit(text, images)
+            }}
             placeholder={promptPlaceholder(state)}
             planMode={state.mode === "plan"}
             prefix={state.mode === "plan" ? "plan>" : ">"}

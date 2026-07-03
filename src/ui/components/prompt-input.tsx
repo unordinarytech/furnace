@@ -2,7 +2,6 @@ import { Box, Text, useInput, usePaste, useWindowSize } from "ink"
 import * as React from "react"
 
 import { useTheme } from "./theme-provider.js"
-import type { ImageAttachment } from "../../utils/images.js"
 
 function truncateSidebar(str: string, max: number): string {
   return str.length > max ? str.slice(0, max - 1) + "…" : str
@@ -14,22 +13,18 @@ export type PromptInputProps = {
   busy?: boolean
   disabled?: boolean
   historyItems?: string[]
-  imageAttachments?: ImageAttachment[]
   inputMode?: "standard" | "vim"
   onAutocompleteTab?: (match: PromptAutocompleteMatch) => boolean
-  onClipboardImage?: () => void
   onChange?: (value: string) => void
-  onClearAttachment?: () => void
   onCopy?: () => void
   onEmptyDown?: () => void
   onInterrupt?: () => void
   onEmptyUp?: () => void
-  onImagePaste?: () => void
+  onImageAttach?: () => Promise<{ label: string } | undefined>
   onModeCycle?: (direction: 1 | -1) => void
   onOpenEditor?: (draft: string) => Promise<string>
   onSubmit: (value: string) => void
   placeholder?: string
-  pendingImageAttachment?: boolean
   planMode?: boolean
   prefix?: string
   inputOverride?: React.ReactNode
@@ -57,22 +52,18 @@ export function PromptInput({
   busy = false,
   disabled = false,
   historyItems = [],
-  imageAttachments = [],
   inputMode = "standard",
   onAutocompleteTab,
-  onClipboardImage,
   onChange,
-  onClearAttachment,
   onCopy,
   onEmptyDown,
   onInterrupt,
   onEmptyUp,
-  onImagePaste,
+  onImageAttach,
   onModeCycle,
   onOpenEditor,
   onSubmit,
   placeholder = "Ask Furnace...",
-  pendingImageAttachment = false,
   planMode = false,
   prefix = ">",
   inputOverride,
@@ -119,6 +110,20 @@ export function PromptInput({
     [controlledValue, onChange, value],
   )
 
+  const cursorOffsetRef = React.useRef(cursorOffset)
+  cursorOffsetRef.current = cursorOffset
+
+  const triggerImageAttach = React.useCallback(() => {
+    if (!onImageAttach) return
+    void onImageAttach().then((resolved) => {
+      if (!resolved) return
+      const token = `[Image #${resolved.label}] `
+      const insertAt = cursorOffsetRef.current
+      setValue((current) => current.slice(0, insertAt) + token + current.slice(insertAt))
+      setCursorOffset(insertAt + token.length)
+    })
+  }, [onImageAttach, setValue])
+
   React.useEffect(() => {
     setCursorOffset((current) => Math.min(current, value.length))
   }, [value.length])
@@ -147,8 +152,8 @@ export function PromptInput({
     if (!enabled) return
     // Auto-attach clipboard images on empty paste (image-only gesture)
     const isProbablyImage = !pastedText.trim() || /^[\x00-\x08\x0e-\x1f\x7f-\x9f]+$/.test(pastedText)
-    if (isProbablyImage && (onClipboardImage ?? onImagePaste)) {
-      onClipboardImage?.() ?? onImagePaste?.()
+    if (isProbablyImage && onImageAttach) {
+      triggerImageAttach()
       return
     }
     const sanitized = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n")
@@ -158,15 +163,11 @@ export function PromptInput({
 
   useInput((input, key) => {
     if (!enabled) return
-    // Ctrl+V fallback for terminals without bracketed paste
-    if (key.ctrl && input === "v" && onClipboardImage) {
-      onClipboardImage()
-      return
-    }
-    // Alt/Meta+V (Escape+V) - explicit image paste fallback.
-    // Plain "v" must remain normal text input.
-    if (input === "v" && key.meta && onClipboardImage) {
-      onClipboardImage()
+    // Ctrl+V / Alt+V (Escape+V): explicit image paste fallback for terminals
+    // that don't emit a bracketed paste event when the clipboard holds only
+    // an image (e.g. Terminal.app). Plain "v" must remain normal text input.
+    if (((key.ctrl || key.meta) && input === "v") && onImageAttach) {
+      triggerImageAttach()
       return
     }
     const reverseTab = input === "\u001b[Z"
@@ -217,14 +218,6 @@ export function PromptInput({
       if (input === "o") {
         // Ctrl+O: copy last assistant response to clipboard
         onCopy?.()
-        return
-      }
-      if (input === "v") {
-        // Ctrl+V: explicit image paste from OS clipboard.
-        // usePaste handles text paste and some image paste cases, but many terminals
-        // (Terminal.app etc.) don't emit a bracketed paste event when the clipboard
-        // holds only an image. Ctrl+V provides a reliable fallback trigger.
-        onImagePaste?.()
         return
       }
       if (input === "k") {
@@ -437,9 +430,6 @@ export function PromptInput({
         onInterrupt?.()
         return
       }
-      if (pendingImageAttachment) {
-        onClearAttachment?.()
-      }
       setValue("")
       setCursorOffset(0)
       return
@@ -614,12 +604,7 @@ export function PromptInput({
             <>
             {/* Top indicator row — only rendered when text overflows */}
             {hasOverflow ? (
-              <Text color={theme.colors.mutedForeground}>
-                {pendingImageAttachment ? "📎 " : ""}
-                {`[${hiddenChars} chars]`}
-              </Text>
-            ) : pendingImageAttachment ? (
-              <Text color={theme.colors.mutedForeground}>📎 image attached · Esc to remove</Text>
+              <Text color={theme.colors.mutedForeground}>{`[${hiddenChars} chars]`}</Text>
             ) : null}
 
             {/* Visible text rows */}
@@ -750,16 +735,6 @@ export function PromptInput({
         : autocompleteActive
           ? <PromptAutocompleteMenu items={autocompleteMatches} />
           : null}
-      {imageAttachments.length > 0 ? (
-        <Box flexDirection="column" marginBottom={1}>
-          {imageAttachments.map((img, idx) => (
-            <Box key={img.id}>
-              <Text color={theme.colors.primary}>📎 </Text>
-              <Text color={theme.colors.foreground}>{img.displayName || `Image ${idx + 1}`}{img.size ? ` (${formatImageSize(img.size)})` : ""}</Text>
-            </Box>
-          ))}
-        </Box>
-      ) : null}
       <Box
         borderStyle="round"
         borderColor={borderColor}
@@ -767,13 +742,6 @@ export function PromptInput({
         flexDirection="column"
         width={columns}
       >
-        {pendingImageAttachment ? (
-          <Box>
-            <Text color={theme.colors.primary}>📎 </Text>
-            <Text color={theme.colors.mutedForeground}>image attached  </Text>
-            <Text color={theme.colors.mutedForeground} dimColor>press Esc to remove</Text>
-          </Box>
-        ) : null}
         {valueLines ? (
           valueLines.map((line, lineIdx) => {
             const hasCursor = cursorLineIdx === lineIdx
@@ -883,12 +851,6 @@ function HistorySearchMenu({ items, query }: { items: PromptAutocompleteMatch[];
       {window.hiddenBelow > 0 ? <Text color={theme.colors.mutedForeground}>{window.hiddenBelow} more below</Text> : null}
     </Box>
   )
-}
-
-function formatImageSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 export function autocompleteWindow(items: PromptAutocompleteMatch[], maxVisible = 8): { hiddenAbove: number; hiddenBelow: number; visible: PromptAutocompleteMatch[] } {
