@@ -2045,19 +2045,36 @@ function formatTaskActivity(activity: ToolActivity, width: number): RenderedTool
   const tasks = parseTaskArgs(activity.args)
   if (tasks.length === 0) return []
   const backgrounded = /backgrounded/i.test(activity.result || "")
+  const statuses = parseTaskResultStatuses(activity.result)
+  const doneCount = statuses.filter((entry) => entry.status === "completed").length
+  const failedCount = statuses.filter((entry) => entry.status === "failed" || entry.status === "cancelled").length
+  const headerSuffix = !backgrounded && activity.status !== "running" && failedCount > 0 ? ` (${doneCount} done, ${failedCount} failed)` : ""
   const lines: RenderedToolLine[] = [
     {
-      text: `${statusSymbol(activity.status)} ${backgrounded ? "Backgrounded" : activity.status === "running" ? "Running" : "Finished"} ${tasks.length} subagent${tasks.length === 1 ? "" : "s"}`,
+      text: `${statusSymbol(activity.status)} ${backgrounded ? "Backgrounded" : activity.status === "running" ? "Running" : "Finished"} ${tasks.length} subagent${tasks.length === 1 ? "" : "s"}${headerSuffix}`,
       tone: "summary",
     },
   ]
-  for (const task of tasks.slice(0, 4)) {
-    lines.push({ text: `  - ${truncateEnd(task.description || task.prompt, Math.max(24, width - 6))}`, tone: "meta" })
+  for (const [index, task] of tasks.slice(0, 4).entries()) {
+    const taskStatus = statuses[index]?.status
+    const glyph = taskStatus === "completed" ? "✓" : taskStatus === "failed" ? "✗" : taskStatus === "cancelled" ? "⊘" : "◐"
+    const tone: RenderedToolLine["tone"] = taskStatus === "completed" ? "addition" : taskStatus === "failed" || taskStatus === "cancelled" ? "error" : "context"
+    lines.push({ text: `  ${glyph} ${truncateEnd(task.description || task.prompt, Math.max(24, width - 6))}`, tone })
   }
   if (tasks.length > 4) lines.push({ text: `  ... ${tasks.length - 4} more subagent${tasks.length - 4 === 1 ? "" : "s"}`, tone: "meta" })
-  const firstResult = activity.result?.split(/\r?\n/).find((line) => /^Task group /.test(line))
-  if (firstResult) lines.push({ text: `  ${truncateEnd(firstResult, Math.max(24, width - 4))}`, tone: backgrounded ? "context" : "addition" })
+  if (backgrounded) lines.push({ text: "  Running in the background — you'll be notified when it finishes", tone: "context" })
   return lines
+}
+
+function parseTaskResultStatuses(result: string | undefined): Array<{ error?: string; status?: string }> {
+  if (!result) return []
+  return result
+    .split(/\n(?=Task \d+: )/)
+    .filter((block) => /^Task \d+: /.test(block))
+    .map((block) => ({
+      error: block.match(/^- error: (.*)$/m)?.[1],
+      status: block.match(/^- status: (\w+)/m)?.[1],
+    }))
 }
 
 function formatTodoActivity(activity: ToolActivity, width: number): RenderedToolLine[] {
