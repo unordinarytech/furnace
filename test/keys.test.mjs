@@ -33,10 +33,10 @@ describe("key storage", async () => {
     assert.equal(result, "sk-test-123")
   })
 
-  it("keys.json is written with mode 0600", async () => {
+  it("auth.json is written with mode 0600", async () => {
     const { setStoredKey } = await import("../dist/keys.js")
     await setStoredKey("openrouter", "sk-perm-test")
-    const keysPath = join(tmpHome, ".furnace", "keys.json")
+    const keysPath = join(tmpHome, ".furnace", "auth.json")
     const info = await stat(keysPath)
     assert.equal(info.mode & 0o777, 0o600)
   })
@@ -54,11 +54,28 @@ describe("key storage", async () => {
     const { homedir } = await import("node:os")
     const { join } = await import("node:path")
     const { mkdir, writeFile } = await import("node:fs/promises")
-    const path = join(homedir(), ".furnace", "keys.json")
+    const path = join(homedir(), ".furnace", "auth.json")
     await mkdir(join(homedir(), ".furnace"), { recursive: true })
     await writeFile(path, "not-json", "utf8")
     const { loadStoredKeys } = await import("../dist/keys.js")
     const result = await loadStoredKeys()
     assert.deepEqual(result, {})
+  })
+
+  it("resolveKeyValue returns literal string unchanged", async () => {
+    const { resolveKeyValue } = await import("../dist/keys.js")
+    assert.equal(resolveKeyValue("sk-literal-key"), "sk-literal-key")
+  })
+
+  it("resolveKeyValue executes !cmd and returns trimmed stdout", async () => {
+    const { resolveKeyValue } = await import("../dist/keys.js")
+    const result = resolveKeyValue("!echo sk-from-cmd")
+    assert.equal(result, "sk-from-cmd")
+  })
+
+  it("resolveKeyValue returns undefined for a failing command", async () => {
+    const { resolveKeyValue } = await import("../dist/keys.js")
+    const result = resolveKeyValue("!exit 1")
+    assert.equal(result, undefined)
   })
 })

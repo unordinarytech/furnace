@@ -52,6 +52,7 @@ program
   .option("--no-clear", "do not clear the terminal before rendering")
   .option("--session <id>", "resume a specific saved session by id")
   .option("--output-format <format>", "output format for headless mode: text (default) or json")
+  .option("--api-key <key>", "override API key for this session (not persisted)")
   .version("0.0.0")
   .addCommand(
     new Command("completion")
@@ -72,9 +73,10 @@ program
         process.stdout.write(script)
       }),
   )
-  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string }) => {
+  .action(async (promptParts: string[], options: { print?: string; continue?: boolean; newSession?: boolean; clear: boolean; session?: string; outputFormat?: string; apiKey?: string }) => {
     try {
       const config = await loadConfig()
+      if (options.apiKey?.trim()) config.openRouterApiKey = options.apiKey.trim()
       const cwd = process.cwd()
       const { SessionStore } = await import("./session/store.js")
       const store = SessionStore.open(cwd)
@@ -347,24 +349,6 @@ async function runInteractive(input: {
     if (notice) showTransientStatus(notice, 6000)
   })
 
-  if (isApiKeyMissing(input.config)) {
-    // Show key-entry screen as the first thing the terminal renders.
-    // ApiKeySetupScreen transitions back to { kind: "chat" } on Enter, so the
-    // terminal continues running normally once the user confirms their key.
-    terminal.showApiKeySetup(
-      "openrouter",
-      "OpenRouter",
-      async (key) => {
-        await setStoredKey("openrouter", key).catch(() => {})
-        input.config.openRouterApiKey = key
-      },
-      () => {
-        terminal.stop()
-        process.exit(0)
-      },
-    )
-  }
-
   refreshCurrentSession()
   try {
     await terminal.run()
@@ -375,6 +359,13 @@ async function runInteractive(input: {
 
   async function handleInteractiveSubmit(prompt: string, images?: ImageAttachment[]): Promise<void> {
     const command = parseSlashCommand(prompt)
+
+    // Bare messages (non-slash) go to the agent and need an API key.
+    // Slash commands are handled locally and always allowed.
+    if (!command.name.startsWith("/") && isApiKeyMissing(input.config)) {
+      showTransientStatus("No API key configured. Use /login to set one.")
+      return
+    }
 
     if (command.name === "/exit" || command.name === "/quit") {
       activeAbortController?.abort()
@@ -467,14 +458,14 @@ async function runInteractive(input: {
       openPermissionsPanel()
       return
     }
-    if (command.name === "/keys") {
+    if (command.name === "/login") {
       terminal.showApiKeySetup(
         "openrouter",
         "OpenRouter",
         async (key) => {
           await setStoredKey("openrouter", key).catch(() => {})
           input.config.openRouterApiKey = key
-          showTransientStatus("API key updated.", 2000)
+          showTransientStatus("API key saved.", 2000)
         },
         () => {},
       )
