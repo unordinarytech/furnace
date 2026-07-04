@@ -1,6 +1,6 @@
 import type { Theme } from "../components/theme-provider.js"
 import { flexokiTheme } from "./flexoki.js"
-import { generatedThemes, generatedThemeChoices } from "./generated.js"
+import { extraThemes } from "./extra.js"
 
 export type ThemeChoice = {
   description: string
@@ -253,12 +253,31 @@ export const themeChoices: ThemeChoice[] = [
   { name: "nord", displayLabel: "Nord", description: "Cool arctic palette", theme: nordTheme },
   { name: "rosepine", displayLabel: "Rosé Pine", description: "Warm rose dark palette", theme: rosepineTheme },
   { name: "gruvbox", displayLabel: "Gruvbox", description: "Retro earth-tone palette", theme: gruvboxTheme },
-  ...generatedThemes.map((theme, i) => ({
-    name: generatedThemeChoices[i]!.name,
-    displayLabel: generatedThemeChoices[i]!.displayLabel,
-    description: generatedThemeChoices[i]!.description,
-    theme,
-  })),
+  { name: "monokai", displayLabel: "Monokai", description: "Classic dark, green accent", theme: extraThemes[0]! },
+  { name: "one-dark", displayLabel: "One Dark", description: "Atom One Dark port", theme: extraThemes[1]! },
+  { name: "material-ocean", displayLabel: "Material Ocean", description: "Deep blue Material palette", theme: extraThemes[2]! },
+  { name: "palenight", displayLabel: "Palenight", description: "Muted Material purple palette", theme: extraThemes[3]! },
+  { name: "solarized-dark", displayLabel: "Solarized Dark", description: "Ethan Schoonover's classic", theme: extraThemes[4]! },
+  { name: "ayu-dark", displayLabel: "Ayu Dark", description: "Warm dark with orange accents", theme: extraThemes[5]! },
+  { name: "night-owl", displayLabel: "Night Owl", description: "Sarah Drasner's night palette", theme: extraThemes[6]! },
+  { name: "synthwave-84", displayLabel: "Synthwave '84", description: "Retro neon glow palette", theme: extraThemes[7]! },
+  { name: "kanagawa", displayLabel: "Kanagawa", description: "Japanese ink-inspired dark", theme: extraThemes[8]! },
+  { name: "everforest", displayLabel: "Everforest", description: "Natural green-brown palette", theme: extraThemes[9]! },
+  { name: "cyberdream", displayLabel: "Cyberdream", description: "Neon cyber dark palette", theme: extraThemes[10]! },
+  { name: "vesper", displayLabel: "Vesper", description: "Minimal dark with peach tones", theme: extraThemes[11]! },
+  { name: "github-dark", displayLabel: "GitHub Dark", description: "GitHub dark mode palette", theme: extraThemes[12]! },
+  { name: "poimandres", displayLabel: "Poimandres", description: "Deep dark blue by drcmda", theme: extraThemes[13]! },
+  { name: "horizon", displayLabel: "Horizon", description: "Warm dark coral palette", theme: extraThemes[14]! },
+  { name: "mellow", displayLabel: "Mellow", description: "Low-contrast warm dark", theme: extraThemes[15]! },
+  { name: "melange", displayLabel: "Melange", description: "Earthy warm dark palette", theme: extraThemes[16]! },
+  { name: "oxocarbon", displayLabel: "Oxocarbon", description: "IBM Carbon dark palette", theme: extraThemes[17]! },
+  { name: "cobalt2", displayLabel: "Cobalt2", description: "Vivid cobalt blue by Wes Bos", theme: extraThemes[18]! },
+  { name: "sonokai", displayLabel: "Sonokai", description: "Contrast-optimised Monokai", theme: extraThemes[19]! },
+  { name: "moonfly", displayLabel: "Moonfly", description: "Dark moonlit blue palette", theme: extraThemes[20]! },
+  { name: "nightfox", displayLabel: "Nightfox", description: "Blue-teal night palette", theme: extraThemes[21]! },
+  { name: "duskfox", displayLabel: "Duskfox", description: "Purple dusk palette", theme: extraThemes[22]! },
+  { name: "terafox", displayLabel: "Terafox", description: "Teal-green dark palette", theme: extraThemes[23]! },
+  { name: "zed-one-dark", displayLabel: "Zed One Dark", description: "Zed editor's One Dark variant", theme: extraThemes[24]! },
 ]
 
 export function resolveTheme(name: string | undefined): ThemeChoice {
