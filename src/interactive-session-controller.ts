@@ -441,8 +441,17 @@ export async function runInteractive(input: {
               input.config.apiKey = key
               input.config.openRouterApiKey = key
               input.config.providerConfig = { ...def, apiKey: key, siteUrl: input.config.siteUrl, appName: input.config.appName }
-              await saveGlobalPreferences({ provider: providerId }).catch(() => {})
-              showTransientStatus(`Provider set to ${label}. API key saved.`, 2000)
+              // Reset model to provider's default when switching providers
+              const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
+              if (newModel !== input.config.model) {
+                input.config.model = newModel
+                input.config.modelSettings = {}
+                await saveGlobalPreferences({ provider: providerId, model: newModel, modelSettings: {} }).catch(() => {})
+                terminal.setModel(newModel, {}, def.displayName)
+              } else {
+                await saveGlobalPreferences({ provider: providerId }).catch(() => {})
+              }
+              showTransientStatus(`Provider set to ${label}. API key saved. Use /model to pick a model.`, 4000)
             },
             () => {},
           )

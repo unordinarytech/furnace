@@ -67,6 +67,7 @@ export type ProviderDefinition = {
   baseUrl: string
   protocol: Protocol
   envVar?: string
+  defaultModel?: string
   models?: StaticModelDef[]
 }
 

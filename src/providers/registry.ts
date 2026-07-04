@@ -7,6 +7,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://openrouter.ai/api/v1",
     protocol: "openai-compatible",
     envVar: "OPENROUTER_API_KEY",
+    defaultModel: "anthropic/claude-sonnet-4.6",
   },
   {
     id: "openai",
@@ -14,6 +15,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://api.openai.com/v1",
     protocol: "openai-compatible",
     envVar: "OPENAI_API_KEY",
+    defaultModel: "gpt-4o",
   },
   {
     id: "anthropic",
@@ -21,6 +23,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://api.anthropic.com",
     protocol: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
+    defaultModel: "claude-sonnet-4-20250514",
   },
   {
     id: "deepseek",
@@ -28,6 +31,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://api.deepseek.com/v1",
     protocol: "openai-compatible",
     envVar: "DEEPSEEK_API_KEY",
+    defaultModel: "deepseek-chat",
   },
   {
     id: "glm",
@@ -35,6 +39,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     protocol: "openai-compatible",
     envVar: "GLM_API_KEY",
+    defaultModel: "glm-4",
   },
 ]
 
