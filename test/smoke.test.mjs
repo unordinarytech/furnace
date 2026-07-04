@@ -31,8 +31,8 @@ test("termcn theme registry exposes all bundled themes", async () => {
   for (const name of handCrafted) {
     assert.equal(resolveTheme(name).name, name)
   }
-  // Generated themes should bring the total to 100+
-  assert.ok(themeChoices.length >= 100, `expected 100+ themes, got ${themeChoices.length}`)
+  // Generated themes should bring the total to 90+
+  assert.ok(themeChoices.length >= 90, `expected 90+ themes, got ${themeChoices.length}`)
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
 
   const displayLabels = Object.fromEntries(themeChoices.slice(0, 8).map((theme) => [theme.name, theme.displayLabel]))

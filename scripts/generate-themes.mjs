@@ -109,7 +109,9 @@ function convertTheme(yaml, fileName) {
   const selection = yaml.selection || bg
   const selectionText = yaml.selection_text || fg
 
-  // ANSI colors (normal variants)
+  // ANSI colors — iTerm2-Color-Schemes uses 1-indexed slots
+  // color_01..color_08 = standard 8 (black, red, green, yellow, blue, magenta, cyan, white)
+  // color_09..color_16 = bright variants of the above
   const c01 = yaml.color_01 || "#000000" // black
   const c02 = yaml.color_02 || "#ff0000" // red
   const c03 = yaml.color_03 || "#00ff00" // green
@@ -117,26 +119,43 @@ function convertTheme(yaml, fileName) {
   const c05 = yaml.color_05 || "#0000ff" // blue
   const c06 = yaml.color_06 || "#ff00ff" // magenta
   const c07 = yaml.color_07 || "#00ffff" // cyan
-  const c08 = yaml.color_08 || "#808080" // white / bright black
-
-  // ANSI colors (bright variants)
-  const c12 = yaml.color_12 || c04 // bright yellow
+  // c08 = white (typically a light grey) — NOT the dim grey
+  // bright-black = dark grey; validate it's readable against bg (>= 2:1), else derive one
+  const rawC09 = yaml.color_09
+  const c09 = (() => {
+    if (rawC09 && contrastRatio(rawC09, bg) >= 2.0) return rawC09
+    // Fallback: blend fg toward bg at 60% — gives a mid-tone muted colour
+    const bgRgb = hexToRgb(bg)
+    const fgRgb = hexToRgb(fg)
+    return rgbToHex(
+      bgRgb.r + (fgRgb.r - bgRgb.r) * 0.4,
+      bgRgb.g + (fgRgb.g - bgRgb.g) * 0.4,
+      bgRgb.b + (fgRgb.b - bgRgb.b) * 0.4,
+    )
+  })()
+  const c10 = yaml.color_10 || c02 // bright red
+  const c11 = yaml.color_11 || c03 // bright green
   const c13 = yaml.color_13 || c05 // bright blue
   const c14 = yaml.color_14 || c06 // bright magenta
+  const c15 = yaml.color_15 || c07 // bright cyan
+  const c16 = yaml.color_16 || fg  // bright white
 
   // Semantic mapping
   const error = c02
   const success = c03
   const warning = c04
   const info = c05
-  const accent = c06
-  const secondary = c07
-  const muted = darken(bg, 0.15)
-  const mutedFg = c08 // bright black serves as muted foreground
-  const border = c08
+  const accent = c14 // bright magenta — commonly accent
+  const secondary = c15 // bright cyan — commonly secondary
+  // muted surface: use palette's black if it's darker than bg, else darken bg slightly
+  const bgLum = relativeLuminance(bg)
+  const c01Lum = relativeLuminance(c01)
+  const muted = c01Lum < bgLum ? c01 : darken(bg, 0.1)
+  const mutedFg = c09 // bright-black = dark grey, the proper muted text slot
+  const border = c09
   const primary = c13 // bright blue
-  const focusRing = c13 // bright blue
-  const borderColor = c08
+  const focusRing = c13
+  const borderColor = c09
   const focusColor = c13
 
   return {
@@ -212,8 +231,13 @@ async function main() {
     const text = await readFile(filePath, "utf8")
     const yaml = parseYaml(text)
 
-    // Filter: skip light variants
-    if (yaml.variant && yaml.variant.toLowerCase() === "light") {
+    // Filter: skip light themes — detect by background luminance (> 0.35 = light bg)
+    if (yaml.background) {
+      if (relativeLuminance(yaml.background) > 0.35) {
+        skippedLight++
+        continue
+      }
+    } else if (yaml.variant && yaml.variant.toLowerCase() === "light") {
       skippedLight++
       continue
     }
