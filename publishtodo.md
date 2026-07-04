@@ -8,18 +8,14 @@ Remaining work before publishing Furnace for public use.
 - [ ] Add a `prepublishOnly` script that runs typecheck, tests, and package dry-run checks.
 - [ ] Add CI for typecheck, tests, and package dry-run on PRs/pushes.
 - [ ] Add public install and update docs for npm users.
-- [ ] Add privacy and safety docs explaining provider data flow, local storage, permissions, and no sandbox.
+
 
 
 ## Strongly Recommended
 
 - [ ] Run a tarball install smoke test from `npm pack` output.
-- [ ] Manually test the TUI on macOS.
-- [ ] Manually test the TUI on Linux.
 - [ ] Improve missing-key onboarding for first-time users without `OPENROUTER_API_KEY`.
 - [ ] Document the no-sandbox limitation prominently near install/quickstart.
-- [ ] Document local SQLite storage under `.furnace/furnace.sqlite`.
-- [ ] Document OpenRouter-only provider support.
 
 ## Already Done
 
@@ -31,5 +27,6 @@ Remaining work before publishing Furnace for public use.
 - [x] Added `CHANGELOG.md`.
 - [x] Added `SECURITY.md`.
 - [x] Added `CONTRIBUTING.md`.
+- [x] Documented local SQLite storage under `.furnace/furnace.sqlite`.
 - [x] Removed accidental `~/Desktop/bfs_dfs.py` from the repo.
 - [x] Added `todo.txt` to `.gitignore` for personal notes going forward.

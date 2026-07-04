@@ -484,7 +484,22 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
     setTheme(themeName) {
       const choice = resolveTheme(themeName)
-      store.update({ theme: choice.theme, themeName: choice.name })
+      const current = store.getSnapshot()
+      if (current.themeName === choice.name) return
+      // Committed chat history is rendered through Ink's Static component so it
+      // can live in normal terminal scrollback. Static output is append-only and
+      // will not recolor when context changes. Ink's instance.clear() only clears
+      // Ink's live log region, so theme browsing can otherwise look split between
+      // old static colors and the new input/status colors. Clear the visible TTY
+      // frame, then remount/replay committed lines with the new theme.
+      instance?.clear()
+      if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H")
+      store.update((state) => ({
+        ...state,
+        theme: choice.theme,
+        themeName: choice.name,
+        transcriptGeneration: state.transcriptGeneration + 1,
+      }))
     },
     setTitle(title) {
       store.update({ title })

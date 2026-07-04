@@ -194,7 +194,9 @@ Each tool has a schema, permission metadata, execution logic, and bounded model-
 
 ## Sessions, Forks, And Subagents
 
-Sessions are stored locally in SQLite and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
+Sessions are stored locally in SQLite at `.furnace/furnace.sqlite` inside the current workspace and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
+
+The `.furnace/` directory is local runtime state and should stay gitignored. Deleting `.furnace/furnace.sqlite` removes saved Furnace conversations for that workspace.
 
 Current session behavior:
 
@@ -231,6 +233,12 @@ See [docs/compaction.md](docs/compaction.md) and [docs/headroom-lite.md](docs/he
 ## Safety Model
 
 Furnace is designed to be useful on real repositories without requiring blind trust.
+
+Local data storage:
+
+- Conversation history, tool calls, tool results, todo state, fork metadata, file-read tracking, and image attachment metadata are stored in `.furnace/furnace.sqlite` for the current workspace.
+- Large compressed tool-output originals are stored separately under `.furnace/context-store/`.
+- `.furnace/` is intended to be local-only state and is ignored by this repo's `.gitignore`.
 
 Defaults:
 

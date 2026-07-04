@@ -102,15 +102,9 @@ const ThemeContext = React.createContext<ThemeContextValue>({
 })
 
 export function ThemeProvider({ children, noUnicode, reducedMotion, theme = flexokiTheme }: ThemeProviderProps): React.ReactNode {
-  const [currentTheme, setCurrentTheme] = React.useState(theme)
-
-  React.useEffect(() => {
-    setCurrentTheme(theme)
-  }, [theme])
-
   const motionValue = React.useMemo(() => ({ reduced: reducedMotion ?? isReducedMotion() }), [reducedMotion])
   const unicodeValue = React.useMemo(() => ({ unicode: noUnicode === undefined ? detectUnicodeSupport() : !noUnicode }), [noUnicode])
-  const themeValue = React.useMemo(() => ({ setTheme: setCurrentTheme, theme: currentTheme }), [currentTheme])
+  const themeValue = React.useMemo(() => ({ setTheme: () => {}, theme }), [theme])
 
   return (
     <MotionContext.Provider value={motionValue}>
