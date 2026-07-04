@@ -52,6 +52,7 @@ export type FurnaceTerminal = {
   showPlanActions(planPath: string, onSelect: (action: PlanAction) => void): void
   setSidebarEnabled(enabled: boolean): void
   showSettings(prefs: import("../preferences.js").FurnacePreferences, onSave: (prefs: import("../preferences.js").FurnacePreferences) => void): void
+  showApiKeySetup(provider: string, label: string, onSave: (key: string) => void, onCancel: () => void): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
@@ -148,6 +149,13 @@ type UiScreen =
       kind: "settings"
       prefs: import("../preferences.js").FurnacePreferences
       onSave: (prefs: import("../preferences.js").FurnacePreferences) => void
+    }
+  | {
+      kind: "apiKeySetup"
+      provider: string
+      label: string
+      onSave: (key: string) => void
+      onCancel: () => void
     }
 
 type PlanActionState = {
@@ -427,6 +435,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showSettings(prefs, onSave) {
       store.update({ screen: { kind: "settings", prefs, onSave }, focus: "settings" })
     },
+    showApiKeySetup(provider, label, onSave, onCancel) {
+      store.update({ screen: { kind: "apiKeySetup", provider, label, onSave, onCancel }, focus: "input" })
+    },
     setModel(model, settings, displayName) {
       store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
     },
@@ -701,6 +712,7 @@ function FurnaceApp({
         )}
         <Box flexShrink={0} flexDirection="column">
           {state.screen.kind === "settings" && <SettingsPanel screen={state.screen} store={store} />}
+          {state.screen.kind === "apiKeySetup" && <ApiKeySetupScreen screen={state.screen} store={store} />}
           {state.approval && <ApprovalPrompt request={state.approval} store={store} />}
           {state.tasks.length > 0 && !state.approval && <TaskPanel tasks={state.tasks} store={store} />}
           {state.planAction && !state.approval && <PlanActionPanel action={state.planAction} store={store} />}
@@ -2601,6 +2613,48 @@ function nextSettingValue(row: typeof SETTINGS_ROWS[number], prefs: import("../p
   }
   if (row.prefKey.startsWith("statusShow")) return { ...prefs, [row.prefKey]: next === "on" }
   return { ...prefs, [row.prefKey]: next }
+}
+
+function ApiKeySetupScreen({ screen, store }: { screen: Extract<UiScreen, { kind: "apiKeySetup" }>; store: UiStore }): React.ReactNode {
+  const theme = useTheme()
+  const [draft, setDraft] = React.useState("")
+
+  useInput((input, key) => {
+    if (key.escape) {
+      store.update({ screen: { kind: "chat" } })
+      screen.onCancel()
+      return
+    }
+    if (key.return) {
+      if (!draft.trim()) return
+      store.update({ screen: { kind: "chat" } })
+      screen.onSave(draft.trim())
+      return
+    }
+    if (key.backspace || key.delete) {
+      setDraft((current) => current.slice(0, -1))
+      return
+    }
+    if (input && !key.ctrl && !key.meta) {
+      setDraft((current) => current + input)
+    }
+  })
+
+  const masked = draft.length > 0 ? "•".repeat(draft.length) : ""
+  return (
+    <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.primary} bold>{screen.label} API key</Text>
+        <Text color={theme.colors.mutedForeground}>Enter confirm · Esc cancel</Text>
+      </Box>
+      <Box>
+        <Text color={theme.colors.mutedForeground}>&gt; </Text>
+        {masked
+          ? <Text color={theme.colors.foreground}>{masked}</Text>
+          : <Text color={theme.colors.mutedForeground}>paste or type your key…</Text>}
+      </Box>
+    </Box>
+  )
 }
 
 function SettingsPanel({ screen, store }: { screen: Extract<UiScreen, { kind: "settings" }>; store: UiStore }): React.ReactNode {

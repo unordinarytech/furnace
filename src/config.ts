@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
 import { loadPreferences, type ModelSettings, type StatusLinePreferences, type TypingIndicatorStyle } from "./preferences.js"
+import { getStoredKey } from "./keys.js"
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const promptsDir = join(currentDir, "prompts")
@@ -30,15 +31,17 @@ export type FurnaceConfig = {
   titleSystemPrompt: string
 }
 
+export function isApiKeyMissing(config: FurnaceConfig): boolean {
+  return !config.openRouterApiKey
+}
+
 export async function loadConfig(): Promise<FurnaceConfig> {
   dotenv.config({ quiet: true })
 
-  const openRouterApiKey = process.env.OPENROUTER_API_KEY?.trim()
+  const envKey = process.env.OPENROUTER_API_KEY?.trim()
+  const storedKey = envKey ? undefined : await getStoredKey("openrouter")
+  const openRouterApiKey = envKey || storedKey || ""
   const preferences = await loadPreferences()
-
-  if (!openRouterApiKey) {
-    throw new Error("OPENROUTER_API_KEY is missing. Add it to .env before running Furnace.")
-  }
 
   return {
     appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",

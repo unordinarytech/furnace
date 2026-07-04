@@ -9,7 +9,8 @@ import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
-import { loadConfig, type FurnaceConfig } from "./config.js"
+import { isApiKeyMissing, loadConfig, type FurnaceConfig } from "./config.js"
+import { setStoredKey } from "./keys.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
@@ -93,11 +94,21 @@ program
 
       try {
         if (prompt.trim()) {
+          if (isApiKeyMissing(config)) {
+            process.stderr.write("No API key found. Run furnace interactively to set one, or set OPENROUTER_API_KEY in your environment.\n")
+            process.exitCode = 1
+            return
+          }
           await runSingleTurn({ config, cwd, prompt, sessionId: session.id, store, outputFormat })
           return
         }
 
         if (!process.stdin.isTTY) {
+          if (isApiKeyMissing(config)) {
+            process.stderr.write("No API key found. Run furnace interactively to set one, or set OPENROUTER_API_KEY in your environment.\n")
+            process.exitCode = 1
+            return
+          }
           await runPiped({ config, sessionId: session.id, store })
           return
         }
@@ -336,6 +347,24 @@ async function runInteractive(input: {
     if (notice) showTransientStatus(notice, 6000)
   })
 
+  if (isApiKeyMissing(input.config)) {
+    // Show key-entry screen as the first thing the terminal renders.
+    // ApiKeySetupScreen transitions back to { kind: "chat" } on Enter, so the
+    // terminal continues running normally once the user confirms their key.
+    terminal.showApiKeySetup(
+      "openrouter",
+      "OpenRouter",
+      async (key) => {
+        await setStoredKey("openrouter", key).catch(() => {})
+        input.config.openRouterApiKey = key
+      },
+      () => {
+        terminal.stop()
+        process.exit(0)
+      },
+    )
+  }
+
   refreshCurrentSession()
   try {
     await terminal.run()
@@ -436,6 +465,19 @@ async function runInteractive(input: {
     }
     if (command.name === "/permissions") {
       openPermissionsPanel()
+      return
+    }
+    if (command.name === "/keys") {
+      terminal.showApiKeySetup(
+        "openrouter",
+        "OpenRouter",
+        async (key) => {
+          await setStoredKey("openrouter", key).catch(() => {})
+          input.config.openRouterApiKey = key
+          showTransientStatus("API key updated.", 2000)
+        },
+        () => {},
+      )
       return
     }
     if (command.name === "/settings" || command.name === "/prefs") {
