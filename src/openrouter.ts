@@ -1,6 +1,7 @@
 import type { FurnaceConfig } from "./config.js"
 import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
-import type { ResolvedProvider, ChatMessage, ToolDefinition, ToolChoice, ModelInfo, AssistantResponse } from "./providers/types.js"
+import { createAnthropicProvider } from "./providers/anthropic.js"
+import type { Provider, ResolvedProvider, ChatMessage, ToolDefinition, ToolChoice, ModelInfo, AssistantResponse } from "./providers/types.js"
 
 // Re-export types for backward compatibility
 export type ContentBlock = import("./providers/types.js").ContentBlock
@@ -13,18 +14,15 @@ export type OpenRouterModel = ModelInfo
 export type OpenRouterModelPricing = { completion: number; prompt: number }
 export type OpenRouterUsage = import("./providers/types.js").Usage
 
-const adapter = createOpenAICompatibleProvider()
+function getAdapter(config: FurnaceConfig): Provider {
+  if (config.providerConfig.protocol === "anthropic") {
+    return createAnthropicProvider()
+  }
+  return createOpenAICompatibleProvider()
+}
 
 function toResolvedProvider(config: FurnaceConfig): ResolvedProvider {
-  return {
-    id: "openrouter",
-    displayName: "OpenRouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    protocol: "openai-compatible",
-    apiKey: config.apiKey,
-    siteUrl: config.siteUrl,
-    appName: config.appName,
-  }
+  return config.providerConfig
 }
 
 export async function* streamOpenRouterResponse(
@@ -32,7 +30,7 @@ export async function* streamOpenRouterResponse(
   messages: ChatMessage[],
   signal?: AbortSignal,
 ): AsyncGenerator<string> {
-  yield* adapter.streamChat(toResolvedProvider(config), config.model, messages, config.modelSettings, signal)
+  yield* getAdapter(config).streamChat(toResolvedProvider(config), config.model, messages, config.modelSettings, signal)
 }
 
 export async function completeOpenRouterResponse(
@@ -40,7 +38,7 @@ export async function completeOpenRouterResponse(
   messages: ChatMessage[],
   options: { model?: string; maxTokens?: number } = {},
 ): Promise<string> {
-  return adapter.completeChat(
+  return getAdapter(config).completeChat(
     toResolvedProvider(config),
     options.model || config.model,
     messages,
@@ -56,7 +54,7 @@ export async function completeOpenRouterToolResponse(
   options: { toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
   signal?: AbortSignal,
 ): Promise<AssistantResponse> {
-  return adapter.completeToolChat(
+  return getAdapter(config).completeToolChat(
     toResolvedProvider(config),
     config.model,
     messages,
@@ -68,7 +66,7 @@ export async function completeOpenRouterToolResponse(
 }
 
 export async function listOpenRouterModels(config: FurnaceConfig): Promise<ModelInfo[]> {
-  return adapter.listModels(toResolvedProvider(config))
+  return getAdapter(config).listModels(toResolvedProvider(config))
 }
 
 export function isContextOverflowError(error: unknown): boolean {
