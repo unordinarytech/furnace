@@ -205,10 +205,10 @@ function titleCase(slug) {
     .join(" ")
 }
 
-// ─── Dedup by color hash ───
+// ─── Dedup by visual appearance (bg + fg + primary dominate TUI look) ───
 function colorHash(theme) {
   const c = theme.colors
-  return [c.background, c.foreground, c.error, c.success, c.warning, c.info, c.accent, c.secondary].join("|")
+  return [c.background, c.foreground, c.primary, c.accent].join("|")
 }
 
 // ─── Main ───
