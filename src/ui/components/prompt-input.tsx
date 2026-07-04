@@ -981,8 +981,7 @@ export function slashAutocompleteMatches(
   const token = slashAutocompleteToken(value, cursorOffset)
   if (!token) return []
   const normalized = token.toLowerCase()
-  const exact = items.some((item) => item.value.toLowerCase() === normalized && !item.browsable)
-  if (exact) return []
+
 
   const spaceIndex = normalized.indexOf(" ")
   const commandPart = spaceIndex < 0 ? normalized : normalized.slice(0, spaceIndex)
