@@ -147,7 +147,7 @@ function selectWebSearchProvider(seed: string): "exa" | "parallel" {
 }
 
 function parallelAuthHeaders(): Record<string, string> {
-  const headers = { "User-Agent": "furnace/0.0.0" }
+  const headers = { "User-Agent": "furnace/0.1.0-alpha.0" }
   return process.env.PARALLEL_API_KEY ? { ...headers, Authorization: `Bearer ${process.env.PARALLEL_API_KEY}` } : headers
 }
 

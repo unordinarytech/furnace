@@ -20,6 +20,9 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Personal notes
+todo.txt
+
 # OS and editor noise
 .DS_Store
 .idea/

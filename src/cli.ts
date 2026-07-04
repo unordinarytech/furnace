@@ -46,7 +46,7 @@ program
   .option("--no-clear", "do not clear the terminal before rendering")
   .option("--session <id>", "resume a specific saved session by id")
   .option("--output-format <format>", "output format for headless mode: text (default) or json")
-  .version("0.0.0")
+  .version("0.1.0-alpha.0")
   .addCommand(
     new Command("completion")
       .argument("<shell>", "shell type: bash, zsh, or fish")
