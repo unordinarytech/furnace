@@ -99,6 +99,21 @@ Behavior:
 - Commands that commonly take an argument can insert a trailing space, for example `/theme `.
 - Slash commands submitted while Furnace is busy are handled as commands, not queued as model prompts. Safe commands like `/tasks`, `/reset-perms`, and `/theme <name>` run immediately; commands that would disrupt the active turn show a short status and can be retried after the turn finishes.
 
+## Split Mode Beta
+
+`/split` is a beta interactive TUI feature for showing two conversations side by side.
+
+Runtime behavior:
+
+1. `/split` opens a new empty chat in the right pane and focuses it.
+2. `/split left` and `/split right` focus a pane; `Ctrl+K` toggles focus between panes.
+3. `/split close` closes the inactive pane and keeps the active pane as the single visible chat.
+4. Split mode only opens or changes focus while both pane sessions are idle. If an agent turn is running, Furnace shows a retry-after-work status instead of changing split state.
+5. `/resume` and pinned chat selection replace the active pane when split mode is open.
+6. The same chat cannot be open in both panes. If `/resume` or pinned selection targets the other pane's chat, Furnace reports that the chat is occupied instead of duplicating it.
+
+Because split mode is beta, keep changes conservative and preserve normal single-pane session switching semantics outside split mode.
+
 ## Plan Mode
 
 Plan mode is a first-class session mode for research and implementation planning.

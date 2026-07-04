@@ -112,6 +112,7 @@ Built-in slash commands include:
 | Command | Purpose |
 | --- | --- |
 | `/new` | Start a fresh conversation. |
+| `/split [left\|right\|close]` | **Beta:** open two side-by-side chat panes, focus a pane, or close split mode. |
 | `/resume`, `/history` | Browse saved conversations. |
 | `/fork [current\|prompt-preview]` | Fork the current conversation or a prior user prompt. |
 | `/clone` | Fork from the current conversation tip. |
@@ -139,6 +140,10 @@ Built-in slash commands include:
 | `/exit`, `/quit` | Exit Furnace. |
 
 Custom slash commands can live under `.furnace/commands` in the project or `~/.furnace/commands` globally.
+
+### Split mode beta
+
+`/split` is a beta TUI feature for showing two conversations side by side. It only opens or changes panes while agent work is idle. `/resume` and pinned chat selection replace the active split pane, but a chat already open in one pane cannot be opened in the other pane. Use `Ctrl+K` to toggle focus and `/split close` to return to one pane.
 
 ## Settings
 

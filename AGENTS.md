@@ -61,7 +61,7 @@ nvm use
 - `src/session/compaction.ts` implements model-assisted session compaction with deterministic fallback, `firstKeptEntryId` semantics, file details, secret redaction, and file-read-state clearing after compaction.
 - `src/compression/*` implements Headroom-lite tool-output compression and request-local compression transforms. Full originals are stored under `.furnace/context-store/` and retrieved by `context_retrieve`.
 - `src/ui/ink-terminal.tsx` and `src/ui/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, status line, and optional sidebar.
-- `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
+- `src/commands.ts` defines built-in slash commands including `/new`, `/split` (beta split-pane TUI), `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
 - `src/plan-mode.ts` supports agent/plan modes, creates plan artifact paths under `.furnace/plans/`, injects plan-mode system guidance, and renders saved plan artifacts/actions.
 - `src/tasks/manager.ts` runs delegated subagent task groups in parallel, supports foreground/background promotion, records recent task status, and propagates task updates to the UI. Backgrounded task groups release the parent turn immediately; completion results are injected later through a hidden queued prompt.
 - `src/skills/*` discovers skills from project/user/plugin roots, renders skill guidance, loads explicit skills, and can create managed project/user skill files.
@@ -83,6 +83,7 @@ nvm use
 - `/settings` supports sidebar, input mode, typing indicator, typing blink, notifications, and status line fields.
 - Status context display supports tokens, tokens+percent, percent-only, and off.
 - Prompt queueing while an agent turn is running.
+- Beta split-pane TUI via `/split`; keep it documented as beta, avoid opening/changing split while agent work is running, and do not allow the same chat to occupy both panes.
 - Manual `/compact` disables input while compaction runs.
 - Interrupt support through the TUI abort controller.
 - Subagent task groups can run in the foreground or be promoted/backgrounded.

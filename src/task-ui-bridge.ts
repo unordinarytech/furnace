@@ -25,6 +25,7 @@ export function createSessionTerminalBridge(input: {
   pendingPlanActions: Map<string, { onSelect: (action: "execute" | "refine" | "stay") => void; planPath: string }>
   pendingQuestions: Map<string, { request: AskQuestionRequest; resolve: (response: AskQuestionResponse) => void }>
   runtimeUi: Map<string, SessionRuntimeUi>
+  onRuntimeUpdate?: (sessionId: string) => void
   targetSessionId: string
 }): FurnaceTerminal {
   const visible = input.isVisible
@@ -40,6 +41,7 @@ export function createSessionTerminalBridge(input: {
     },
     clearToolActivities() {
       runtimeUiFor(input.runtimeUi, targetSessionId).toolActivities = []
+      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.clearToolActivities()
     },
     clearPlanActions() {
@@ -66,31 +68,49 @@ export function createSessionTerminalBridge(input: {
         if (visible()) terminal.showQuestionPrompt(request, wrappedResolve)
       })
     },
-    showApprovalPrompt(request, resolve) { if (visible()) terminal.showApprovalPrompt(request, resolve) },
-    showQuestionPrompt(request, resolve) { if (visible()) terminal.showQuestionPrompt(request, resolve) },
+    showApprovalPrompt(request, resolve) {
+      const wrappedResolve = (decision: PermissionDecision): void => {
+        input.pendingApprovals.delete(targetSessionId)
+        resolve(decision)
+      }
+      input.pendingApprovals.set(targetSessionId, { request, resolve: wrappedResolve })
+      if (visible()) terminal.showApprovalPrompt(request, wrappedResolve)
+    },
+    showQuestionPrompt(request, resolve) {
+      const wrappedResolve = (response: AskQuestionResponse): void => {
+        input.pendingQuestions.delete(targetSessionId)
+        resolve(response)
+      }
+      input.pendingQuestions.set(targetSessionId, { request, resolve: wrappedResolve })
+      if (visible()) terminal.showQuestionPrompt(request, wrappedResolve)
+    },
     setBusy(busy) { if (visible()) terminal.setBusy(busy) },
     setContextUsage(tokens, window) { if (visible()) terminal.setContextUsage(tokens, window) },
     setMode(mode, planPath) { if (visible()) terminal.setMode(mode, planPath) },
     setSessionMeta(meta) { if (visible()) terminal.setSessionMeta(meta) },
     setStreamingContent(text) {
       runtimeUiFor(input.runtimeUi, targetSessionId).streamingContent = text
+      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setStreamingContent(text)
     },
     setThinking(thinking, message = "Thinking") {
       const runtimeUi = runtimeUiFor(input.runtimeUi, targetSessionId)
       runtimeUi.thinking = thinking
       runtimeUi.thinkingMessage = message
+      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setThinking(thinking, message)
     },
     setTitle(title) { if (visible()) terminal.setTitle(title) },
     setToolActivities(activities) {
       runtimeUiFor(input.runtimeUi, targetSessionId).toolActivities = activities
+      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setToolActivities(activities)
     },
     setTranscript(transcript) {
       const runtimeUi = runtimeUiFor(input.runtimeUi, targetSessionId)
       runtimeUi.streamingContent = ""
       runtimeUi.toolActivities = []
+      input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setTranscript(transcript)
     },
     showPlanActions(planPath, onSelect) {

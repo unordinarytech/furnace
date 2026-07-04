@@ -27,6 +27,7 @@ export type PromptInputProps = {
   onImageAttach?: () => { label: string } | undefined
   onModeCycle?: (direction: 1 | -1) => void
   onOpenEditor?: (draft: string) => Promise<string>
+  onSplitToggle?: () => void
   onSubmit: (value: string) => void
   placeholder?: string
   planMode?: boolean
@@ -71,6 +72,7 @@ export function PromptInput({
   onImageAttach,
   onModeCycle,
   onOpenEditor,
+  onSplitToggle,
   onSubmit,
   placeholder = "Ask Furnace...",
   planMode = false,
@@ -186,6 +188,10 @@ export function PromptInput({
 
   useInput((input, key) => {
     if (!enabled) return
+    if (onSplitToggle && key.ctrl && input === "k") {
+      onSplitToggle()
+      return
+    }
     // Ctrl+V / Alt+V (Escape+V): explicit image paste fallback for terminals
     // that don't emit a bracketed paste event when the clipboard holds only
     // an image (e.g. Terminal.app). Plain "v" must remain normal text input.

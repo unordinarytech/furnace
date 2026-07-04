@@ -14,6 +14,7 @@ export type ParsedPrompt = {
 export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/clear", description: "Clear the conversation display" },
   { name: "/new", description: "Start a fresh conversation" },
+  { name: "/split", description: "Beta: split the interface into two chat panes", insertText: "/split ", usage: "/split [left|right|close]" },
   { name: "/resume", aliases: ["/history"], description: "Open saved conversations" },
   { name: "/image", description: "Attach image to next message", insertText: "/image ", usage: "/image <path|url>" },
   { name: "/fork", description: "Fork from current point or a prior user prompt", insertText: "/fork ", usage: "/fork [current|prompt-preview]" },
