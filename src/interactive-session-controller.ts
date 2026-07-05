@@ -774,7 +774,11 @@ export async function runInteractive(input: {
       return
     }
     if (splitSessionId) {
-      showTransientStatus("A split is already open. Use /split left, /split right, or /split close.", 6000)
+      // Bare /split with a split already open closes it; this avoids the
+      // common case where the autocomplete panel submits the selected /split
+      // item and drops the user's "close" argument.
+      closeSplit()
+      showTransientStatus("Split closed. Use /split to open it again.")
       return
     }
     const next = input.store.createSession({ cwd: input.cwd, title: "New Chat" })
