@@ -206,10 +206,13 @@ function isSgrMousePrefix(text: string): boolean {
 
 function decodeSgrMouse(button: number, x: number, y: number, _release: boolean): MouseWheelEvent | undefined {
   // SGR mouse button values: 4 = wheel up, 5 = wheel down.
-  // Terminals may OR modifier/motion bits (shift/meta/ctrl/motion) into the
-  // button value, so mask down to the low 3 bits to identify the wheel event.
+  // Some terminals (e.g., xterm) encode wheel events as 64 = wheel up and
+  // 65 = wheel down, with modifier bits (shift=4, meta=8, ctrl=16) added.
+  // We accept both conventions, masking out the modifier bits for the 64/65
+  // case and the low 3 bits for the 4/5 case.
   const wheelButton = button & 7
-  if (wheelButton === 4) return { direction: "up", x, y }
-  if (wheelButton === 5) return { direction: "down", x, y }
+  const baseButton = button & ~0x1c
+  if (wheelButton === 4 || baseButton === 64) return { direction: "up", x, y }
+  if (wheelButton === 5 || baseButton === 65) return { direction: "down", x, y }
   return undefined
 }

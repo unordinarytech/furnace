@@ -63,6 +63,31 @@ test("SGR mouse parser recognizes wheel events with modifier and motion bits", a
   ])
 })
 
+test("SGR mouse parser recognizes xterm wheel buttons 64/65 with modifiers", async () => {
+  const { createMouseInput } = await import("../dist/ui/mouse.js")
+  const input = new PassThrough()
+  const output = new PassThrough()
+  const mouse = createMouseInput(output, input)
+  const events = []
+  mouse.onWheel((event) => events.push(event))
+  mouse.start()
+
+  // xterm wheel up/down (64/65) without modifiers.
+  input.write(Buffer.from("\x1b[<64;10;5M"))
+  input.write(Buffer.from("\x1b[<65;20;10M"))
+  // xterm wheel up with shift modifier (64 + 4 = 68).
+  input.write(Buffer.from("\x1b[<68;30;15M"))
+  // xterm wheel down with meta modifier (65 + 8 = 73).
+  input.write(Buffer.from("\x1b[<73;40;20M"))
+
+  assert.deepEqual(events, [
+    { direction: "up", x: 10, y: 5 },
+    { direction: "down", x: 20, y: 10 },
+    { direction: "up", x: 30, y: 15 },
+    { direction: "down", x: 40, y: 20 },
+  ])
+})
+
 test("clampScrollbackOffset maps wheel direction to scroll offset correctly", async () => {
   const { clampScrollbackOffset } = await import("../dist/ui/ink-terminal.js")
 
