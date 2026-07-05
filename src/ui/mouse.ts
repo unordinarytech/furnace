@@ -107,6 +107,14 @@ export function createFilteredStdin(): { stdin: NodeJS.ReadStream & NodeJS.Writa
     return stdin
   }
   stdin.isRaw = true
+  stdin.ref = (): typeof stdin => {
+    process.stdin.ref?.()
+    return stdin
+  }
+  stdin.unref = (): typeof stdin => {
+    process.stdin.unref?.()
+    return stdin
+  }
   const mouseInput = createMouseInput(stdin)
   return { stdin, mouseInput }
 }
