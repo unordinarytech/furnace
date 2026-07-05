@@ -17,10 +17,13 @@
   "scripts": {
     "check-node": "./scripts/with-node22.sh node scripts/ensure-node-version.mjs",
     "dev": "./scripts/with-node22.sh tsx src/cli.ts",
-    "build": "./scripts/with-node22.sh sh -c 'tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --external:react-devtools-core'",
+    "build": "./scripts/with-node22.sh sh -c 'tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --alias:react-devtools-core=./scripts/react-devtools-core-stub.mjs'",
     "start": "./scripts/with-node22.sh node dist/cli.js",
     "typecheck": "./scripts/with-node22.sh tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && ./scripts/with-node22.sh node --test"
+    "test": "npm run build && ./scripts/with-node22.sh node --test",
+    "pack:dry-run": "npm pack --dry-run",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run pack:dry-run"
   },
   "keywords": [
     "ai",

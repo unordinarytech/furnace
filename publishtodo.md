@@ -4,8 +4,8 @@ Remaining work before publishing Furnace for public use.
 
 ## Blocking
 
-- [ ] Add a `prepack` script that builds `dist` before packing/publishing.
-- [ ] Add a `prepublishOnly` script that runs typecheck, tests, and package dry-run checks.
+- [x] Add a `prepack` script that builds `dist` before packing/publishing.
+- [x] Add a `prepublishOnly` script that runs typecheck, tests, and package dry-run checks.
 - [ ] Add CI for typecheck, tests, and package dry-run on PRs/pushes.
 - [ ] Add public install and update docs for npm users.
 
@@ -13,7 +13,7 @@ Remaining work before publishing Furnace for public use.
 
 ## Strongly Recommended
 
-- [ ] Run a tarball install smoke test from `npm pack` output.
+- [x] Run a tarball install smoke test from `npm pack` output.
 - [ ] Improve missing-key onboarding for first-time users without `OPENROUTER_API_KEY`.
 - [ ] Document the no-sandbox limitation prominently near install/quickstart.
 

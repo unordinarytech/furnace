@@ -22,6 +22,11 @@ import { ThemeProvider, type Theme, useTheme } from "./components/theme-provider
 import { findTheme, resolveTheme, themeChoices, type ThemeChoice } from "./terminal-themes/index.js"
 import { createImageAttachment, type ImageAttachment, type ImageSource } from "../utils/images.js"
 
+const liveStreamingRenderLimit = 30_000
+const splitPaneMessageLimit = 24
+const splitPaneMessageCharLimit = 8_000
+const splitInactiveLineMultiplier = 3
+
 export type FurnaceTerminal = {
   clearInteractionPrompts(): void
   clearToolActivities(): void
@@ -513,12 +518,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     },
     setSplitPane(pane) {
       const width = Math.max(20, Math.floor((process.stdout.columns || 80) / 2) - 4)
+      const lineBudget = Math.max(40, (process.stdout.rows || 40) * splitInactiveLineMultiplier)
       store.update((state) => ({
         ...state,
         splitPane: pane
           ? {
               ...pane,
-              committedLines: pane.transcript.flatMap((message, index) => messageToLines(message, index, width)),
+              committedLines: splitPanePreviewLines(pane.transcript, width, lineBudget),
             }
           : undefined,
       }))
@@ -595,7 +601,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       }))
     },
     setStreamingContent(text) {
-      store.update({ streamingContent: text })
+      store.update({ streamingContent: liveStreamingPreview(text) })
     },
     setStatusNotice(content) {
       store.update({ statusNotice: content })
@@ -1696,7 +1702,15 @@ function LiveChat({
   const theme = useTheme()
   const { columns, rows } = useWindowSize()
   const width = Math.max(20, widthOverride ?? columns - 4)
-  const activeLines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
+  const liveCache = React.useRef<LiveRenderCache>({
+    lines: [],
+    streamingContent: "",
+    thinking: false,
+    thinkingMessage: "",
+    toolActivities: [],
+    width: 0,
+  })
+  const activeLines = cachedLiveLines(liveCache.current, toolActivities, streamingContent, thinking, thinkingMessage, width)
   const pageSize = maxLines ?? scrollbackPageSize(rows)
   const visibleCommittedLines = compact ? compactTranscriptLines(committedLines) : committedLines
   const maxOffset = maxScrollbackOffset(visibleCommittedLines.length, pageSize)
@@ -1787,6 +1801,43 @@ function compactTranscriptLines(lines: TranscriptLineData[]): TranscriptLineData
     const next = lines[index + 1]
     return next?.kind !== "role"
   })
+}
+
+type LiveRenderCache = {
+  lines: TranscriptLineData[]
+  streamingContent: string
+  thinking: boolean
+  thinkingMessage: string
+  toolActivities: ToolActivity[]
+  width: number
+}
+
+function cachedLiveLines(cache: LiveRenderCache, toolActivities: ToolActivity[], streamingContent: string, thinking: boolean, thinkingMessage: string, width: number): TranscriptLineData[] {
+  if (cache.width === width && cache.streamingContent === streamingContent && cache.thinking === thinking && cache.thinkingMessage === thinkingMessage && cache.toolActivities === toolActivities) {
+    return cache.lines
+  }
+  cache.width = width
+  cache.streamingContent = streamingContent
+  cache.thinking = thinking
+  cache.thinkingMessage = thinkingMessage
+  cache.toolActivities = toolActivities
+  cache.lines = buildLiveLines(toolActivities, streamingContent, thinking, thinkingMessage, width)
+  return cache.lines
+}
+
+export function liveStreamingPreview(text: string): string {
+  if (text.length <= liveStreamingRenderLimit) return text
+  return `… streaming preview truncated for performance; full response is saved when complete …\n\n${text.slice(-liveStreamingRenderLimit)}`
+}
+
+function splitPanePreviewLines(transcript: TranscriptMessage[], width: number, lineBudget: number): TranscriptLineData[] {
+  const startIndex = Math.max(0, transcript.length - splitPaneMessageLimit)
+  const messages = transcript.slice(startIndex).map((message) => {
+    if (typeof message.content !== "string" || message.content.length <= splitPaneMessageCharLimit) return message
+    const content = `… earlier message content hidden in split preview …\n\n${message.content.slice(-splitPaneMessageCharLimit)}`
+    return { ...message, content }
+  })
+  return scrollbackWindow(messages.flatMap((message, index) => messageToLines(message, startIndex + index, width)), 0, lineBudget)
 }
 
 type TranscriptLineData = {

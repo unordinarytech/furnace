@@ -1,4 +1,4 @@
-import type { FurnaceTerminal, ToolActivity } from "./ui/ink-terminal.js"
+import { liveStreamingPreview, type FurnaceTerminal, type ToolActivity } from "./ui/ink-terminal.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 
@@ -89,7 +89,7 @@ export function createSessionTerminalBridge(input: {
     setMode(mode, planPath) { if (visible()) terminal.setMode(mode, planPath) },
     setSessionMeta(meta) { if (visible()) terminal.setSessionMeta(meta) },
     setStreamingContent(text) {
-      runtimeUiFor(input.runtimeUi, targetSessionId).streamingContent = text
+      runtimeUiFor(input.runtimeUi, targetSessionId).streamingContent = liveStreamingPreview(text)
       input.onRuntimeUpdate?.(targetSessionId)
       if (visible()) terminal.setStreamingContent(text)
     },
