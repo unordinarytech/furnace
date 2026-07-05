@@ -2,6 +2,38 @@ import { readFile } from "node:fs/promises"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
+test("SGR mouse wheel parser emits wheel up and down events", async () => {
+  const { MouseInput } = await import("../dist/ui/mouse.js")
+  const mouse = new MouseInput()
+  const events = []
+  mouse.onWheel((event) => events.push(event))
+
+  // Button 4 = wheel up, 5 = wheel down.
+  mouse["parse"](Buffer.from("\x1b[<4;10;5m"))
+  mouse["parse"](Buffer.from("\x1b[<5;20;10M"))
+
+  assert.deepEqual(events, [
+    { direction: "up", x: 10, y: 5 },
+    { direction: "down", x: 20, y: 10 },
+  ])
+})
+
+test("SGR mouse parser ignores non-wheel and malformed sequences", async () => {
+  const { MouseInput } = await import("../dist/ui/mouse.js")
+  const mouse = new MouseInput()
+  const events = []
+  mouse.onWheel((event) => events.push(event))
+
+  // Left mouse button (0) should not emit a wheel event.
+  mouse["parse"](Buffer.from("\x1b[<0;5;5M"))
+  // Malformed sequence (missing coordinate) should be ignored.
+  mouse["parse"](Buffer.from("\x1b[<4;10m"))
+  // Plain keyboard input should pass through without emitting events.
+  mouse["parse"](Buffer.from("hello"))
+
+  assert.equal(events.length, 0)
+})
+
 test("project exposes the expected phase 0 commands", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
 
