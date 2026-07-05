@@ -96,6 +96,11 @@ test("clampScrollbackOffset maps wheel direction to scroll offset correctly", as
   assert.equal(clampScrollbackOffset(10, "up", 10), 10)
   assert.equal(clampScrollbackOffset(5, "down", 10), 4)
   assert.equal(clampScrollbackOffset(0, "down", 10), 0)
+
+  // Larger step values move further in one tick.
+  assert.equal(clampScrollbackOffset(0, "up", 10, 3), 3)
+  assert.equal(clampScrollbackOffset(2, "down", 10, 3), 0)
+  assert.equal(clampScrollbackOffset(8, "up", 10, 5), 10)
 })
 
 test("project exposes the expected phase 0 commands", async () => {

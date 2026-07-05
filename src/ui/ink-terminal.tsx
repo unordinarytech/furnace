@@ -7,7 +7,7 @@ import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
-import { createFilteredStdin, debugLog, disableMouseTracking, enableMouseTracking } from "./mouse.js"
+import { createFilteredStdin, debugLog, disableMouseTracking, enableMouseTracking, type WheelDirection } from "./mouse.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
@@ -434,11 +434,11 @@ function normalizeUiState(state: UiState): UiState {
   return state
 }
 
-export function clampScrollbackOffset(current: number, direction: "up" | "down", maxOffset: number): number {
+export function clampScrollbackOffset(current: number, direction: "up" | "down", maxOffset: number, step: number = 1): number {
   // Wheel up reveals older content (increase offset); wheel down returns toward
   // live content (decrease offset). Clamp to the valid range.
-  if (direction === "up") return Math.min(maxOffset, current + 1)
-  return Math.max(0, current - 1)
+  if (direction === "up") return Math.min(maxOffset, current + step)
+  return Math.max(0, current - step)
 }
 
 function bottomDockHeight(state: UiState): number {
@@ -459,6 +459,54 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let instance: Instance | undefined
   const { stdin: filteredStdin, mouseInput } = createFilteredStdin()
 
+  let wheelPending: { target: "left" | "right" | "normal"; delta: number } | undefined
+  let wheelTimer: NodeJS.Timeout | undefined
+
+  const applyWheel = (target: "left" | "right" | "normal", delta: number): void => {
+    if (delta === 0) return
+    const state = store.getSnapshot()
+    const columns = process.stdout.columns || 80
+    const rows = process.stdout.rows || 24
+    const direction: WheelDirection = delta > 0 ? "up" : "down"
+    const step = Math.abs(delta)
+    if (target === "left" || target === "right") {
+      const pane = buildSplitPaneLayout(state, columns, rows)
+      const pageSize = Math.max(1, pane.paneHeight - 3)
+      if (target === "left") {
+        const maxOffset = maxScrollbackOffset(pane.leftPane.committedLines.length, pageSize)
+        const next = clampScrollbackOffset(state.splitScrollbackLeft, direction, maxOffset, step)
+        if (next !== state.splitScrollbackLeft) store.update((s) => ({ ...s, splitScrollbackLeft: next }))
+      } else {
+        const maxOffset = maxScrollbackOffset(pane.rightPane.committedLines.length, pageSize)
+        const next = clampScrollbackOffset(state.splitScrollbackRight, direction, maxOffset, step)
+        if (next !== state.splitScrollbackRight) store.update((s) => ({ ...s, splitScrollbackRight: next }))
+      }
+    } else if (state.committedLines.length > 0) {
+      const pageSize = scrollbackPageSize(rows)
+      const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+      const next = clampScrollbackOffset(state.scrollbackOffset, direction, maxOffset, step)
+      if (next !== state.scrollbackOffset) store.update((s) => ({ ...s, scrollbackOffset: next }))
+    }
+  }
+
+  const flushWheel = (): void => {
+    wheelTimer = undefined
+    if (!wheelPending) return
+    const { target, delta } = wheelPending
+    wheelPending = undefined
+    applyWheel(target, delta)
+  }
+
+  const scheduleWheel = (target: "left" | "right" | "normal", delta: number): void => {
+    if (wheelPending && wheelPending.target === target) {
+      wheelPending.delta += delta
+    } else {
+      flushWheel()
+      wheelPending = { target, delta }
+    }
+    if (!wheelTimer) wheelTimer = setTimeout(flushWheel, 16)
+  }
+
   mouseInput.onWheel((event) => {
     const state = store.getSnapshot()
     debugLog?.(`wheel callback mouseEnabled=${state.mouseEnabled} screen=${state.screen.kind} splitPane=${Boolean(state.splitPane)} committed=${state.committedLines.length} y=${event.y}`)
@@ -475,28 +523,23 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
     if (state.splitPane) {
       const dividerX = Math.floor(columns / 2)
-      const pane = buildSplitPaneLayout(state, columns, rows)
-      const pageSize = Math.max(1, pane.paneHeight - 3)
-      if (event.x <= dividerX) {
-        const maxOffset = maxScrollbackOffset(pane.leftPane.committedLines.length, pageSize)
-        debugLog?.(`scroll left ${event.direction} maxOffset=${maxOffset}`)
-        store.update((s) => ({ ...s, splitScrollbackLeft: clampScrollbackOffset(s.splitScrollbackLeft, event.direction, maxOffset) }))
-      } else {
-        const maxOffset = maxScrollbackOffset(pane.rightPane.committedLines.length, pageSize)
-        debugLog?.(`scroll right ${event.direction} maxOffset=${maxOffset}`)
-        store.update((s) => ({ ...s, splitScrollbackRight: clampScrollbackOffset(s.splitScrollbackRight, event.direction, maxOffset) }))
-      }
+      const target = event.x <= dividerX ? "left" : "right"
+      debugLog?.(`scroll ${target} ${event.direction}`)
+      scheduleWheel(target, event.direction === "up" ? 1 : -1)
     } else if (state.committedLines.length > 0) {
-      const pageSize = scrollbackPageSize(rows)
-      const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
-      debugLog?.(`scroll normal ${event.direction} maxOffset=${maxOffset}`)
-      store.update((s) => ({ ...s, scrollbackOffset: clampScrollbackOffset(s.scrollbackOffset, event.direction, maxOffset) }))
+      debugLog?.(`scroll normal ${event.direction}`)
+      scheduleWheel("normal", event.direction === "up" ? 1 : -1)
     } else {
       debugLog?.(`wheel ignored: no committed lines`)
     }
   })
 
   const stop = () => {
+    if (wheelTimer) {
+      clearTimeout(wheelTimer)
+      wheelTimer = undefined
+    }
+    wheelPending = undefined
     disableMouseTracking()
     mouseInput.stop()
     if (process.stdin.isTTY && typeof process.stdin.setRawMode === "function") {
@@ -1823,10 +1866,7 @@ function LiveChat({
   const visibleCommittedLines = compact ? compactTranscriptLines(committedLines) : committedLines
   const maxOffset = maxScrollbackOffset(visibleCommittedLines.length, pageSize)
   const offset = Math.min(Math.max(0, scrollbackOffset), maxOffset)
-  const isScrollbackActive = offset > 0
-  const displayedActiveLines = isScrollbackActive
-    ? [{ kind: "content" as const, plain: true, text: `Viewing scrollback — Esc returns to live (${offset} line${offset === 1 ? "" : "s"} back)` }]
-    : activeLines
+  const displayedActiveLines = activeLines
   const displayedCommittedLines = scrollbackWindow(visibleCommittedLines, offset, pageSize)
 
   const hasLines = displayedCommittedLines.length > 0 || displayedActiveLines.length > 0
