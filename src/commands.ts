@@ -33,6 +33,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills view", description: "View a skill", insertText: "/skills view ", usage: "/skills view <name>" },
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
+  { name: "/mouse", description: "Toggle mouse support", insertText: "/mouse ", usage: "/mouse [on|off|toggle]" },
   { name: "/settings", aliases: ["/prefs"], description: "View and change app preferences" },
   { name: "/login", description: "Set or update your API key" },
   { name: "/permissions", description: "Clear conversation approvals" },

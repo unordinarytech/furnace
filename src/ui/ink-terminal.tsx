@@ -7,6 +7,7 @@ import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
 import { slashCommandDefinitions } from "../commands.js"
+import { disableMouseTracking, enableMouseTracking, MouseInput } from "./mouse.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
@@ -75,6 +76,8 @@ export type FurnaceTerminal = {
   setTranscript(transcript: TranscriptMessage[]): void
   suspendForEditor(draft: string): Promise<string>
   insertImageAttachment(source: ImageSource, options?: { displayName?: string; size?: number }): void
+  setMouseEnabled(enabled: boolean): void
+  getSnapshot(): UiState
 }
 
 export type HistoryChoice = {
@@ -277,6 +280,7 @@ type UiState = {
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
   transcript: TranscriptMessage[]
+  mouseEnabled: boolean
 }
 
 class UiStore {
@@ -385,6 +389,7 @@ class UiStore {
       tasks: [],
       toolActivities: [],
       transcript: [],
+      mouseEnabled: process.stdin.isTTY && process.env.FURNACE_MOUSE !== "0" && process.env.FURNACE_MOUSE !== "false",
     }
   }
 
@@ -427,6 +432,20 @@ function normalizeUiState(state: UiState): UiState {
   if (state.focus === "question" && !state.question) return { ...state, focus: "input" }
   if (state.focus === "plan_actions" && !state.planAction) return { ...state, focus: "input" }
   return state
+}
+
+function clampScrollbackOffset(current: number, direction: "up" | "down", maxOffset: number): number {
+  if (direction === "up") return Math.max(0, current - 1)
+  return Math.min(maxOffset, current + 1)
+}
+
+function bottomDockHeight(state: UiState): number {
+  // Approximate the rows occupied by the bottom-docked input + status bar and
+  // any visible panels. The exact height is not needed; mouse wheel events below
+  // this band are ignored.
+  let height = 3 // input + status bar + spacing
+  if (state.pinnedChats.length > 0) height += 3
+  return height
 }
 
 function visibleTaskRecords(tasks: TaskRecord[]): TaskRecord[] {
@@ -601,6 +620,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setStatusNotice(content) {
       store.update({ statusNotice: content })
     },
+    setMouseEnabled(enabled) {
+      store.update((state) => ({ ...state, mouseEnabled: enabled }))
+    },
+    getSnapshot() {
+      return store.getSnapshot()
+    },
     async suspendForEditor(draft) {
       const editor = process.env.EDITOR || process.env.VISUAL
       if (!editor) return draft
@@ -721,58 +746,71 @@ function FurnaceApp({
     return () => { process.stdout.write("\x1b]0;Furnace\x07") }
   }, [state.title])
 
+  React.useEffect(() => {
+    const mouse = new MouseInput()
+    if (state.mouseEnabled) {
+      enableMouseTracking()
+      mouse.start()
+    }
+    mouse.onWheel((event) => {
+      if (!state.mouseEnabled) return
+      if (state.approval || state.question || state.screen.kind !== "chat") return
+      // Coordinates are 1-based from the terminal. The chat region occupies the
+      // rows above the bottom-docked input/status bar. Wheel events below that
+      // are ignored.
+      const chatBottomRow = rows - bottomDockHeight(state)
+      if (event.y > chatBottomRow) return
+      if (state.splitPane) {
+        const dividerX = Math.floor(columns / 2)
+        const pane = buildSplitPaneLayout(state, columns, rows)
+        const pageSize = Math.max(1, pane.paneHeight - 3)
+        if (event.x <= dividerX) {
+          const maxOffset = maxScrollbackOffset(pane.leftPane.committedLines.length, pageSize)
+          store.update((s) => ({ ...s, splitScrollbackLeft: clampScrollbackOffset(s.splitScrollbackLeft, event.direction, maxOffset) }))
+        } else {
+          const maxOffset = maxScrollbackOffset(pane.rightPane.committedLines.length, pageSize)
+          store.update((s) => ({ ...s, splitScrollbackRight: clampScrollbackOffset(s.splitScrollbackRight, event.direction, maxOffset) }))
+        }
+      } else if (state.committedLines.length > 0) {
+        const pageSize = scrollbackPageSize(rows)
+        const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
+        store.update((s) => ({ ...s, scrollbackOffset: clampScrollbackOffset(s.scrollbackOffset, event.direction, maxOffset) }))
+      }
+    })
+    const onAppExit = () => {
+      disableMouseTracking()
+      mouse.stop()
+    }
+    const onProcessExit = () => {
+      disableMouseTracking()
+    }
+    process.on("exit", onProcessExit)
+    return () => {
+      process.off("exit", onProcessExit)
+      onAppExit()
+    }
+  }, [columns, rows, state.approval, state.committedLines.length, state.mouseEnabled, state.question, state.screen.kind, state.splitPane, store])
+
   useInput((_input, key) => {
-    const extendedKey = key as typeof key & { pageDown?: boolean; pageUp?: boolean }
     if (key.ctrl && _input === "c") {
       onExit()
       app.exit()
     }
     if (!state.approval && !state.question && state.screen.kind === "chat") {
       if (state.splitPane) {
-        const { leftPane, rightPane, leftActive, paneHeight } = buildSplitPaneLayout(state, columns, rows)
-        const activePane = leftActive ? leftPane : rightPane
-        if (activePane.committedLines.length > 0) {
-          const pageSize = Math.max(1, paneHeight - 3)
-          const maxOffset = maxScrollbackOffset(activePane.committedLines.length, pageSize)
-          if (leftActive) {
-            if (extendedKey.pageUp) {
-              store.update((s) => ({ ...s, splitScrollbackLeft: Math.min(maxOffset, Math.max(1, s.splitScrollbackLeft + pageSize)) }))
-              return
-            }
-            if (extendedKey.pageDown) {
-              store.update((s) => ({ ...s, splitScrollbackLeft: Math.max(0, s.splitScrollbackLeft - pageSize) }))
-              return
-            }
-            if (key.escape && state.splitScrollbackLeft > 0) {
-              store.update({ splitScrollbackLeft: 0 })
-              return
-            }
-          } else {
-            if (extendedKey.pageUp) {
-              store.update((s) => ({ ...s, splitScrollbackRight: Math.min(maxOffset, Math.max(1, s.splitScrollbackRight + pageSize)) }))
-              return
-            }
-            if (extendedKey.pageDown) {
-              store.update((s) => ({ ...s, splitScrollbackRight: Math.max(0, s.splitScrollbackRight - pageSize) }))
-              return
-            }
-            if (key.escape && state.splitScrollbackRight > 0) {
-              store.update({ splitScrollbackRight: 0 })
-              return
-            }
+        const { leftActive } = buildSplitPaneLayout(state, columns, rows)
+        if (leftActive) {
+          if (key.escape && state.splitScrollbackLeft > 0) {
+            store.update({ splitScrollbackLeft: 0 })
+            return
+          }
+        } else {
+          if (key.escape && state.splitScrollbackRight > 0) {
+            store.update({ splitScrollbackRight: 0 })
+            return
           }
         }
       } else if (state.committedLines.length > 0) {
-        const pageSize = scrollbackPageSize(rows)
-        const maxOffset = maxScrollbackOffset(state.committedLines.length, pageSize)
-        if (extendedKey.pageUp) {
-          store.update((s) => ({ ...s, scrollbackOffset: Math.min(maxOffset, Math.max(1, s.scrollbackOffset + pageSize)) }))
-          return
-        }
-        if (extendedKey.pageDown) {
-          store.update((s) => ({ ...s, scrollbackOffset: Math.max(0, s.scrollbackOffset - pageSize) }))
-          return
-        }
         if (key.escape && state.scrollbackOffset > 0) {
           store.update({ scrollbackOffset: 0 })
           return
@@ -1764,7 +1802,7 @@ function LiveChat({
   const offset = Math.min(Math.max(0, scrollbackOffset), maxOffset)
   const isScrollbackActive = offset > 0
   const displayedActiveLines = isScrollbackActive
-    ? [{ kind: "content" as const, plain: true, text: `Viewing scrollback — PageDown or Esc returns to live (${offset} line${offset === 1 ? "" : "s"} back)` }]
+    ? [{ kind: "content" as const, plain: true, text: `Viewing scrollback — Esc returns to live (${offset} line${offset === 1 ? "" : "s"} back)` }]
     : activeLines
   const displayedCommittedLines = scrollbackWindow(visibleCommittedLines, offset, pageSize)
 

@@ -353,6 +353,21 @@ export async function runInteractive(input: {
       showTransientStatus(result.message)
       return
     }
+    if (command.name === "/mouse") {
+      const current = terminal.getSnapshot?.().mouseEnabled ?? true
+      const arg = command.argument.trim().toLowerCase()
+      let next = current
+      if (arg === "on") next = true
+      else if (arg === "off") next = false
+      else if (arg === "toggle" || !arg) next = !current
+      else {
+        showTransientStatus("Usage: /mouse [on|off|toggle]")
+        return
+      }
+      terminal.setMouseEnabled(next)
+      showTransientStatus(next ? "Mouse support enabled." : "Mouse support disabled.")
+      return
+    }
     if (command.name === "/clear") {
       terminal.clearTranscriptDisplay()
       return
