@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Box, Newline, Static, Text, render, useAnimation, useApp, useInput, usePaste, useWindowSize, type Instance } from "ink"
+import { Box, Newline, Text, render, useAnimation, useApp, useInput, usePaste, useWindowSize, type Instance } from "ink"
 import * as React from "react"
 import wrapAnsi from "wrap-ansi"
 
@@ -273,7 +273,6 @@ type UiState = {
   title: string
   forkParentTitle?: string
   committedLines: TranscriptLineData[]
-  transcriptGeneration: number
   streamingContent: string
   tasks: TaskRecord[]
   toolActivities: ToolActivity[]
@@ -382,7 +381,6 @@ class UiStore {
       title: options.title,
       forkParentTitle: undefined,
       committedLines: [],
-      transcriptGeneration: 0,
       streamingContent: "",
       tasks: [],
       toolActivities: [],
@@ -570,19 +568,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       const choice = resolveTheme(themeName)
       const current = store.getSnapshot()
       if (current.themeName === choice.name) return
-      // Committed chat history is rendered through Ink's Static component so it
-      // can live in normal terminal scrollback. Static output is append-only and
-      // will not recolor when context changes. Ink's instance.clear() only clears
-      // Ink's live log region, so theme browsing can otherwise look split between
-      // old static colors and the new input/status colors. Clear the visible TTY
-      // frame, then remount/replay committed lines with the new theme.
-      instance?.clear()
-      if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H")
       store.update((state) => ({
         ...state,
         theme: choice.theme,
         themeName: choice.name,
-        transcriptGeneration: state.transcriptGeneration + 1,
       }))
     },
     setTitle(title) {
@@ -596,17 +585,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       if (process.stdout.isTTY) process.stdout.write("\x1b[2J\x1b[H")
     },
     clearTranscriptDisplay() {
-      // Bump transcriptGeneration so the Static-backed history remounts fresh —
-      // Static only ever appends to the real terminal output and never
-      // retracts previously flushed lines, so a shrinking items array needs a
-      // new component identity to start a visually clean history.
       store.update((state) => ({
         ...state,
         committedLines: [],
         scrollbackOffset: 0,
         splitScrollbackLeft: 0,
         splitScrollbackRight: 0,
-        transcriptGeneration: state.transcriptGeneration + 1,
         pastedImages: [],
         nextImageLabel: 1,
       }))
@@ -901,12 +885,11 @@ function FurnaceApp({
 
   return (
     <>
-      <Box flexDirection="column" width={columns}>
+      <Box flexDirection="column" height={rows} width={columns} overflow="hidden">
         {state.splitPane ? (
           <SplitChatView state={state} />
         ) : (
           <LiveChat
-            key={state.transcriptGeneration}
             committedLines={state.committedLines}
             flexGrow
             scrollbackOffset={state.scrollbackOffset}
@@ -1084,7 +1067,6 @@ function SplitPaneView({ active, pane, width, height }: { active: boolean; pane:
       <LiveChat
         committedLines={pane.committedLines}
         compact
-        staticOutput={false}
         width={Math.max(20, width - 6)}
         maxLines={liveLineBudget}
         scrollbackOffset={active ? pane.scrollbackOffset ?? 0 : 0}
@@ -1741,18 +1723,9 @@ function hintItems(kind: UiScreen["kind"]): string[] {
   return ["/new", "/resume", "/model", "/theme", "/tasks", "/lofi", "/permissions", "/exit"]
 }
 
-function StaticLine({ line }: { line: TranscriptLineData }): React.ReactNode {
-  return (
-    <Box paddingX={1}>
-      <TranscriptLine line={line} />
-    </Box>
-  )
-}
-
 function LiveChat({
   committedLines = [],
   flexGrow: grow,
-  staticOutput = true,
   width: widthOverride,
   maxLines,
   scrollbackOffset = 0,
@@ -1764,7 +1737,6 @@ function LiveChat({
 }: {
   committedLines?: TranscriptLineData[]
   flexGrow?: boolean
-  staticOutput?: boolean
   width?: number
   maxLines?: number
   scrollbackOffset?: number
@@ -1794,7 +1766,7 @@ function LiveChat({
   const displayedActiveLines = isScrollbackActive
     ? [{ kind: "content" as const, plain: true, text: `Viewing scrollback — PageDown or Esc returns to live (${offset} line${offset === 1 ? "" : "s"} back)` }]
     : activeLines
-  const displayedCommittedLines = isScrollbackActive || maxLines !== undefined ? scrollbackWindow(visibleCommittedLines, offset, pageSize) : visibleCommittedLines
+  const displayedCommittedLines = scrollbackWindow(visibleCommittedLines, offset, pageSize)
 
   const hasLines = displayedCommittedLines.length > 0 || displayedActiveLines.length > 0
 
@@ -1830,21 +1802,9 @@ function LiveChat({
 
   return (
     <>
-      {/*
-        Live mode flushes finished lines exactly once via Static so the terminal's
-        own scrollback can scroll full chat history. Scrollback preview mode avoids
-        Static because Static only appends and cannot replace older slices while a
-        turn is still streaming.
-      */}
-      {isScrollbackActive || !staticOutput ? (
-        <Box flexDirection="column" paddingX={1}>
-          {displayedCommittedLines.map((line, index) => <TranscriptLine key={`scrollback-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />)}
-        </Box>
-      ) : (
-        <Static items={displayedCommittedLines}>
-          {(line, index) => <StaticLine key={`${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />}
-        </Static>
-      )}
+      <Box flexDirection="column" paddingX={1}>
+        {displayedCommittedLines.map((line, index) => <TranscriptLine key={`committed-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />)}
+      </Box>
       <Box flexDirection="column" flexGrow={grow ? 1 : 0} paddingX={1}>
         {displayedActiveLines.map((line, index) => (
           <TranscriptLine key={`live-${line.messageIndex ?? "line"}-${line.kind}-${index}`} line={line} />
