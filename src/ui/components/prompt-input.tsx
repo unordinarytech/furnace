@@ -845,7 +845,9 @@ export function PromptInput({
 
 function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] }): React.ReactNode {
   const theme = useTheme()
-  const window = autocompleteWindow(items)
+  const { rows } = useWindowSize()
+  const maxVisible = Math.max(3, rows - 11)
+  const window = autocompleteWindow(items, maxVisible)
   const selectedRelatedValue = items.find((item) => item.selected)?.relatedValue
   return (
     <Box borderStyle="round" borderColor={theme.colors.border} flexDirection="column" paddingX={1}>
@@ -878,7 +880,9 @@ function PromptAutocompleteMenu({ items }: { items: PromptAutocompleteMatch[] })
 
 function HistorySearchMenu({ items, query }: { items: PromptAutocompleteMatch[]; query: string }): React.ReactNode {
   const theme = useTheme()
-  const window = autocompleteWindow(items)
+  const { rows } = useWindowSize()
+  const maxVisible = Math.max(3, rows - 10)
+  const window = autocompleteWindow(items, maxVisible)
   return (
     <Box borderStyle="round" borderColor={theme.colors.border} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
