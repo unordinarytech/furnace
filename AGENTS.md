@@ -15,6 +15,7 @@ This repository builds Furnace, a terminal-first agentic coding harness. Treat i
 Use the pinned Node 22 scripts. Do not run plain `node`, `tsx`, or `tsc` directly unless you intentionally use `./scripts/with-node22.sh`.
 
 ```bash
+npm run verify
 npm run check-node
 npm run typecheck
 npm test
@@ -22,6 +23,8 @@ npm run build
 npm run dev
 npm run dev -- -p "Reply with exactly: ok"
 ```
+
+Use `npm run verify` before pushing. It runs `check-node`, `typecheck`, `test`, and `pack:dry-run` in sequence and prints a clear pass/fail line for each step.
 
 If `better-sqlite3` reports a `NODE_MODULE_VERSION` mismatch, run:
 

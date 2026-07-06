@@ -66,8 +66,17 @@ npm run start -- --help
 Run verification:
 
 ```bash
+npm run verify
+```
+
+`npm run verify` is the pre-push check. It runs the pinned Node check, TypeScript typecheck, the full test/build script, and the npm package dry run, then prints whether each step passed.
+
+Run individual checks when you only need one part:
+
+```bash
 npm run typecheck
 npm test
+npm run pack:dry-run
 ```
 
 ## CLI Usage

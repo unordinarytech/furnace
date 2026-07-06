@@ -22,6 +22,7 @@
     "typecheck": "./scripts/with-node22.sh tsc -p tsconfig.json --noEmit",
     "test": "npm run build && ./scripts/with-node22.sh node --test",
     "pack:dry-run": "npm pack --dry-run",
+    "verify": "node scripts/verify-before-push.mjs",
     "prepack": "npm run build",
     "prepublishOnly": "npm run typecheck && npm test && npm run pack:dry-run"
   },
