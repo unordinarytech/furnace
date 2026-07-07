@@ -26,7 +26,7 @@ The project is still early, but it is no longer just a plan: the current codebas
 
 - Node.js 22.x only. The repo is pinned to Node `22.22.3` via `.nvmrc` and `.node-version`.
 - npm.
-- An OpenRouter API key in `.env`.
+- A provider API key configured through `/login` or an environment variable.
 
 The scripts use `scripts/with-node22.sh` so native `better-sqlite3` stays compiled for the Node 22 ABI. If you switch Node versions, rebuild:
 
@@ -37,17 +37,23 @@ npm rebuild better-sqlite3
 
 ## Quickstart
 
-Create a local env file:
-
-```bash
-cp .env.example .env
-```
-
-Add your OpenRouter key to `.env`, then install and start:
+Start Furnace, then type `/login` to choose a provider and save an API key:
 
 ```bash
 npm install
 npm run dev
+```
+
+The `/login` provider list shows which providers are configured and whether each key comes from the environment, saved auth file, or a custom provider. Keys saved through `/login` are stored locally at `~/.furnace/auth.json` with file mode `0600`; select a provider and press `d` to delete its saved key from that file.
+
+You can also configure keys with environment variables:
+
+```bash
+OPENROUTER_API_KEY=...
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+DEEPSEEK_API_KEY=...
+GLM_API_KEY=...
 ```
 
 Run a single prompt without opening the TUI:

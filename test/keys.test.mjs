@@ -50,6 +50,16 @@ describe("key storage", async () => {
     assert.equal(keys.anthropic, "sk-ant")
   })
 
+  it("removeStoredKey deletes only the selected provider", async () => {
+    const { setStoredKey, getStoredKey, removeStoredKey } = await import("../dist/keys.js")
+    await setStoredKey("openrouter", "sk-or-delete")
+    await setStoredKey("anthropic", "sk-ant-keep")
+    assert.equal(await removeStoredKey("openrouter"), true)
+    assert.equal(await getStoredKey("openrouter"), undefined)
+    assert.equal(await getStoredKey("anthropic"), "sk-ant-keep")
+    assert.equal(await removeStoredKey("openrouter"), false)
+  })
+
   it("loadStoredKeys returns empty object on malformed JSON", async () => {
     const { homedir } = await import("node:os")
     const { join } = await import("node:path")

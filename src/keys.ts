@@ -60,3 +60,11 @@ export async function setStoredKey(provider: keyof StoredKeys, key: string): Pro
   const current = await loadStoredKeys()
   await saveStoredKeys({ ...current, [provider]: key })
 }
+
+export async function removeStoredKey(provider: keyof StoredKeys): Promise<boolean> {
+  const current = await loadStoredKeys()
+  if (!(provider in current)) return false
+  delete current[provider]
+  await saveStoredKeys(current)
+  return true
+}

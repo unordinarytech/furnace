@@ -9,11 +9,12 @@ import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashComm
 import { isApiKeyMissing, loadConfig, type FurnaceConfig } from "./config.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
-import { setStoredKey, getStoredKey, resolveKeyValue } from "./keys.js"
+import { setStoredKey, getStoredKey, removeStoredKey, resolveKeyValue } from "./keys.js"
 import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
 import { createAnthropicProvider } from "./providers/anthropic.js"
+import type { ProviderDefinition } from "./providers/types.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
@@ -81,7 +82,7 @@ export async function runInteractive(input: {
   const pendingBackgroundRecords = new Map<string, TaskRecord[]>()
   const promptQueues = new PromptQueueStore()
   const pendingBackgroundPrompts = new Map<string, string[]>()
-  const modelListCache = createModelListCache(input.config)
+  let modelListCache = createModelListCache(input.config)
   let skillCatalog = await loadSkills(input.cwd, { extraPaths: input.config.skillPaths })
   let customCommands: CustomCommand[] = await loadCustomCommands(input.cwd)
   let baseAutocompleteItems: PromptAutocompleteItem[] = []
@@ -297,10 +298,8 @@ export async function runInteractive(input: {
     },
   })
   applyBaseAutocompleteItems(slashAutocompleteItems(skillCatalog.skills, customCommands))
-  void modelListCache.promise.then((models) => {
-    const match = models.find((model) => model.id === input.config.model)
-    if (match) terminal.setModel(input.config.model, input.config.modelSettings, match.name)
-  })
+  syncPersistentStatusNotice()
+  syncModelDisplayFromCache()
 
   // Non-blocking startup update check
   void checkForUpdate().then((notice) => {
@@ -433,53 +432,7 @@ export async function runInteractive(input: {
       return
     }
     if (command.name === "/login") {
-      const customProviders = await loadCustomProviders()
-      const allProviders = [...BUILTIN_PROVIDERS, ...customProviders.map(({ apiKey: _, ...def }) => def)]
-      const rows: { id: string; displayName: string; status: "configured" | "unconfigured" | "active"; protocol: string }[] = []
-      for (const def of allProviders) {
-        const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
-        const storedKey = await getStoredKey(def.id)
-        const customKey = customProviders.find((p) => p.id === def.id)?.apiKey
-        const hasKey = !!(envKey || (storedKey && resolveKeyValue(storedKey)) || (customKey && resolveKeyValue(customKey)))
-        rows.push({
-          id: def.id,
-          displayName: def.displayName,
-          status: def.id === input.config.provider ? "active" : hasKey ? "configured" : "unconfigured",
-          protocol: def.protocol,
-        })
-      }
-      terminal.showProviderSelector(
-        rows,
-        (providerId) => {
-          const def = resolveProvider(providerId, customProviders)
-          if (!def) return
-          const label = def.displayName
-          terminal.showApiKeySetup(
-            providerId,
-            label,
-            async (key) => {
-              await setStoredKey(providerId, key).catch(() => {})
-              input.config.provider = providerId
-              input.config.apiKey = key
-              input.config.openRouterApiKey = key
-              input.config.providerConfig = { ...def, apiKey: key, siteUrl: input.config.siteUrl, appName: input.config.appName }
-              // Reset model to provider's default when switching providers
-              const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
-              if (newModel !== input.config.model) {
-                input.config.model = newModel
-                input.config.modelSettings = {}
-                await saveGlobalPreferences({ provider: providerId, model: newModel, modelSettings: {} }).catch(() => {})
-                terminal.setModel(newModel, {}, def.displayName)
-              } else {
-                await saveGlobalPreferences({ provider: providerId }).catch(() => {})
-              }
-              showTransientStatus(`Provider set to ${label}. API key saved. Use /model to pick a model.`, 4000)
-            },
-            () => {},
-          )
-        },
-        () => {},
-      )
+      await openLoginPanel()
       return
     }
     if (command.name === "/settings" || command.name === "/prefs") {
@@ -622,9 +575,152 @@ export async function runInteractive(input: {
     transientStatusTimer = setTimeout(() => {
       if (token !== transientStatusToken) return
       transientStatusTimer = undefined
-      terminal.setStatusNotice(undefined)
+      syncPersistentStatusNotice()
     }, ttlMs)
     transientStatusTimer.unref?.()
+  }
+
+  function syncPersistentStatusNotice(): void {
+    if (transientStatusTimer) return
+    const notice = missingApiKeyNotice()
+    if (notice) {
+      terminal.setStatusNotice(notice, "warning")
+      return
+    }
+    terminal.setStatusNotice(undefined)
+  }
+
+  function missingApiKeyNotice(): string | undefined {
+    if (!isApiKeyMissing(input.config)) return undefined
+    return `No API key configured for ${input.config.providerConfig.displayName}. Type /login to save one to ~/.furnace/auth.json.`
+  }
+
+  function refreshModelListCache(): void {
+    modelListCache = createModelListCache(input.config)
+    syncModelDisplayFromCache(modelListCache)
+    if (currentAutocompleteScope === "model") {
+      const cache = modelListCache
+      void cache.promise.then((models) => {
+        if (cache !== modelListCache || currentAutocompleteScope !== "model") return
+        terminal.setSlashCommandItems(modelAutocompleteItems(models))
+      }).catch(() => {})
+    }
+  }
+
+  function syncModelDisplayFromCache(cache = modelListCache): void {
+    void cache.promise.then((models) => {
+      if (cache !== modelListCache) return
+      const match = models.find((model) => model.id === input.config.model)
+      terminal.setModel(input.config.model, input.config.modelSettings, match?.name)
+    }).catch(() => {
+      if (cache !== modelListCache) return
+      terminal.setModel(input.config.model, input.config.modelSettings)
+    })
+  }
+
+  async function openLoginPanel(): Promise<void> {
+    const customProviders = await loadCustomProviders()
+    const allProviders = [...BUILTIN_PROVIDERS, ...customProviders.map(({ apiKey: _, ...def }) => def)]
+    const rows = []
+    for (const def of allProviders) {
+      const keyState = await resolveProviderKeyState(def, customProviders)
+      rows.push({
+        canDelete: keyState.hasSavedKey,
+        id: def.id,
+        displayName: def.displayName,
+        sourceLabel: keyState.sourceLabel,
+        status: def.id === input.config.provider ? "active" as const : keyState.apiKey ? "configured" as const : "unconfigured" as const,
+        protocol: def.protocol,
+      })
+    }
+    terminal.showProviderSelector(
+      rows,
+      (providerId) => showApiKeySetupForProvider(providerId, customProviders),
+      () => syncPersistentStatusNotice(),
+      (providerId) => { void deleteSavedKey(providerId, customProviders) },
+    )
+  }
+
+  async function resolveProviderKeyState(def: ProviderDefinition, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): Promise<{ apiKey: string; hasSavedKey: boolean; sourceLabel: string }> {
+    const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
+    const rawStoredKey = await getStoredKey(def.id)
+    const storedKey = rawStoredKey ? resolveKeyValue(rawStoredKey) : undefined
+    const rawCustomKey = customProviders.find((p) => p.id === def.id)?.apiKey
+    const customKey = rawCustomKey ? resolveKeyValue(rawCustomKey) : undefined
+    const apiKey = envKey || storedKey || customKey || ""
+    const sourceLabel = envKey
+      ? rawStoredKey ? "env + saved" : "env"
+      : storedKey
+        ? "saved"
+        : rawStoredKey
+          ? "saved unresolved"
+          : customKey
+            ? "custom"
+            : rawCustomKey
+              ? "custom unresolved"
+              : "not configured"
+    return { apiKey, hasSavedKey: Boolean(rawStoredKey), sourceLabel }
+  }
+
+  function showApiKeySetupForProvider(providerId: string, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): void {
+    const def = resolveProvider(providerId, customProviders)
+    if (!def) return
+    const label = def.displayName
+    terminal.showApiKeySetup(
+      providerId,
+      label,
+      async (key) => {
+        try {
+          await setStoredKey(providerId, key)
+        } catch (error) {
+          showTransientStatus(`Failed to save API key to ~/.furnace/auth.json: ${formatError(error)}`, 8000)
+          return
+        }
+        input.config.provider = providerId
+        input.config.apiKey = key
+        input.config.openRouterApiKey = key
+        input.config.providerConfig = { ...def, apiKey: key, siteUrl: input.config.siteUrl, appName: input.config.appName }
+        const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
+        if (newModel !== input.config.model) {
+          input.config.model = newModel
+          input.config.modelSettings = {}
+          terminal.setModel(newModel, {})
+          refreshModelListCache()
+          await saveGlobalPreferences({ provider: providerId, model: newModel, modelSettings: {} }).catch(() => {})
+        } else {
+          refreshModelListCache()
+          await saveGlobalPreferences({ provider: providerId }).catch(() => {})
+        }
+        showTransientStatus(`Provider set to ${label}. API key saved. Use /model to pick a model.`, 4000)
+      },
+      () => { void openLoginPanel() },
+    )
+  }
+
+  async function deleteSavedKey(providerId: string, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): Promise<void> {
+    const def = resolveProvider(providerId, customProviders)
+    if (!def) return
+    let deleted = false
+    try {
+      deleted = await removeStoredKey(providerId)
+    } catch (error) {
+      showTransientStatus(`Failed to delete saved ${def.displayName} key: ${formatError(error)}`, 8000)
+      return
+    }
+    if (!deleted) {
+      showTransientStatus(`No saved ${def.displayName} key in ~/.furnace/auth.json. Remove env/custom keys from their source.`, 6000)
+      await openLoginPanel()
+      return
+    }
+    if (providerId === input.config.provider) {
+      const next = await resolveProviderKeyState(def, customProviders)
+      input.config.apiKey = next.apiKey
+      input.config.openRouterApiKey = next.apiKey
+      input.config.providerConfig = { ...def, apiKey: next.apiKey, siteUrl: input.config.siteUrl, appName: input.config.appName }
+      refreshModelListCache()
+    }
+    showTransientStatus(`Deleted saved ${def.displayName} key from ~/.furnace/auth.json.`, 4000)
+    await openLoginPanel()
   }
 
   function openPermissionsPanel(): void {
@@ -1278,10 +1374,11 @@ export async function runInteractive(input: {
 
   function clearTransientStatus(): void {
     transientStatusToken += 1
-    terminal.setStatusNotice(undefined)
-    if (!transientStatusTimer) return
-    clearTimeout(transientStatusTimer)
-    transientStatusTimer = undefined
+    if (transientStatusTimer) {
+      clearTimeout(transientStatusTimer)
+      transientStatusTimer = undefined
+    }
+    syncPersistentStatusNotice()
   }
 
   function showStatusSummary(): void {

@@ -63,7 +63,7 @@ export type FurnaceTerminal = {
   setSidebarEnabled(enabled: boolean): void
   showSettings(prefs: import("../preferences.js").FurnacePreferences, onSave: (prefs: import("../preferences.js").FurnacePreferences) => void): void
   showApiKeySetup(provider: string, label: string, onSave: (key: string) => void, onCancel: () => void): void
-  showProviderSelector(rows: ProviderDisplayRow[], onSelect: (providerId: string) => void, onCancel: () => void): void
+  showProviderSelector(rows: ProviderDisplayRow[], onSelect: (providerId: string) => void, onCancel: () => void, onDelete?: (providerId: string) => void): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void
@@ -71,7 +71,7 @@ export type FurnaceTerminal = {
   clearViewport(): void
   clearTranscriptDisplay(): void
   setStreamingContent(text: string): void
-  setStatusNotice(content?: string): void
+  setStatusNotice(content?: string, tone?: StatusNoticeTone): void
   setTranscript(transcript: TranscriptMessage[]): void
   suspendForEditor(draft: string): Promise<string>
   insertImageAttachment(source: ImageSource, options?: { displayName?: string; size?: number }): void
@@ -207,11 +207,14 @@ type UiScreen =
       rows: ProviderDisplayRow[]
       onSelect: (providerId: string) => void
       onCancel: () => void
+      onDelete?: (providerId: string) => void
     }
 
 type ProviderDisplayRow = {
+  canDelete: boolean
   id: string
   displayName: string
+  sourceLabel: string
   status: "configured" | "unconfigured" | "active"
   protocol: string
 }
@@ -228,6 +231,8 @@ type ApprovalPromptState = PermissionRequest & {
 type QuestionPromptState = AskQuestionRequest & {
   resolve: (response: AskQuestionResponse) => void
 }
+
+type StatusNoticeTone = "default" | "warning"
 
 type UiFocus = "input" | "pins" | "plan_actions" | "question" | "queue" | "tasks" | "settings"
 
@@ -260,6 +265,7 @@ type UiState = {
   slashCommandItems: PromptAutocompleteItem[]
   splitPane?: SplitPaneSummary & { committedLines: TranscriptLineData[] }
   statusNotice?: string
+  statusNoticeTone: StatusNoticeTone
   statusLine: StatusLinePreferences
   theme: Theme
   themeName: string
@@ -365,6 +371,7 @@ class UiStore {
       slashCommandItems: slashCommandDefinitions.map(slashCommandToAutocompleteItem),
       splitPane: undefined,
       statusNotice: undefined,
+      statusNoticeTone: "default",
       statusLine: options.statusLine || {},
       theme: themeChoice.theme,
       themeName: themeChoice.name,
@@ -550,8 +557,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showApiKeySetup(provider, label, onSave, onCancel) {
       store.update({ screen: { kind: "apiKeySetup", provider, label, onSave, onCancel }, focus: "input" })
     },
-    showProviderSelector(rows, onSelect, onCancel) {
-      store.update({ screen: { kind: "providerSelector", rows, onSelect, onCancel }, focus: "input" })
+    showProviderSelector(rows, onSelect, onCancel, onDelete) {
+      store.update({ screen: { kind: "providerSelector", rows, onSelect, onCancel, onDelete }, focus: "input" })
     },
     setModel(model, settings, displayName) {
       store.update((state) => ({ ...state, model, modelDisplayName: displayName, modelSettings: settings }))
@@ -603,8 +610,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setStreamingContent(text) {
       store.update({ streamingContent: liveStreamingPreview(text) })
     },
-    setStatusNotice(content) {
-      store.update({ statusNotice: content })
+    setStatusNotice(content, tone = "default") {
+      store.update({ statusNotice: content, statusNoticeTone: tone })
     },
     async suspendForEditor(draft) {
       const editor = process.env.EDITOR || process.env.VISUAL
@@ -867,7 +874,7 @@ function FurnaceApp({
             <Text color={theme.colors.warning}>Fork of: {state.forkParentTitle}</Text>
           </Box>
         ) : null}
-        {state.statusNotice ? <Text color={theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
+        {state.statusNotice ? <Text color={state.statusNoticeTone === "warning" ? theme.colors.warning : theme.colors.mutedForeground}>{state.statusNotice}</Text> : null}
         {state.busy && !state.thinking && (
           <Box paddingX={1} flexShrink={0}>
             <Spinner color={theme.colors.primary} />
@@ -3064,10 +3071,15 @@ function ProviderSelectorScreen({ screen, store }: { screen: Extract<UiScreen, {
   const [selectedIndex, setSelectedIndex] = React.useState(0)
   const rows = screen.rows
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (key.escape) {
       store.update({ screen: { kind: "chat" } })
       screen.onCancel()
+      return
+    }
+    if ((input === "d" || key.delete) && screen.onDelete) {
+      const row = rows[selectedIndex]
+      if (row) screen.onDelete(row.id)
       return
     }
     if (key.upArrow) {
@@ -3092,7 +3104,7 @@ function ProviderSelectorScreen({ screen, store }: { screen: Extract<UiScreen, {
     <Box borderStyle="round" borderColor={theme.colors.primary} flexDirection="column" paddingX={1}>
       <Box justifyContent="space-between">
         <Text color={theme.colors.primary} bold>Select Provider</Text>
-        <Text color={theme.colors.mutedForeground}>Enter to select · Esc to cancel</Text>
+        <Text color={theme.colors.mutedForeground}>Enter select · d delete saved key · Esc cancel</Text>
       </Box>
       {rows.map((row, i) => {
         const selected = i === selectedIndex
@@ -3104,6 +3116,7 @@ function ProviderSelectorScreen({ screen, store }: { screen: Extract<UiScreen, {
             <Text color={color}>{symbol}</Text>
             <Text color={selected ? theme.colors.primary : theme.colors.foreground} bold={selected}>{row.displayName}</Text>
             <Text color={theme.colors.mutedForeground}>{row.protocol}</Text>
+            <Text color={row.canDelete ? theme.colors.foreground : theme.colors.mutedForeground}>[{row.sourceLabel}]</Text>
           </Box>
         )
       })}
