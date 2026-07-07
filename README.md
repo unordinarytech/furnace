@@ -35,12 +35,33 @@ nvm use
 npm rebuild better-sqlite3
 ```
 
-## Quickstart
+## Install And Update
 
-Install Furnace, then type `/login` to choose a provider and save an API key:
+Install the published CLI from npm:
 
 ```bash
 npm install -g cook-furnace
+```
+
+Update an existing global install to the latest published version:
+
+```bash
+npm install -g cook-furnace@latest
+```
+
+Check the installed version:
+
+```bash
+furnace --version
+```
+
+The npm package is `cook-furnace`, but the installed command is `furnace`.
+
+## Quickstart
+
+Start Furnace, then type `/login` to choose a provider and save an API key:
+
+```bash
 furnace
 ```
 
