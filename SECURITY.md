@@ -4,11 +4,11 @@ Furnace is a local coding-agent harness. It can inspect files, edit files, and r
 
 ## Supported Versions
 
-Furnace is currently in alpha. Security fixes will target the latest published alpha unless otherwise noted.
+Furnace is early software. Security fixes will target the latest published minor line unless otherwise noted.
 
 | Version | Supported |
 | --- | --- |
-| `0.1.x-alpha` | Yes |
+| `0.1.x` | Yes |
 | older versions | No |
 
 ## Reporting a Vulnerability
@@ -52,4 +52,4 @@ Important limitations:
 
 Furnace is distributed as an npm package and uses native dependencies, including `better-sqlite3`. Install from the official npm package and verify the package name before installing globally.
 
-During alpha, prefer testing in non-critical repositories until you are comfortable with the permission model.
+During early releases, prefer testing in non-critical repositories until you are comfortable with the permission model.

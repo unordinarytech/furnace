@@ -37,12 +37,14 @@ npm rebuild better-sqlite3
 
 ## Quickstart
 
-Start Furnace, then type `/login` to choose a provider and save an API key:
+Install Furnace, then type `/login` to choose a provider and save an API key:
 
 ```bash
-npm install
-npm run dev
+npm install -g cook-furnace
+furnace
 ```
+
+Safety note: Furnace has permission gates for file writes, shell commands, and other risky tools, but it does not provide an OS-level sandbox yet. Use it in repositories where you are comfortable reviewing tool approvals.
 
 The `/login` provider list shows which providers are configured and whether each key comes from the environment, saved auth file, or a custom provider. Keys saved through `/login` are stored locally at `~/.furnace/auth.json` with file mode `0600`; select a provider and press `d` to delete its saved key from that file.
 
@@ -54,6 +56,13 @@ OPENAI_API_KEY=...
 ANTHROPIC_API_KEY=...
 DEEPSEEK_API_KEY=...
 GLM_API_KEY=...
+```
+
+Run from a source checkout:
+
+```bash
+npm install
+npm run dev
 ```
 
 Run a single prompt without opening the TUI:
