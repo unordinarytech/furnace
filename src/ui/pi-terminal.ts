@@ -281,8 +281,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     statusContainer.clear()
     if (thinking) {
       statusContainer.addChild(new Text(statusStyle.dim(`${thinkingMessage}...`), 0, 0))
-    }
-    if (busy) {
+    } else if (busy) {
       statusContainer.addChild(new Text(statusStyle.dim("Working..."), 0, 0))
     }
     if (statusNotice) {
