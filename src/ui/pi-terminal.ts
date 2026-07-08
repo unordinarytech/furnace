@@ -2,8 +2,10 @@ import {
   Container,
   Editor,
   Input,
+  Key,
   Markdown,
   type MarkdownTheme,
+  matchesKey,
   ProcessTerminal,
   SelectList,
   SettingsList,
@@ -105,6 +107,24 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const input = new Editor(ui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 10 })
   const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
   input.setAutocompleteProvider(slashProvider)
+
+  // Global keybindings: interrupt, clear input, clear screen.
+  ui.addInputListener((data) => {
+    if (matchesKey(data, Key.ctrl("c"))) {
+      options.onInterrupt?.()
+      return { consume: true }
+    }
+    if (matchesKey(data, Key.ctrl("u"))) {
+      input.setText("")
+      ui.requestRender()
+      return { consume: true }
+    }
+    if (matchesKey(data, Key.ctrl("l"))) {
+      ui.requestRender()
+      return { consume: true }
+    }
+    return undefined
+  })
 
   let activeTheme = theme
   let activeMarkdownTheme = markdownTheme
