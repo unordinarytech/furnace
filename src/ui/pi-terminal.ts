@@ -239,7 +239,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     chatContainer.clear()
     streamingComponent = undefined
     streamingContainer.clear()
-    for (const message of transcript) {
+    transcript.forEach((message, index) => {
       if (message.role === "user") {
         const text = typeof message.content === "string" ? message.content : "[image]"
         chatContainer.addChild(new UserMessageComponent(text, activeTheme, activeMarkdownTheme))
@@ -247,8 +247,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         const text = typeof message.content === "string" ? message.content : "[message]"
         chatContainer.addChild(new AssistantMessageComponent(text, activeMarkdownTheme))
       }
-      chatContainer.addChild(new Spacer(1))
-    }
+      if (index < transcript.length - 1) {
+        chatContainer.addChild(new Spacer(1))
+      }
+    })
     rebuildStatusContainer()
     ui.requestRender()
   }
