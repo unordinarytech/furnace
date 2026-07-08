@@ -1,6 +1,6 @@
 import {
-  Box,
   Container,
+  Editor,
   Input,
   Markdown,
   type MarkdownTheme,
@@ -38,6 +38,7 @@ import {
 } from "./pi-themes.js"
 import { AssistantMessageComponent, bgColor, fgColor, UserMessageComponent } from "./pi-components/messages.js"
 import { FooterComponent, getCurrentGitBranch, type FooterData } from "./pi-components/footer.js"
+import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
 import type { Theme } from "./themes/types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
@@ -80,20 +81,6 @@ export type CreateFurnaceTerminalOptions = {
   terminal?: Terminal
 }
 
-class PromptInput extends Input {
-  onChange?: (value: string) => void
-  private lastValue = ""
-
-  override handleInput(data: string): void {
-    super.handleInput(data)
-    const value = this.getValue()
-    if (value !== this.lastValue) {
-      this.lastValue = value
-      this.onChange?.(value)
-    }
-  }
-}
-
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
   const terminal = options.terminal ?? new ProcessTerminal()
   const ui = new TUI(terminal, true)
@@ -115,7 +102,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const sidebarContainer = new Container()
   const inputRow = new Container()
   const prefix = new Text(fgColor(theme.colors.accent)("> "), 0, 0)
-  const input = new PromptInput()
+  const input = new Editor(ui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 10 })
+  const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
+  input.setAutocompleteProvider(slashProvider)
 
   let activeTheme = theme
   let activeMarkdownTheme = markdownTheme
@@ -221,7 +210,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     if (!trimmed) return
     options.onSubmit(trimmed, imageAttachments)
     imageAttachments = []
-    input.setValue("")
+    input.setText("")
   }
 
   input.onChange = (value) => {
@@ -412,7 +401,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const setInputDraft = (value: string) => {
-    input.setValue(value)
+    input.setText(value)
     ui.requestRender()
   }
 
@@ -423,6 +412,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setSlashCommandItems = (items: PromptAutocompleteItem[]) => {
     slashCommandItems = items
+    slashProvider.setItems(items)
   }
 
   const setTasks = (taskList: TaskRecord[]) => {
@@ -632,7 +622,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const showApiKeySetup = (provider: string, label: string, onSave: (key: string) => void, onCancel: () => void) => {
-    const keyInput = new PromptInput()
+    const keyInput = new Input()
     keyInput.onSubmit = (value) => {
       onSave(value)
       editorContainer.clear()
@@ -703,7 +693,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const suspendForEditor = (draft: string): Promise<string> => {
     return new Promise((resolve) => {
-      const editorInput = new PromptInput()
+      const editorInput = new Input()
       editorInput.setValue(draft)
       editorInput.onSubmit = (value) => {
         resolve(value)
