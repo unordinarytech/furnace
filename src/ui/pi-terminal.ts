@@ -39,6 +39,7 @@ import {
 import { AssistantMessageComponent, bgColor, fgColor, UserMessageComponent } from "./pi-components/messages.js"
 import { FooterComponent, getCurrentGitBranch, type FooterData } from "./pi-components/footer.js"
 import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
+import { ToolActivityComponent } from "./pi-components/tool-activity.js"
 import type { Theme } from "./themes/types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
@@ -254,7 +255,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
-  // Status notices and thinking/busy indicators.
+  // Status notices, thinking/busy indicators, and tool activities.
   const rebuildStatusContainer = () => {
     statusContainer.clear()
     if (thinking) {
@@ -271,6 +272,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
             ? statusStyle.warning
             : statusStyle.info
       statusContainer.addChild(new Text(style(statusNotice.content), 0, 0))
+    }
+    for (const activity of toolActivities) {
+      statusContainer.addChild(new ToolActivityComponent(activity, activeTheme))
     }
   }
 
@@ -295,13 +299,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setToolActivities = (activities: ToolActivity[]) => {
     toolActivities = activities
-    // Minimal rendering: append latest running tool status to status container.
-    // U5 will replace this with a proper ToolActivityComponent.
     rebuildStatusContainer()
-    const running = activities.find((a) => a.status === "running")
-    if (running) {
-      statusContainer.addChild(new Text(statusStyle.dim(`● ${running.name} ${running.args}`), 0, 0))
-    }
     ui.requestRender()
   }
 
