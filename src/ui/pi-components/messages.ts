@@ -1,4 +1,4 @@
-import { Box, Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui"
+import { Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui"
 import type { Theme } from "../themes/types.js"
 
 const OSC133_ZONE_START = "\x1b]133;A\x07"
@@ -43,27 +43,23 @@ export function fgColor(color: string): (text: string) => string {
 export class UserMessageComponent extends Container {
   private text: string
   private markdownTheme: MarkdownTheme
-  private background: (text: string) => string
   private textColor: (text: string) => string
 
   constructor(text: string, theme: Theme, markdownTheme: MarkdownTheme) {
     super()
     this.text = text
     this.markdownTheme = markdownTheme
-    this.background = bgColor(theme.colors.muted)
-    this.textColor = fgColor(theme.colors.foreground)
+    this.textColor = fgColor(theme.colors.accent)
     this.rebuild()
   }
 
   private rebuild(): void {
     this.clear()
-    const contentBox = new Box(1, 0, this.background)
-    contentBox.addChild(
+    this.addChild(
       new Markdown(this.text, 0, 0, this.markdownTheme, {
         color: this.textColor,
       }),
     )
-    this.addChild(contentBox)
   }
 
   override render(width: number): string[] {
