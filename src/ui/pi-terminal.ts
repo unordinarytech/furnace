@@ -101,7 +101,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const sidebar = new Container()
   const sidebarContainer = new Container()
   const inputRow = new Container()
-  const prefix = new Text(fgColor(theme.colors.accent)("> "), 0, 0)
   const input = new Editor(ui, editorTheme, { paddingX: 1, autocompleteMaxVisible: 10 })
   const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
   input.setAutocompleteProvider(slashProvider)
@@ -110,7 +109,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let activeMarkdownTheme = markdownTheme
   let activeSelectListTheme = selectListTheme
 
-  inputRow.addChild(prefix)
   inputRow.addChild(input)
   editorContainer.addChild(inputRow)
 
@@ -386,7 +384,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     activeTheme = choice.theme
     activeMarkdownTheme = getPiMarkdownTheme(activeTheme)
     activeSelectListTheme = getPiSelectListTheme(activeTheme)
-    prefix.setText(fgColor(activeTheme.colors.accent)("> "))
     footer.setTheme(activeTheme)
     rebuildHeader()
     rebuildFooter()
@@ -616,6 +613,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       },
     )
     editorContainer.clear()
+    editorContainer.addChild(new Text(statusStyle.info("Settings"), 0, 0))
     editorContainer.addChild(list)
     ui.setFocus(list)
     ui.requestRender()
@@ -638,7 +636,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       ui.requestRender()
     }
     editorContainer.clear()
-    editorContainer.addChild(new Text(statusStyle.info(`Login: ${provider}`), 0, 0))
+    editorContainer.addChild(new Text(statusStyle.info(`Enter API key for ${label}`), 0, 0))
+    editorContainer.addChild(new Text(statusStyle.dim("Paste or type the key, then press Enter. Esc to cancel."), 0, 0))
     editorContainer.addChild(keyInput)
     ui.setFocus(keyInput)
     ui.requestRender()
@@ -650,9 +649,47 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     onCancel: () => void,
     onDelete?: (providerId: string) => void,
   ) => {
-    const items: AutocompleteItem[] = rows.map((r) => ({ value: r.id, label: `${r.displayName} ${r.status}` }))
-    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
+    const items: AutocompleteItem[] = rows.map((r) => ({
+      value: r.id,
+      label: r.displayName,
+      description: `${r.status}${r.sourceLabel ? ` · ${r.sourceLabel}` : ""}`,
+    }))
+    const selector = new SelectList(items, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme, {
+      minPrimaryColumnWidth: 16,
+    })
     selector.onSelect = (item) => {
+      const row = rows.find((r) => r.id === item.value)
+      if (row?.canDelete && onDelete) {
+        // For providers with a saved key, ask whether to delete or edit.
+        const actionItems: AutocompleteItem[] = [
+          { value: "edit", label: `Edit ${row.displayName} key` },
+          { value: "delete", label: `Delete ${row.displayName} key` },
+        ]
+        const actionSelector = new SelectList(actionItems, MAX_VISIBLE_SELECT_LIST, activeSelectListTheme)
+        actionSelector.onSelect = (actionItem) => {
+          if (actionItem.value === "delete") {
+            onDelete(row.id)
+          } else {
+            onSelect(row.id)
+          }
+          editorContainer.clear()
+          editorContainer.addChild(inputRow)
+          ui.setFocus(input)
+          ui.requestRender()
+        }
+        actionSelector.onCancel = () => {
+          editorContainer.clear()
+          editorContainer.addChild(inputRow)
+          ui.setFocus(input)
+          ui.requestRender()
+        }
+        editorContainer.clear()
+        editorContainer.addChild(new Text(statusStyle.info("Login"), 0, 0))
+        editorContainer.addChild(actionSelector)
+        ui.setFocus(actionSelector)
+        ui.requestRender()
+        return
+      }
       onSelect(item.value)
       editorContainer.clear()
       editorContainer.addChild(inputRow)
@@ -667,6 +704,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       ui.requestRender()
     }
     editorContainer.clear()
+    editorContainer.addChild(new Text(statusStyle.info("Login — choose a provider"), 0, 0))
     editorContainer.addChild(selector)
     ui.setFocus(selector)
     ui.requestRender()
