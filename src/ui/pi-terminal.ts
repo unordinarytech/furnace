@@ -36,6 +36,8 @@ import {
   getPiStatusStyle,
   getPiBorderColor,
 } from "./pi-themes.js"
+import { AssistantMessageComponent, bgColor, fgColor, UserMessageComponent } from "./pi-components/messages.js"
+import { FooterComponent, getCurrentGitBranch, type FooterData } from "./pi-components/footer.js"
 import type { Theme } from "./themes/types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
@@ -105,14 +107,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const statusStyle = getPiStatusStyle(theme)
   const borderColor = getPiBorderColor(theme)
 
-  const root = new Container()
   const header = new Container()
   const chatContainer = new Container()
   const statusContainer = new Container()
   const editorContainer = new Container()
-  const footer = new Container()
   const sidebar = new Container()
-  const mainColumn = new Container()
+  const sidebarContainer = new Container()
   const inputRow = new Container()
   const prefix = new Text(fgColor(theme.colors.accent)("> "), 0, 0)
   const input = new PromptInput()
@@ -121,37 +121,40 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let activeMarkdownTheme = markdownTheme
   let activeSelectListTheme = selectListTheme
 
-  root.addChild(header)
-  root.addChild(new Spacer(1))
-
   inputRow.addChild(prefix)
   inputRow.addChild(input)
   editorContainer.addChild(inputRow)
 
-  mainColumn.addChild(chatContainer)
-  mainColumn.addChild(statusContainer)
-  mainColumn.addChild(editorContainer)
-  mainColumn.addChild(footer)
+  let sidebarEnabled = options.sidebarEnabled ?? false
 
-  // Sidebar is only rendered when enabled.
+  const footerData: FooterData = {
+    cwd: options.cwd,
+    gitBranch: getCurrentGitBranch(options.cwd),
+    sessionName: options.title,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    contextTokens: 0,
+    contextWindow: 0,
+    contextPercent: null,
+    model: options.model,
+  }
+  const footer = new FooterComponent(footerData, theme)
+
+  // Pi-style vertical stack: header, sidebar (optional), chat, status, editor, footer.
   const renderLayout = () => {
-    root.clear()
-    root.addChild(header)
-    root.addChild(new Spacer(1))
+    sidebarContainer.clear()
     if (sidebarEnabled) {
-      const row = new Container()
-      row.addChild(sidebar)
-      row.addChild(new Spacer(1))
-      row.addChild(mainColumn)
-      root.addChild(row)
-    } else {
-      root.addChild(mainColumn)
+      sidebarContainer.addChild(sidebar)
     }
-    ui.addChild(root)
-    ui.requestRender()
   }
 
-  let sidebarEnabled = options.sidebarEnabled ?? false
+  ui.addChild(header)
+  ui.addChild(sidebarContainer)
+  ui.addChild(chatContainer)
+  ui.addChild(statusContainer)
+  ui.addChild(editorContainer)
+  ui.addChild(footer)
   let inputDisabled = false
   let busy = false
   let thinking = false
@@ -174,7 +177,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let statusLinePreferences: StatusLinePreferences = options.statusLine ?? {}
 
   let imageAttachments: ImageAttachment[] = []
-  let streamingComponent: Markdown | undefined
+  let streamingComponent: AssistantMessageComponent | undefined
   let streamingContainer = new Container()
   let runResolve: (() => void) | undefined
 
@@ -189,19 +192,22 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   // Footer shows cwd, context, cost, lofi, and mode.
   const rebuildFooter = () => {
-    footer.clear()
-    const parts: string[] = [options.cwd]
-    if (statusLinePreferences.statusShowContext && contextUsage) {
-      parts.push(`ctx ${contextUsage.tokens.toLocaleString()}/${contextUsage.window.toLocaleString()}`)
+    footerData.cwd = options.cwd
+    footerData.gitBranch = getCurrentGitBranch(options.cwd)
+    footerData.sessionName = currentTitle
+    footerData.model = currentModelDisplayName
+    footerData.lofi = lofiEnabled
+    if (contextUsage) {
+      footerData.contextTokens = contextUsage.tokens
+      footerData.contextWindow = contextUsage.window
+      footerData.contextPercent = (contextUsage.tokens / contextUsage.window) * 100
+    } else {
+      footerData.contextTokens = 0
+      footerData.contextWindow = 0
+      footerData.contextPercent = null
     }
-    if (statusLinePreferences.statusShowCost && costUsd !== undefined) {
-      parts.push(`$${costUsd.toFixed(4)}`)
-    }
-    if (lofiEnabled) {
-      parts.push("lofi")
-    }
-    const footerText = parts.join(" · ")
-    footer.addChild(new Text(statusStyle.dim(footerText), 0, 0))
+    footerData.costUsd = costUsd ?? 0
+    footer.setData(footerData)
   }
 
   rebuildHeader()
@@ -222,30 +228,18 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     options.onInputChange?.(value)
   }
 
-  // Message components.
-  const renderUserMessage = (text: string): Component => {
-    const container = new Container()
-    const box = new Box(1, 0, (content) => bgColor(activeTheme.colors.muted)(content))
-    box.addChild(new Markdown(text, 0, 0, activeMarkdownTheme, { color: (content) => fgColor(activeTheme.colors.foreground)(content) }))
-    container.addChild(box)
-    return container
-  }
-
-  const renderAssistantMessage = (text: string): Markdown => {
-    return new Markdown(text, 0, 0, activeMarkdownTheme)
-  }
-
   // Rebuild transcript from TranscriptMessage array.
   const setTranscript = (transcript: TranscriptMessage[]) => {
     chatContainer.clear()
     streamingComponent = undefined
+    streamingContainer.clear()
     for (const message of transcript) {
       if (message.role === "user") {
         const text = typeof message.content === "string" ? message.content : "[image]"
-        chatContainer.addChild(renderUserMessage(text))
+        chatContainer.addChild(new UserMessageComponent(text, activeTheme, activeMarkdownTheme))
       } else if (message.role === "assistant") {
         const text = typeof message.content === "string" ? message.content : "[message]"
-        chatContainer.addChild(renderAssistantMessage(text))
+        chatContainer.addChild(new AssistantMessageComponent(text, activeMarkdownTheme))
       }
       chatContainer.addChild(new Spacer(1))
     }
@@ -254,16 +248,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const setStreamingContent = (text: string) => {
-    if (!streamingComponent) {
-      streamingComponent = renderAssistantMessage("")
-      streamingContainer = new Container()
-      streamingContainer.addChild(streamingComponent)
+    let component = streamingComponent
+    if (!component) {
+      component = new AssistantMessageComponent("", activeMarkdownTheme)
+      streamingContainer.clear()
+      streamingContainer.addChild(component)
       chatContainer.addChild(streamingContainer)
       chatContainer.addChild(new Spacer(1))
+      streamingComponent = component
     }
-    streamingComponent = new Markdown(text, 0, 0, activeMarkdownTheme)
-    streamingContainer.clear()
-    streamingContainer.addChild(streamingComponent)
+    component.setText(text)
     ui.requestRender()
   }
 
@@ -404,6 +398,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     activeMarkdownTheme = getPiMarkdownTheme(activeTheme)
     activeSelectListTheme = getPiSelectListTheme(activeTheme)
     prefix.setText(fgColor(activeTheme.colors.accent)("> "))
+    footer.setTheme(activeTheme)
     rebuildHeader()
     rebuildFooter()
     rebuildSidebar()
@@ -790,39 +785,4 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     suspendForEditor,
     waitForInputFocus,
   }
-}
-
-function bgColor(color: string): (text: string) => string {
-  return (text) => {
-    const rgb = hexToRgb(color)
-    if (!rgb) return text
-    return `\x1b[48;2;${rgb.r};${rgb.g};${rgb.b}m${text}\x1b[0m`
-  }
-}
-
-function fgColor(color: string): (text: string) => string {
-  return (text) => {
-    const rgb = hexToRgb(color)
-    if (!rgb) return text
-    return `\x1b[38;2;${rgb.r};${rgb.g};${rgb.b}m${text}\x1b[0m`
-  }
-}
-
-function hexToRgb(hex: string): { b: number; g: number; r: number } | undefined {
-  const clean = hex.replace("#", "")
-  if (clean.length === 3) {
-    return {
-      r: Number.parseInt(clean[0]! + clean[0]!, 16),
-      g: Number.parseInt(clean[1]! + clean[1]!, 16),
-      b: Number.parseInt(clean[2]! + clean[2]!, 16),
-    }
-  }
-  if (clean.length === 6) {
-    return {
-      r: Number.parseInt(clean.slice(0, 2), 16),
-      g: Number.parseInt(clean.slice(2, 4), 16),
-      b: Number.parseInt(clean.slice(4, 6), 16),
-    }
-  }
-  return undefined
 }

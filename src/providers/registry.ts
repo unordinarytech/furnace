@@ -7,7 +7,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://openrouter.ai/api/v1",
     protocol: "openai-compatible",
     envVar: "OPENROUTER_API_KEY",
-    defaultModel: "anthropic/claude-sonnet-4.6",
+    defaultModel: "anthropic/claude-sonnet-4-6",
   },
   {
     id: "openai",
@@ -23,7 +23,7 @@ export const BUILTIN_PROVIDERS: ProviderDefinition[] = [
     baseUrl: "https://api.anthropic.com",
     protocol: "anthropic",
     envVar: "ANTHROPIC_API_KEY",
-    defaultModel: "claude-sonnet-4-20250514",
+    defaultModel: "claude-sonnet-4-6",
   },
   {
     id: "deepseek",
