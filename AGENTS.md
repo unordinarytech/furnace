@@ -65,7 +65,8 @@ nvm use
 - `src/session/compaction.ts` implements model-assisted session compaction with deterministic fallback, `firstKeptEntryId` semantics, file details, secret redaction, and file-read-state clearing after compaction.
 - `src/compression/*` implements Headroom-lite tool-output compression and request-local compression transforms. Full originals are stored under `.furnace/context-store/` and retrieved by `context_retrieve`.
 - `src/ui/pi-terminal.ts` and `src/ui/pi/components/*` implement the interactive terminal: transcript rendering, streaming output, prompt input/autocomplete, approvals, question prompts, model editor, settings, permissions panel, task status, queue controls, plan actions, lofi state, themes, and status line.
-- `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/login`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
+- `src/commands.ts` defines built-in slash commands including `/new`, `/resume`/`/history`, `/fork`, `/clone`, `/image`, `/login`, `/model`, `/plan`, `/agent`, `/mode`, `/theme`, `/tasks`, `/compact`, `/skills`, `/lofi`, `/evolve`, `/settings`, `/permissions`, `/status`, `/export`, `/diff`, `/undo`, `/copy`, `/cost`, `/editor`, `/bug`, `/exit`, and `/quit`.
+- `src/evolve/*` implements harness self-modification (`/evolve`): `root.ts` detects the furnace source root and gates availability; `recovery.ts` captures git+dist recovery points and restores them (`furnace --recover <id>`); `verify.ts` runs typecheck+test+atomic build (temp then swap of `dist/cli.js` and `dist/prompts/`); `orchestrator.ts` runs the flow (snapshot → agent edit → verify → content-level diff consent → swap → restart prompt). The `--recover` CLI flag and a cautious post-evolve startup hint live in `src/cli.ts`.
 - `src/plan-mode.ts` supports agent/plan modes, creates plan artifact paths under `.furnace/plans/`, injects plan-mode system guidance, and renders saved plan artifacts/actions.
 - `src/tasks/manager.ts` runs delegated subagent task groups in parallel, supports foreground/background promotion, records recent task status, and propagates task updates to the UI. Backgrounded task groups release the parent turn immediately; completion results are injected later through a hidden queued prompt.
 - `src/skills/*` discovers skills from project/user/plugin roots, renders skill guidance, loads explicit skills, and can create managed project/user skill files.
@@ -81,6 +82,7 @@ nvm use
 - Session controls: new sessions by default, `--continue`, `--session <id>`, `/new`, `/resume`, `/history`.
 - Forking: `/fork`, `/fork current`, `/clone`; forks appear under their parent in history while subagents stay hidden from normal recents.
 - Output mode option: `--output-format text|json` for headless mode.
+- Harness self-modification: `/evolve <request>` (interactive only) and `furnace --recover <id>` to roll back an evolve.
 - Shell completion command: `furnace completion <bash|zsh|fish>`.
 - Interactive model picker with context, reasoning, and fast-routing settings.
 - Theme picker previews hovered themes and restores the saved theme if browsing is abandoned.

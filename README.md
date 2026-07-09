@@ -164,6 +164,7 @@ Built-in slash commands include:
 | `/model` | Browse/select model and configure context/reasoning/fast routing. |
 | `/theme [name]` | Select a theme; browsing previews hovered themes. |
 | `/settings`, `/prefs` | Configure UI/status preferences. |
+| `/evolve <what to change>` | Modify the Furnace harness itself, with verification and recovery. |
 | `/plan [prompt]` | Switch to plan mode. |
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
 | `/tasks` | Show active subagents. |
@@ -206,6 +207,48 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
   - fork parent
 
 `Tab` or `Enter` cycles values.
+
+## Evolving the harness
+
+Furnace can modify its own source. Ask for a harness change in plain language
+("put cost usage on the statusline", "add a monochrome green theme", "make the
+thinking text say huzzing") and the agent routes it into the evolve flow, or run
+it explicitly:
+
+```bash
+/evolve add cost usage to the statusline
+```
+
+An evolve run:
+
+1. Creates a **recovery point** — a git snapshot plus a copy of the current
+   known-good `dist/`.
+2. Edits the Furnace source for your request.
+3. Verifies with typecheck, tests, and an atomic build (the live `dist/` is only
+   swapped after everything passes, so a bad change never bricks the `furnace`
+   command).
+4. Shows you the diff and asks you to approve it before it goes live.
+5. Asks you to **restart Furnace** for the change to take effect.
+
+If a restart lands on a broken harness, roll back:
+
+```bash
+furnace --recover <id>
+```
+
+Recovery restores the previous known-good `dist/` without rebuilding. In the rare
+case the bundle will not launch at all, rebuild from source with `npm run build`
+in the Furnace checkout.
+
+Notes and current limits:
+
+- Evolve requires running Furnace from its own source checkout (a git repo with
+  `src/`); an npm-global install without source reports that evolve is
+  unavailable.
+- The evolve edit turn runs with broad session permissions over the Furnace
+  root; the diff-review step is your control. It can read `~/.furnace/auth.json`,
+  so review the diff before approving.
+- Recovery points accumulate git tags under `refs/tags/furnace-recovery/`.
 
 ## Images
 

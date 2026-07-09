@@ -70,6 +70,19 @@ Local adaptation:
 
 License: Pi's TUI is MIT licensed.
 
+## Harness Self-Modification (`/evolve`)
+
+Pi is aggressively extensible and compile-free: extensions, skills, themes, and prompt templates load via `jiti` at runtime and hot-reload with `/reload`, so "ask pi to build it and it customizes itself on the fly" (see pi `packages/coding-agent/docs/extensions.md` and pi.dev). Furnace's `/evolve` targets the same "modify the harness" outcome but adapts it to Furnace's architecture.
+
+Source and adaptation:
+
+- Source of the idea: pi's self-mutation model (compile-free, `/reload`, "ask pi to build it").
+- Furnace-specific adaptation: Furnace ships as a single esbuild bundle (`dist/cli.js`) that *is* the `furnace` bin, so self-modification cannot hot-swap — it must edit source, rebuild, and restart. This makes two safety properties load-bearing that pi does not need:
+  - **Verify-before-swap atomic build** (`src/evolve/verify.ts`): typecheck + tests + a temp build must all pass before `dist/cli.js` and `dist/prompts/` are swapped, so a bad change never bricks the bin. The evolve path never runs `scripts/clean-dist.mjs` (which deletes `dist/` first).
+  - **Bundle-independent recovery** (`src/evolve/recovery.ts`, `src/cli.ts`): because the recovery/`--recover` code lives inside the bundle evolve rewrites, a recovery point also copies the known-good `dist/`, and `furnace --recover <id>` restores that copy without rebuilding or executing the new bundle. The residual "bundle won't load at all" case falls back to `npm run build` from source.
+- Consent model: unlike pi's freeform self-editing, Furnace gates the swap on a content-level diff review (the user approves the actual verified diff), because Furnace can also *auto-detect* harness-modification intent from conversation and the diff review is the compensating control for misclassification or prompt injection.
+- Deferred vs. pi: locate-or-clone for npm-global installs, hot-reload without restart, and a shareable package/marketplace are out of scope for the current in-place, source-checkout model.
+
 ## Headroom-lite Context Compression
 
 Furnace adapts Headroom's core context-compression lesson without cloning its proxy or ML stack.
