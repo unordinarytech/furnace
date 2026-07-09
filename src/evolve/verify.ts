@@ -29,7 +29,12 @@ export type VerifyDeps = {
   swap: (root: string, build: BuildOutcome) => void
 }
 
-export function verifyAndBuild(root: string, deps: VerifyDeps = defaultDeps): VerifyResult {
+export type VerifyToTempResult =
+  | { ok: true; build: BuildOutcome }
+  | { ok: false; step: VerifyStep; log: string }
+
+/** Gate an edit (typecheck -> test -> build to temp) WITHOUT swapping. */
+export function verifyToTemp(root: string, deps: VerifyDeps = defaultDeps): VerifyToTempResult {
   const typecheck = deps.typecheck(root)
   if (!typecheck.ok) return { ok: false, step: "typecheck", log: typecheck.log }
 
@@ -39,8 +44,15 @@ export function verifyAndBuild(root: string, deps: VerifyDeps = defaultDeps): Ve
   const build = deps.buildToTemp(root)
   if (!build.ok) return { ok: false, step: "build", log: build.log }
 
+  return { ok: true, build }
+}
+
+/** Verify and, only when every gate passes, atomically swap into dist/. */
+export function verifyAndBuild(root: string, deps: VerifyDeps = defaultDeps): VerifyResult {
+  const verified = verifyToTemp(root, deps)
+  if (!verified.ok) return verified
   try {
-    deps.swap(root, build)
+    deps.swap(root, verified.build)
   } catch (error) {
     return { ok: false, step: "swap", log: error instanceof Error ? error.message : String(error) }
   }
