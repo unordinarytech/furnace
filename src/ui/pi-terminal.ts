@@ -56,6 +56,7 @@ import { ToolExecutionComponent } from "./pi/components/tool-execution.js"
 import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
 import { resolveTheme } from "./terminal-themes/index.js"
 import { packageVersion } from "../version.js"
+import { pickRandomQuote, QUOTE_ROTATION_INTERVAL_MS } from "./pi/quotes.js"
 import type {
   FurnaceTerminal,
   ModelBrowserItem,
@@ -89,16 +90,16 @@ function isExpandable(obj: unknown): obj is Expandable {
   return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof (obj as Expandable).setExpanded === "function"
 }
 
-/** FURNACE banner from main's ink terminal, rendered width-aware in the header. */
+/** RONISH banner rendered width-aware in the header. */
 const FURNACE_BANNER = [
-  "███████╗██╗   ██╗██████╗ ███╗   ██╗███████╗ ██████╗███████╗",
-  "██╔════╝██║   ██║██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
-  "█████╗  ██║   ██║██████╔╝██╔██╗ ██║███████╗██║     █████╗  ",
-  "██╔══╝  ██║   ██║██╔══██╗██║╚██╗██║██╔══██║██║     ██╔══╝  ",
-  "██║     ╚██████╔╝██║  ██║██║ ╚████║██║  ██║╚██████╗███████╗",
-  "╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝",
+  "██████╗  ██████╗ ███╗   ██╗██╗███████╗██╗  ██╗",
+  "██╔══██╗██╔═══██╗████╗  ██║██║██╔════╝██║  ██║",
+  "██████╔╝██║   ██║██╔██╗ ██║██║███████╗███████║",
+  "██╔══██╗██║   ██║██║╚██╗██║██║╚════██║██╔══██║",
+  "██║  ██║╚██████╔╝██║ ╚████║██║███████║██║  ██║",
+  "╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝╚══════╝╚═╝  ╚═╝",
 ]
-const FURNACE_BANNER_WIDTH = 65
+const FURNACE_BANNER_WIDTH = 47
 
 class FurnaceBannerComponent implements Component {
   invalidate(): void {}
@@ -107,7 +108,7 @@ class FurnaceBannerComponent implements Component {
     if (width >= FURNACE_BANNER_WIDTH) {
       return FURNACE_BANNER.map((row) => ` ${theme.bold(theme.fg("accent", row))}`)
     }
-    return [` ${theme.bold(theme.fg("accent", "FURNACE"))}`]
+    return [` ${theme.bold(theme.fg("accent", "RONISH"))}`]
   }
 }
 
@@ -249,6 +250,26 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const footerDataProvider = new FooterDataProvider(options.cwd)
   const footer = new FooterComponent(footerSession, footerDataProvider)
+
+  // ---------------------------------------------------------------------------
+  // Motivational quote rotation on the status bar
+  // ---------------------------------------------------------------------------
+
+  let currentQuoteIndex: number | undefined
+  const rotateQuote = () => {
+    const { quote, index } = pickRandomQuote(currentQuoteIndex)
+    currentQuoteIndex = index
+    footerDataProvider.setExtensionStatus("quote", theme.fg("dim", `✦ ${quote}`))
+    footer.invalidate()
+    ui.requestRender()
+  }
+  rotateQuote()
+  const quoteRotationTimer = setInterval(rotateQuote, QUOTE_ROTATION_INTERVAL_MS)
+  // Don't let the rotation timer keep the process alive on its own (e.g. in tests
+  // that build a terminal without calling stop()); the real app stays alive via
+  // its input/render handles.
+  quoteRotationTimer.unref?.()
+
 
   // Startup header: FURNACE banner + version, then pi-style keybinding hints.
   const logo = () => theme.fg("dim", `v${packageVersion}`)
@@ -611,6 +632,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const stop = () => {
     if (exitWarningTimer) clearTimeout(exitWarningTimer)
+    clearInterval(quoteRotationTimer)
     footerDataProvider.dispose()
     footer.dispose()
     ui.stop()

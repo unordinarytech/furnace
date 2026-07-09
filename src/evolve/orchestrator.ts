@@ -77,7 +77,7 @@ export async function runEvolve(input: {
   if (!verified.ok) {
     engine.restoreRecoveryPoint(point.id, root)
     interaction.notify(`Verification failed at ${verified.step}. Reverted. Recovery point ${point.id} left in place.`)
-    return { status: "verify-failed", recoveryId: point.id, step: verified.step, log: verified.log }
+    return { status: "verify-failed", recoveryId: point.id, step: verified.step, log: verified.log, createdFiles: created }
   }
 
   const diff = engine.gitDiff(root)
@@ -85,7 +85,7 @@ export async function runEvolve(input: {
   if (!approved) {
     engine.restoreRecoveryPoint(point.id, root)
     interaction.notify(`Change not applied. Reverted. Recovery point ${point.id} left in place.`)
-    return { status: "rejected", recoveryId: point.id }
+    return { status: "rejected", recoveryId: point.id, createdFiles: created }
   }
 
   engine.performSwap(root, verified.build)
@@ -101,7 +101,7 @@ export async function runEvolve(input: {
       ? restart
       : `${restart}\nNote: the change was built into ${root}/dist, but the furnace you are running appears to live elsewhere — restart the one at ${root}.`,
   )
-  return { status: "applied", recoveryId: point.id, runningBinMatchesRoot: matches }
+  return { status: "applied", recoveryId: point.id, runningBinMatchesRoot: matches, createdFiles: created }
 }
 
 function gitDiff(root: string): string {

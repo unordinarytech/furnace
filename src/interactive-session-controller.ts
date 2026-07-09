@@ -37,6 +37,7 @@ import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./task-ui-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, ToolActivity } from "./ui/terminal-types.js"
+import type { EvolveOutcome } from "./evolve/types.js"
 import type { ImageAttachment } from "./utils/images.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
@@ -609,7 +610,7 @@ export async function runInteractive(input: {
 
     terminal.setInputDisabled(true)
     try {
-      await runEvolve({
+      const outcome = await runEvolve({
         request,
         rootResult,
         interaction: {
@@ -647,8 +648,11 @@ export async function runInteractive(input: {
           },
         },
       })
+      // Surface the outcome durably in the user's conversation (the edit ran in a
+      // hidden session, so its result would otherwise vanish on refresh).
+      input.store.appendMessage(sessionId, "assistant", renderEvolveOutcomeMessage(request, outcome), input.config.model)
     } catch (error) {
-      showTransientStatus(`Evolve failed: ${formatError(error)}`, 8000)
+      input.store.appendMessage(sessionId, "assistant", `Evolve failed: ${formatError(error)}`, input.config.model)
     } finally {
       terminal.setThinking(false)
       terminal.setBusy(false)
@@ -2498,6 +2502,28 @@ function renderEvolveEditPrompt(request: string, root: string): string {
     "- Ensure the change is type-correct; the orchestrator will run typecheck, tests, and an atomic build after you finish.",
     "- When done, briefly summarize what you changed.",
   ].join("\n")
+}
+
+function renderEvolveOutcomeMessage(request: string, outcome: EvolveOutcome): string {
+  if (outcome.status === "unavailable") {
+    return `Evolve unavailable: ${outcome.message}`
+  }
+  const themeFiles = outcome.createdFiles.filter((path) => /terminal-themes\/.+\.ts$/.test(path) && !path.endsWith("index.ts"))
+  if (outcome.status === "applied") {
+    const lines = [
+      `Evolved furnace: "${request}".`,
+      "Verified (typecheck, build, launch check) and applied.",
+      ...(outcome.createdFiles.length > 0 ? [`New files: ${outcome.createdFiles.join(", ")}`] : []),
+      ...(themeFiles.length > 0 ? ["New theme added — after restarting, run /theme and select it to activate it."] : []),
+      `Restart furnace to load your changes. If startup breaks, run: furnace --recover ${outcome.recoveryId}`,
+      ...(outcome.runningBinMatchesRoot ? [] : ["Note: the running furnace appears to live outside this source root, so the rebuilt bundle may not be what you launch."]),
+    ]
+    return lines.join("\n")
+  }
+  if (outcome.status === "verify-failed") {
+    return `Evolve "${request}" failed verification at the ${outcome.step} step and was reverted — no changes applied. Recovery point ${outcome.recoveryId} left in place.\n\n${outcome.log.slice(0, 1500)}`
+  }
+  return `Evolve "${request}" was discarded (change not approved) and reverted — no changes applied.`
 }
 
 function renderEvolveConsentPrompt(diff: string, createdFiles: string[], _verifyLog: string): string {

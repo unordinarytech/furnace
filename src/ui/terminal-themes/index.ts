@@ -1,6 +1,7 @@
 import type { Theme } from "../themes/types.js"
 import { flexokiTheme } from "./flexoki.js"
 import { extraThemes } from "./extra.js"
+import { monochromeGreenTheme } from "./monochrome-green.js"
 
 export type ThemeChoice = {
   description: string
@@ -284,6 +285,7 @@ export const gruvboxTheme: Theme = {
 
 export const themeChoices: ThemeChoice[] = [
   { name: "pi-dark", displayLabel: "Pi Dark", description: "Exact Pi dark palette", theme: piDarkTheme },
+  { name: "monochrome-green", displayLabel: "Monochrome Green", description: "Classic phosphor-green terminal", theme: monochromeGreenTheme },
   { name: "synthwave-84", displayLabel: "Synthwave '84", description: "Retro neon glow palette", theme: extraThemes[7]! },
   { name: "flexoki", displayLabel: "Flexoki", description: "Warm, low-contrast palette", theme: flexokiTheme },
   { name: "default", displayLabel: "Default", description: "Default TermCN palette", theme: defaultTheme },

@@ -31,7 +31,7 @@ export type VerifyResult =
   | { ok: false; step: VerifyStep; log: string }
 
 export type EvolveOutcome =
-  | { status: "applied"; recoveryId: string; runningBinMatchesRoot: boolean }
-  | { status: "verify-failed"; recoveryId: string; step: VerifyStep; log: string }
-  | { status: "rejected"; recoveryId: string }
+  | { status: "applied"; recoveryId: string; runningBinMatchesRoot: boolean; createdFiles: string[] }
+  | { status: "verify-failed"; recoveryId: string; step: VerifyStep; log: string; createdFiles: string[] }
+  | { status: "rejected"; recoveryId: string; createdFiles: string[] }
   | { status: "unavailable"; reason: EvolveUnavailableReason; message: string }
