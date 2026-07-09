@@ -599,6 +599,7 @@ export async function runInteractive(input: {
       "allow_all_session",
     )
 
+    terminal.setInputDisabled(true)
     try {
       await runEvolve({
         request,
@@ -641,6 +642,9 @@ export async function runInteractive(input: {
     } catch (error) {
       showTransientStatus(`Evolve failed: ${formatError(error)}`, 8000)
     } finally {
+      terminal.setThinking(false)
+      terminal.setBusy(false)
+      terminal.setInputDisabled(false)
       refreshCurrentSession()
     }
   }
@@ -2434,13 +2438,12 @@ function renderEvolveEditPrompt(request: string, root: string): string {
   ].join("\n")
 }
 
-function renderEvolveConsentPrompt(diff: string, createdFiles: string[], verifyLog: string): string {
+function renderEvolveConsentPrompt(diff: string, createdFiles: string[], _verifyLog: string): string {
   const created = createdFiles.length > 0 ? `\nNew files: ${createdFiles.join(", ")}` : ""
-  const diffPreview = diff
-    ? diff.length > 4000 ? `${diff.slice(0, 4000)}\n... (${diff.length - 4000} more chars)` : diff
+  const stat = diff
+    ? diff.length > 2000 ? `${diff.slice(0, 2000)}\n... (truncated)` : diff
     : "(no tracked-file changes detected)"
-  const verifyNote = verifyLog ? "\nVerification: typecheck, tests, and build passed." : ""
-  return `Apply this change to furnace? It verified successfully.${verifyNote}${created}\n\n${diffPreview}`
+  return `Apply this change to furnace? Verified (typecheck, build, launch check passed).${created}\n\nChanged files:\n${stat}`
 }
 
 function formatTokenCount(tokens: number): string {

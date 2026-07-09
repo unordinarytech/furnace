@@ -7,38 +7,38 @@ import { join } from "node:path"
 function stubDeps(overrides = {}) {
   const calls = []
   const base = {
-    typecheck: () => { calls.push("typecheck"); return { ok: true, log: "" } },
-    test: () => { calls.push("test"); return { ok: true, log: "" } },
-    buildToTemp: () => { calls.push("build"); return { ok: true, log: "", tempCliPath: "/tmp/x", tempPromptsPath: "/tmp/p" } },
+    typecheck: async () => { calls.push("typecheck"); return { ok: true, log: "" } },
+    buildToTemp: async () => { calls.push("build"); return { ok: true, log: "", tempCliPath: "/tmp/x", tempPromptsPath: "/tmp/p" } },
+    smoke: async () => { calls.push("smoke"); return { ok: true, log: "" } },
     swap: () => { calls.push("swap") },
   }
   return { deps: { ...base, ...overrides }, calls }
 }
 
-test("verifyAndBuild runs typecheck -> test -> build -> swap in order on success", async () => {
+test("verifyAndBuild runs typecheck -> build -> smoke -> swap in order on success", async () => {
   const { verifyAndBuild } = await import("../../dist/evolve/verify.js")
   const { deps, calls } = stubDeps()
-  const result = verifyAndBuild("/root", deps)
+  const result = await verifyAndBuild("/root", deps)
   assert.equal(result.ok, true)
-  assert.deepEqual(calls, ["typecheck", "test", "build", "swap"])
+  assert.deepEqual(calls, ["typecheck", "build", "smoke", "swap"])
 })
 
-test("verifyAndBuild stops at a failing test and never swaps", async () => {
+test("verifyAndBuild stops at a failing smoke and never swaps", async () => {
   const { verifyAndBuild } = await import("../../dist/evolve/verify.js")
-  const { deps, calls } = stubDeps({ test: () => { calls?.push?.("test"); return { ok: false, log: "boom" } } })
-  const result = verifyAndBuild("/root", deps)
+  const { deps, calls } = stubDeps({ smoke: async () => ({ ok: false, log: "crash on import" }) })
+  const result = await verifyAndBuild("/root", deps)
   assert.equal(result.ok, false)
-  assert.equal(result.step, "test")
+  assert.equal(result.step, "smoke")
   assert.equal(calls.includes("swap"), false)
-  assert.equal(calls.includes("build"), false)
 })
 
-test("verifyAndBuild stops at a failing build and never swaps", async () => {
+test("verifyAndBuild stops at a failing build and never swaps or smokes", async () => {
   const { verifyAndBuild } = await import("../../dist/evolve/verify.js")
-  const { deps, calls } = stubDeps({ buildToTemp: () => ({ ok: false, log: "esbuild error" }) })
-  const result = verifyAndBuild("/root", deps)
+  const { deps, calls } = stubDeps({ buildToTemp: async () => ({ ok: false, log: "esbuild error" }) })
+  const result = await verifyAndBuild("/root", deps)
   assert.equal(result.ok, false)
   assert.equal(result.step, "build")
+  assert.equal(calls.includes("smoke"), false)
   assert.equal(calls.includes("swap"), false)
 })
 
@@ -48,12 +48,11 @@ test("verifyAndBuild leaves live dist untouched when a gate fails", async () => 
   try {
     await mkdir(join(root, "dist"), { recursive: true })
     await writeFile(join(root, "dist", "cli.js"), "LIVE\n", "utf8")
-    // A real swap would overwrite; but a failing gate must skip swap entirely.
     const { deps } = stubDeps({
-      typecheck: () => ({ ok: false, log: "type error" }),
+      typecheck: async () => ({ ok: false, log: "type error" }),
       swap: (r, build) => performSwap(r, build),
     })
-    const result = verifyAndBuild(root, deps)
+    const result = await verifyAndBuild(root, deps)
     assert.equal(result.ok, false)
     assert.equal(await readFile(join(root, "dist", "cli.js"), "utf8"), "LIVE\n")
   } finally {

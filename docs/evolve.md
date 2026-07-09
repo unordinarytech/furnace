@@ -27,9 +27,12 @@ available in piped/headless mode.
    request, following existing patterns (themes in `src/ui/terminal-themes/`,
    thinking text via `setThinking` in `src/ui/pi-terminal.ts`, the status line in
    the footer, etc.). The edit turn does not build.
-3. **Verify.** Runs typecheck, the test suite, and an atomic build to a temp
-   location. If any gate fails, the change is reverted and the live `dist/` is left
-   untouched.
+3. **Verify.** Runs (asynchronously, without freezing the UI): a typecheck, an
+   isolated esbuild bundle to a temp location, and a launch check that runs the new
+   bundle in a subprocess (`node <temp> --version`) to catch a change that compiles
+   but crashes on startup. Nothing touches the live `dist/` during verification —
+   no `npm test`, no `npm run build`, no `clean-dist`. If any gate fails, the change
+   is reverted and the live `dist/` is left untouched.
 4. **Consent.** Shows you the actual diff and the verified result and asks you to
    approve. Rejecting reverts the change.
 5. **Swap + restart.** On approval, atomically swaps `dist/cli.js` and

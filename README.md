@@ -224,9 +224,11 @@ An evolve run:
 1. Creates a **recovery point** — a git snapshot plus a copy of the current
    known-good `dist/`.
 2. Edits the Furnace source for your request.
-3. Verifies with typecheck, tests, and an atomic build (the live `dist/` is only
-   swapped after everything passes, so a bad change never bricks the `furnace`
-   command).
+3. Verifies with a typecheck, an isolated build to a temp location, and a launch
+   check that runs the new bundle in a subprocess (this catches a change that
+   compiles but crashes on startup). The live `dist/` is only swapped after all
+   of these pass, so a bad change never bricks the `furnace` command. Verification
+   runs asynchronously and does not freeze the UI.
 4. Shows you the diff and asks you to approve it before it goes live.
 5. Asks you to **restart Furnace** for the change to take effect.
 

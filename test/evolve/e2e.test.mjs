@@ -44,14 +44,14 @@ async function loadEngine(verifyOverrides = {}) {
   const recovery = await import("../../dist/evolve/recovery.js")
   const { verifyToTemp, performSwap } = await import("../../dist/evolve/verify.js")
   const verifyDeps = {
-    typecheck: () => ({ ok: true, log: "" }),
-    test: () => ({ ok: true, log: "" }),
-    buildToTemp: () => {
+    typecheck: async () => ({ ok: true, log: "" }),
+    buildToTemp: async () => {
       const staging = mkdtempSync(join(tmpdir(), "furnace-e2e-build-"))
       const tempCliPath = join(staging, "cli.js")
       writeFileSync(tempCliPath, "REBUILT-BUNDLE\n")
       return { ok: true, log: "built", tempCliPath, tempPromptsPath: undefined }
     },
+    smoke: async () => ({ ok: true, log: "" }),
     swap: performSwap,
     ...verifyOverrides,
   }
@@ -62,7 +62,7 @@ async function loadEngine(verifyOverrides = {}) {
     listNewFiles: recovery.listNewFiles,
     verifyToTemp: (root) => verifyToTemp(root, verifyDeps),
     performSwap,
-    gitDiff: () => "diff --git a/src/thing.ts b/src/thing.ts",
+    gitDiff: () => " src/thing.ts | 2 +-",
     runningBinMatchesRoot: () => true,
   }
 }
@@ -117,7 +117,7 @@ test("e2e: failed verification rolls back source and created files, dist untouch
   const { home, root } = await makeFurnaceRepo()
   try {
     await withHome(home, async () => {
-      const engine = await loadEngine({ test: () => ({ ok: false, log: "a test failed" }) })
+      const engine = await loadEngine({ smoke: async () => ({ ok: false, log: "bundle crashed on import" }) })
       const outcome = await runEvolve({
         request: "break the build",
         rootResult: { available: true, root },
@@ -133,7 +133,7 @@ test("e2e: failed verification rolls back source and created files, dist untouch
       })
 
       assert.equal(outcome.status, "verify-failed")
-      assert.equal(outcome.step, "test")
+      assert.equal(outcome.step, "smoke")
       // Source reverted, created file removed, dist unchanged.
       assert.equal(await readFile(join(root, "src", "thing.ts"), "utf8"), "export const value = 1\n")
       assert.equal(existsSync(join(root, "src", "widget.ts")), false)

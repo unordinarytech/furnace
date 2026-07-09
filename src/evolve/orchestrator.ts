@@ -30,7 +30,7 @@ export type EvolveEngine = {
   recordCreatedFiles: typeof recordCreatedFiles
   restoreRecoveryPoint: typeof restoreRecoveryPoint
   listNewFiles: typeof listNewFiles
-  verifyToTemp: (root: string) => VerifyToTempResult
+  verifyToTemp: (root: string) => Promise<VerifyToTempResult>
   performSwap: (root: string, build: BuildOutcome) => void
   gitDiff: (root: string) => string
   runningBinMatchesRoot: (root: string) => boolean
@@ -72,7 +72,8 @@ export async function runEvolve(input: {
   const created = engine.listNewFiles(root).filter((path) => !before.has(path))
   engine.recordCreatedFiles(point.id, created)
 
-  const verified = engine.verifyToTemp(root)
+  interaction.notify("Verifying change (typecheck, build, launch check)…")
+  const verified = await engine.verifyToTemp(root)
   if (!verified.ok) {
     engine.restoreRecoveryPoint(point.id, root)
     interaction.notify(`Verification failed at ${verified.step}. Reverted. Recovery point ${point.id} left in place.`)
@@ -104,7 +105,9 @@ export async function runEvolve(input: {
 }
 
 function gitDiff(root: string): string {
-  const result = spawnSync("git", ["--no-pager", "diff", "HEAD"], { cwd: resolve(root), encoding: "utf8" })
+  // Compact stat only — a full diff can be thousands of lines and is unsafe to
+  // stuff into a TUI question prompt. The stat gives files + line counts.
+  const result = spawnSync("git", ["--no-pager", "diff", "--stat", "HEAD"], { cwd: resolve(root), encoding: "utf8" })
   return (result.stdout ?? "").trim()
 }
 

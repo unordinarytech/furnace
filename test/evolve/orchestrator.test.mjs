@@ -8,7 +8,7 @@ function makeEngine(overrides = {}) {
     recordCreatedFiles: (id, files) => { calls.push(`record:${files.join(",")}`) },
     restoreRecoveryPoint: (id) => { calls.push(`restore:${id}`); return { ok: true } },
     listNewFiles: () => [],
-    verifyToTemp: () => { calls.push("verify"); return { ok: true, build: { ok: true, log: "built" } } },
+    verifyToTemp: async () => { calls.push("verify"); return { ok: true, build: { ok: true, log: "built" } } },
     performSwap: () => { calls.push("swap") },
     gitDiff: () => "diff --git a/x b/x",
     runningBinMatchesRoot: () => true,
@@ -48,12 +48,12 @@ test("runEvolve applies in order: snapshot -> edit -> verify -> confirm -> swap"
 
 test("runEvolve rolls back and does not swap when verification fails", async () => {
   const { runEvolve } = await import("../../dist/evolve/orchestrator.js")
-  const { engine, calls } = makeEngine({ verifyToTemp: () => ({ ok: false, step: "test", log: "failing test" }) })
+  const { engine, calls } = makeEngine({ verifyToTemp: async () => ({ ok: false, step: "smoke", log: "crash on import" }) })
   const { interaction, events } = makeInteraction()
   const outcome = await runEvolve({ request: "break things", rootResult: availableRoot, interaction, engine })
 
   assert.equal(outcome.status, "verify-failed")
-  assert.equal(outcome.step, "test")
+  assert.equal(outcome.step, "smoke")
   assert.equal(calls.includes("swap"), false)
   assert.ok(calls.includes("restore:abc123"))
   assert.equal(events.includes("confirm"), false)

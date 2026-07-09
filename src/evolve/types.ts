@@ -20,7 +20,7 @@ export type RestoreResult =
   | { ok: true; point: RecoveryPoint }
   | { ok: false; reason: "not-found" | "cross-root" | "error"; message: string }
 
-export type VerifyStep = "typecheck" | "test" | "build" | "swap"
+export type VerifyStep = "typecheck" | "build" | "smoke" | "swap"
 
 export type VerifyResult =
   | { ok: true }
