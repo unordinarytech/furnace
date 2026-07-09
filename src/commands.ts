@@ -34,6 +34,7 @@ export const slashCommandDefinitions: SlashCommandDefinition[] = [
   { name: "/skills reload", description: "Reload discovered skills" },
   { name: "/lofi", description: "Toggle lofi mode" },
   { name: "/evolve", description: "Modify the furnace harness itself", insertText: "/evolve ", usage: "/evolve <what to change>" },
+  { name: "/reset", description: "Reset the furnace harness to its default state (undo all evolve changes)" },
   { name: "/settings", aliases: ["/prefs"], description: "View and change app preferences" },
   { name: "/login", description: "Set or update your API key" },
   { name: "/permissions", description: "Clear conversation approvals" },

@@ -119,6 +119,53 @@ test("restore refuses unknown id and cross-root ids", async () => {
   }
 })
 
+test("resetToBaseline reverts to the earliest point, removes all created files, and clears history", async () => {
+  const { home, root } = await makeGitRepo()
+  try {
+    await withRecovery(home, async ({ createRecoveryPoint, recordCreatedFiles, resetToBaseline, pointsForRoot }) => {
+      // First evolve: baseline captured with dist "good-bundle" and tracked.txt "original".
+      const p1 = createRecoveryPoint(root, "evolve one")
+      await writeFile(join(root, "tracked.txt"), "changed by evolve one\n", "utf8")
+      await writeFile(join(root, "one.ts"), "one\n", "utf8")
+      recordCreatedFiles(p1.id, ["one.ts"])
+      // Second evolve on top.
+      const p2 = createRecoveryPoint(root, "evolve two")
+      await writeFile(join(root, "tracked.txt"), "changed again by evolve two\n", "utf8")
+      await writeFile(join(root, "two.ts"), "two\n", "utf8")
+      await writeFile(join(root, "dist", "cli.js"), "EVOLVED-BUNDLE\n", "utf8")
+      recordCreatedFiles(p2.id, ["two.ts"])
+
+      const result = resetToBaseline(root)
+      assert.equal(result.ok, true)
+      assert.equal(result.undoneCount, 2)
+      // Tracked file back to original; both created files gone; dist back to baseline.
+      assert.equal(await readFile(join(root, "tracked.txt"), "utf8"), "original\n")
+      assert.equal(existsSync(join(root, "one.ts")), false)
+      assert.equal(existsSync(join(root, "two.ts")), false)
+      assert.equal(await readFile(join(root, "dist", "cli.js"), "utf8"), "good-bundle\n")
+      // History cleared for this root.
+      assert.equal(pointsForRoot(root).length, 0)
+    })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test("resetToBaseline reports nothing when there are no recovery points", async () => {
+  const { home, root } = await makeGitRepo()
+  try {
+    await withRecovery(home, async ({ resetToBaseline }) => {
+      const result = resetToBaseline(root)
+      assert.equal(result.ok, false)
+      assert.equal(result.reason, "nothing")
+    })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("lastEvolve is cleared per-root and latestForRoot filters by root", async () => {
   const { home, root } = await makeGitRepo()
   const { root: rootB } = await makeGitRepo()

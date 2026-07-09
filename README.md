@@ -165,6 +165,7 @@ Built-in slash commands include:
 | `/theme [name]` | Select a theme; browsing previews hovered themes. |
 | `/settings`, `/prefs` | Configure UI/status preferences. |
 | `/evolve <what to change>` | Modify the Furnace harness itself, with verification and recovery. |
+| `/reset` | Reset the Furnace harness to its default state (undo all evolve changes). |
 | `/plan [prompt]` | Switch to plan mode. |
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
 | `/tasks` | Show active subagents. |

@@ -3,7 +3,7 @@ import { createHash, randomBytes } from "node:crypto"
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
-import type { RecoveryPoint, RestoreResult } from "./types.js"
+import type { RecoveryPoint, ResetResult, RestoreResult } from "./types.js"
 
 /**
  * Recovery points let an evolve be rolled back. Each point captures:
@@ -135,6 +135,50 @@ export function latestForRoot(root: string): RecoveryPoint | undefined {
   return readRegistry()
     .filter((point) => point.furnaceRoot === absRoot)
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]
+}
+
+/** All recovery points for a root, oldest first. */
+export function pointsForRoot(root: string): RecoveryPoint[] {
+  const absRoot = resolve(root)
+  return readRegistry()
+    .filter((point) => point.furnaceRoot === absRoot)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+}
+
+/**
+ * Reset the harness to its default state: revert tracked source to the earliest
+ * recovery point (the state before the first evolve), delete every file any
+ * evolve created, restore that baseline's known-good dist, and clear this
+ * root's recovery history. Keeps git-committed work; discards evolve's
+ * uncommitted source edits.
+ */
+export function resetToBaseline(root: string): ResetResult {
+  const absRoot = resolve(root)
+  const points = pointsForRoot(absRoot)
+  if (points.length === 0) {
+    return { ok: false, reason: "nothing", message: "No evolve changes recorded — furnace is already at its default state." }
+  }
+  const baseline = points[0]!
+  const deletedFiles = [...new Set(points.flatMap((point) => point.createdFiles))]
+  try {
+    // Restore the pre-evolve known-good dist (no rebuild needed).
+    if (baseline.distCopyPath && existsSync(baseline.distCopyPath)) {
+      const liveDist = join(absRoot, "dist")
+      rmSync(liveDist, { recursive: true, force: true })
+      cpSync(baseline.distCopyPath, liveDist, { recursive: true })
+    }
+    // Revert tracked source to the baseline snapshot (no branch move).
+    git(absRoot, ["checkout", baseline.ref, "--", "."])
+    // Delete exactly the files evolve created (never a blanket clean).
+    for (const relative of deletedFiles) {
+      rmSync(join(absRoot, relative), { recursive: true, force: true })
+    }
+    // Drop this root's recovery history — we are back at baseline.
+    writeRegistry(readRegistry().filter((point) => point.furnaceRoot !== absRoot))
+    return { ok: true, baseline, undoneCount: points.length, deletedFiles }
+  } catch (error) {
+    return { ok: false, reason: "error", message: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 export function restoreRecoveryPoint(id: string, runningRoot: string): RestoreResult {

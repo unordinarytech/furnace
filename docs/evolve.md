@@ -65,6 +65,21 @@ even `--recover` unlaunchable. Rebuild from source in the Furnace checkout:
 npm run build
 ```
 
+## Resetting to default
+
+`/reset` undoes **all** evolve changes and returns the harness to its default
+state:
+
+- Reverts tracked source to the earliest recovery point (the state before your
+  first evolve).
+- Deletes every file any evolve created.
+- Restores that baseline's known-good `dist/` (no rebuild).
+- Clears this root's recovery history.
+
+Git-committed work is kept; only evolve's uncommitted source edits are discarded.
+`/reset` shows what it will undo and asks for confirmation first, and (like
+`/evolve`) asks you to restart afterward. It is interactive-only.
+
 ## Requirements and limits
 
 - Evolve requires running Furnace from its own **source checkout** — a git repo

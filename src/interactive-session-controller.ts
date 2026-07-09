@@ -340,6 +340,14 @@ export async function runInteractive(input: {
       await handleEvolveCommand(command.argument)
       return
     }
+    if (command.name === "/reset") {
+      if (isCurrentSessionRunning()) {
+        showTransientStatus("/reset is available after the current turn finishes.")
+        return
+      }
+      await handleResetCommand()
+      return
+    }
     if (command.name === "/clear") {
       terminal.clearTranscriptDisplay()
       return
@@ -644,6 +652,56 @@ export async function runInteractive(input: {
     } finally {
       terminal.setThinking(false)
       terminal.setBusy(false)
+      terminal.setInputDisabled(false)
+      refreshCurrentSession()
+    }
+  }
+
+  async function handleResetCommand(): Promise<void> {
+    const { resolveFurnaceRoot } = await import("./evolve/root.js")
+    const rootResult = resolveFurnaceRoot()
+    if (!rootResult.available) {
+      showTransientStatus(rootResult.message, 8000)
+      return
+    }
+    const { pointsForRoot, resetToBaseline } = await import("./evolve/recovery.js")
+    const points = pointsForRoot(rootResult.root)
+    if (points.length === 0) {
+      showTransientStatus("No evolve changes recorded — furnace is already at its default state.", 6000)
+      return
+    }
+
+    const undoing = points.map((point) => `• ${point.description}`).join("\n")
+    const created = [...new Set(points.flatMap((point) => point.createdFiles))]
+    const createdNote = created.length > 0 ? `\n\nFiles that will be removed:\n${created.map((path) => `• ${path}`).join("\n")}` : ""
+    const response = await terminal.requestQuestions({
+      questions: [
+        {
+          id: "reset",
+          allowCustom: false,
+          allowMultiple: false,
+          prompt: `Reset furnace to its default state? This reverts the harness source to before your first evolve and discards these ${points.length} evolve change(s):\n\n${undoing}${createdNote}\n\nGit-committed work is kept.`,
+          options: [
+            { id: "reset", label: "Reset to default" },
+            { id: "cancel", label: "Cancel" },
+          ],
+        },
+      ],
+    })
+    if (response.rejected || !response.answers.some((answer) => answer.optionId === "reset")) {
+      showTransientStatus("Reset cancelled.")
+      return
+    }
+
+    terminal.setInputDisabled(true)
+    try {
+      const result = resetToBaseline(rootResult.root)
+      if (result.ok) {
+        showTransientStatus(`Reset furnace to default (undid ${result.undoneCount} evolve change(s)). Restart furnace to load the default harness.`, 12000)
+      } else {
+        showTransientStatus(`Reset failed: ${result.message}`, 8000)
+      }
+    } finally {
       terminal.setInputDisabled(false)
       refreshCurrentSession()
     }
@@ -1785,6 +1843,10 @@ export async function runPiped(input: {
     }
     if (command.name === "/evolve") {
       process.stdout.write("/evolve is only available in the interactive TUI (it needs the diff-review consent step).\n")
+      continue
+    }
+    if (command.name === "/reset") {
+      process.stdout.write("/reset is only available in the interactive TUI (it needs a confirmation step).\n")
       continue
     }
     if (command.name === "/settings" || command.name === "/prefs") {
