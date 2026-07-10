@@ -127,6 +127,32 @@ Current implementation:
 - `entriesToModelMessages()` injects the runtime-context user message near the latest user message.
 - `src/cli.ts` passes the current workspace when building per-turn model messages.
 
+## Repository Index
+
+Furnace uses a small local repository index as an orientation dictionary, not as generated documentation or a source of truth.
+
+Reasoning:
+
+Coding agents often spend tokens repeatedly rediscovering the same project map. A compact `.furnace/repo-index.md` gives the agent a cheap starting point for repo-related work while keeping the real code as the authority. The index should change only when meaningful repo-level structure changes or is discovered; age alone does not make it stale.
+
+Current behavior:
+
+- Interactive startup offers to create the index only when an API key exists, the workspace is inside a git repo, and `.furnace/repo-index.md` does not already exist.
+- `/init` regenerates the index manually and can overwrite an existing index.
+- Generation scans a bounded snapshot of paths and selected metadata files while skipping noisy and secret-like paths.
+- The model prompt asks for a compact dictionary with fixed sections: `Project Shape`, `Key Directories`, and `File Dictionary`.
+- The generated index is expected to stay under 250 lines when possible, with a hard max of 400 lines.
+- Furnace also writes `.furnace/repo-index.meta.json` with minimal metadata: generation time, git head, package name, and indexed file count.
+- Furnace does not warn on startup just because metadata is old and does not auto-regenerate the index, avoiding surprise token spend.
+- The main agent is instructed to check the index before broad repo exploration, and to update only relevant sections plus metadata when its work meaningfully changes or reveals repo-level structure.
+
+Current implementation:
+
+- `src/repo-index.ts` owns snapshot collection, fast-model generation, markdown rendering, and metadata writing.
+- `src/interactive-session-controller.ts` owns interactive onboarding and `/init`.
+- `src/prompts/base-system.md` instructs the main agent how to use and maintain the index.
+- `test/repo-index.test.mjs` covers offer conditions, skipped paths, fast model selection, and sidecar metadata staleness helpers.
+
 ## Skills
 
 Furnace treats skills as progressive-disclosure instruction packages.

@@ -22,6 +22,34 @@ test("repo index offer is based on git repo and .furnace/repo-index.md existence
   }
 })
 
+test("repo index staleness uses simple sidecar metadata", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "furnace-repo-index-meta-"))
+  try {
+    const { getRepoIndexStaleness, repoIndexMetaPath, repoIndexPath } = await import("../dist/repo-index.js")
+
+    await mkdir(join(cwd, ".git"), { recursive: true })
+    await mkdir(join(cwd, ".furnace"), { recursive: true })
+    await writeFile(join(cwd, ".git", "HEAD"), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n", "utf8")
+    await writeFile(join(cwd, "package.json"), JSON.stringify({ name: "demo" }), "utf8")
+    await writeFile(repoIndexPath(cwd), "# Existing index\n", "utf8")
+
+    assert.deepEqual(await getRepoIndexStaleness(cwd), { reason: "metadata missing", stale: true })
+
+    await writeFile(repoIndexMetaPath(cwd), `${JSON.stringify({
+      fileCount: 1,
+      generatedAt: "2026-07-10T00:00:00.000Z",
+      gitHead: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      packageName: "demo",
+    })}\n`, "utf8")
+    assert.deepEqual(await getRepoIndexStaleness(cwd), { stale: false })
+
+    await writeFile(join(cwd, ".git", "HEAD"), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n", "utf8")
+    assert.deepEqual(await getRepoIndexStaleness(cwd), { reason: "git commit changed", stale: true })
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
 test("repo index snapshot skips noisy dirs and secret-like files", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "furnace-repo-index-snapshot-"))
   try {

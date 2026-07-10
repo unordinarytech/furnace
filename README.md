@@ -20,6 +20,7 @@ The project is still early, but it is no longer just a plan: the current codebas
 - Supports project/user/plugin skills and reusable custom slash commands.
 - Delegates independent work to subagent task groups.
 - Provides plan mode for implementation planning before mutating code.
+- Can create a compact local repository index for faster project orientation.
 - Provides configurable themes, status line fields, model settings, and typing indicators.
 
 ## Requirements
@@ -168,6 +169,7 @@ Built-in slash commands include:
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
 | `/tasks` | Show active subagents. |
 | `/compact [focus]` | Manually summarize old context. |
+| `/init` | Learn the current repo/folder and write `.furnace/repo-index.md`. |
 | `/skills list` | List discovered skills. |
 | `/skills view <name>` | View a skill. |
 | `/skills reload` | Reload skill discovery. |
@@ -242,6 +244,14 @@ Each tool has a schema, permission metadata, execution logic, and bounded model-
 Sessions are stored locally in SQLite at `.furnace/furnace.sqlite` inside the current workspace and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
 
 The `.furnace/` directory is local runtime state and should stay out of version control. In git workspaces, Furnace adds `.furnace/` to the repo's local `.git/info/exclude` file so it does not appear in `git status` without changing committed `.gitignore` files. Deleting `.furnace/furnace.sqlite` removes saved Furnace conversations for that workspace.
+
+## Repository Index
+
+In interactive mode, Furnace can offer to initialize a git workspace by creating `.furnace/repo-index.md`. The prompt appears only when an API key is configured, the current folder is inside a git repo, and no index exists yet.
+
+The index is a compact map for the agent, not generated docs. It uses fixed sections like `Project Shape`, `Key Directories`, and `File Dictionary`, and should stay under 250 lines when possible. Furnace also writes `.furnace/repo-index.meta.json` with small metadata such as generation time, git head, package name, and indexed file count.
+
+Use `/init` to regenerate the index manually. Furnace does not auto-regenerate it or warn just because it is old; the main agent is instructed to read it before broad repo exploration and update only relevant parts when meaningful repo-level structure changes or is discovered.
 
 Current session behavior:
 

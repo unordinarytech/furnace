@@ -6,6 +6,7 @@ import { completeOpenRouterResponse, type OpenRouterModel } from "./openrouter.j
 import { isSecretLikePath } from "./tools/common.js"
 
 export const repoIndexRelativePath = ".furnace/repo-index.md"
+export const repoIndexMetaRelativePath = ".furnace/repo-index.meta.json"
 
 const noisyDirs = new Set([
   ".furnace",
@@ -43,8 +44,24 @@ export type RepoIndexSnapshot = {
   snippets: Array<{ path: string; content: string }>
 }
 
+export type RepoIndexMeta = {
+  fileCount: number
+  generatedAt: string
+  gitHead: string | null
+  packageName: string | null
+}
+
+export type RepoIndexStaleness = {
+  reason?: string
+  stale: boolean
+}
+
 export function repoIndexPath(cwd: string): string {
   return resolve(cwd, repoIndexRelativePath)
+}
+
+export function repoIndexMetaPath(cwd: string): string {
+  return resolve(cwd, repoIndexMetaRelativePath)
 }
 
 export async function shouldOfferRepoIndex(cwd: string): Promise<boolean> {
@@ -76,6 +93,7 @@ export async function generateRepoIndex(input: {
 }): Promise<{ content: string; model: string; path: string }> {
   const snapshot = await collectRepoIndexSnapshot(input.cwd)
   const model = selectRepoIndexModel(input.config, input.models)
+  const generatedAt = new Date().toISOString()
   let body: string
 
   try {
@@ -97,11 +115,31 @@ export async function generateRepoIndex(input: {
     body = renderFallbackRepoIndex(snapshot, error)
   }
 
-  const content = renderRepoIndexDocument({ body, model, snapshot })
+  const content = renderRepoIndexDocument({ body, generatedAt, snapshot })
   const path = repoIndexPath(input.cwd)
+  const metaPath = repoIndexMetaPath(input.cwd)
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, content, "utf8")
+  await writeFile(metaPath, `${JSON.stringify(await buildRepoIndexMeta(input.cwd, snapshot, generatedAt), null, 2)}\n`, "utf8")
   return { content, model, path }
+}
+
+export async function getRepoIndexStaleness(cwd: string): Promise<RepoIndexStaleness> {
+  if (!existsSync(repoIndexPath(cwd))) return { stale: false }
+  const meta = await readRepoIndexMeta(cwd)
+  if (!meta) return { reason: "metadata missing", stale: true }
+
+  const gitHead = await readGitHead(cwd)
+  if (meta.gitHead && gitHead && meta.gitHead !== gitHead) {
+    return { reason: "git commit changed", stale: true }
+  }
+
+  const packageName = await readPackageName(cwd)
+  if (meta.packageName && packageName && meta.packageName !== packageName) {
+    return { reason: "package name changed", stale: true }
+  }
+
+  return { stale: false }
 }
 
 export async function collectRepoIndexSnapshot(cwd: string): Promise<RepoIndexSnapshot> {
@@ -172,13 +210,18 @@ function renderRepoIndexPrompt(snapshot: RepoIndexSnapshot): string {
   return [
     "Create `.furnace/repo-index.md` content for this repository.",
     "",
-    "Write a high-to-mid level dictionary-style guide:",
-    "- What this project appears to be.",
-    "- Where to look for CLI/runtime/provider/session/tool/UI/config/test work.",
-    "- Important commands or conventions visible from files.",
-    "- Gaps or uncertainty if the snapshot is insufficient.",
+    "Write a high-to-mid level dictionary, not an essay.",
+    "Use exactly these markdown sections:",
+    "## Project Shape",
+    "## Key Directories",
+    "## File Dictionary",
     "",
-    "Do not list every file. Keep it practical and compact.",
+    "Rules:",
+    "- Keep it path-oriented and practical for a coding agent.",
+    "- Keep it under 250 lines if possible; never exceed 400 lines.",
+    "- Do not list every file.",
+    "- Do not include command tutorials, common tasks, known gaps, changelog notes, or prose-heavy explanations.",
+    "- Prefer compact bullets of the form `path` - purpose.",
     "",
     "Directory overview:",
     snapshot.directories.map((dir) => `- ${dir}`).join("\n") || "- No directories found",
@@ -195,13 +238,14 @@ function renderRepoIndexPrompt(snapshot: RepoIndexSnapshot): string {
   ].join("\n")
 }
 
-function renderRepoIndexDocument(input: { body: string; model: string; snapshot: RepoIndexSnapshot }): string {
+function renderRepoIndexDocument(input: { body: string; generatedAt: string; snapshot: RepoIndexSnapshot }): string {
   const body = input.body.trim() || renderFallbackRepoIndex(input.snapshot)
   return [
     "# Furnace Repo Index",
     "",
     "> Local Furnace-generated codebase guide. Safe to delete; Furnace can regenerate it.",
-    `> Generated: ${new Date().toISOString()}`,
+    `> Generated: ${input.generatedAt}`,
+    "> Keep this file as a compact map, not docs. Aim under 250 lines; hard max 400.",
     "",
     body,
     "",
@@ -212,15 +256,15 @@ function renderFallbackRepoIndex(snapshot: RepoIndexSnapshot, error?: unknown): 
   const errorLine = error ? [`Generation fallback: ${error instanceof Error ? error.message : String(error)}`, ""] : []
   return [
     ...errorLine,
-    "## Project Map",
+    "## Project Shape",
     "",
-    "Use this as a starting point before broad exploration.",
+    "- Use this as a starting point before broad exploration.",
     "",
-    "## Top Directories",
+    "## Key Directories",
     "",
     snapshot.directories.slice(0, 40).map((dir) => `- ${dir}`).join("\n") || "- No directories found",
     "",
-    "## Important Files",
+    "## File Dictionary",
     "",
     snapshot.files.filter(isInterestingFile).slice(0, 40).map((file) => `- ${file}`).join("\n") || "- No obvious project metadata files found",
     "",
@@ -233,4 +277,97 @@ function preferredModelPatterns(provider: string): RegExp[] {
   if (provider === "deepseek") return [/deepseek-chat/i, /chat/i]
   if (provider === "glm") return [/flash/i, /air/i, /glm-4/i]
   return [/haiku.*4\.?5/i, /claude.*haiku/i, /gpt-4o-mini/i, /gpt-4\.1-mini/i, /\bmini\b/i]
+}
+
+async function buildRepoIndexMeta(cwd: string, snapshot: RepoIndexSnapshot, generatedAt: string): Promise<RepoIndexMeta> {
+  return {
+    fileCount: snapshot.files.length,
+    generatedAt,
+    gitHead: await readGitHead(cwd),
+    packageName: await readPackageName(cwd),
+  }
+}
+
+async function readRepoIndexMeta(cwd: string): Promise<RepoIndexMeta | null> {
+  try {
+    const raw = await readFile(repoIndexMetaPath(cwd), "utf8")
+    const parsed = JSON.parse(raw) as Partial<RepoIndexMeta>
+    if (typeof parsed.generatedAt !== "string" || typeof parsed.fileCount !== "number") return null
+    return {
+      fileCount: parsed.fileCount,
+      generatedAt: parsed.generatedAt,
+      gitHead: typeof parsed.gitHead === "string" ? parsed.gitHead : null,
+      packageName: typeof parsed.packageName === "string" ? parsed.packageName : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+async function readPackageName(cwd: string): Promise<string | null> {
+  try {
+    const raw = await readFile(resolve(cwd, "package.json"), "utf8")
+    const parsed = JSON.parse(raw) as { name?: unknown }
+    return typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : null
+  } catch {
+    return null
+  }
+}
+
+async function readGitHead(cwd: string): Promise<string | null> {
+  const gitDir = await resolveGitDir(cwd)
+  if (!gitDir) return null
+
+  try {
+    const head = (await readFile(resolve(gitDir, "HEAD"), "utf8")).trim()
+    if (!head.startsWith("ref:")) return head || null
+    const ref = head.slice("ref:".length).trim()
+    return await readGitRef(gitDir, ref)
+  } catch {
+    return null
+  }
+}
+
+async function readGitRef(gitDir: string, ref: string): Promise<string | null> {
+  try {
+    return (await readFile(resolve(gitDir, ref), "utf8")).trim() || null
+  } catch {
+    const commonGitDir = await resolveCommonGitDir(gitDir)
+    if (!commonGitDir || commonGitDir === gitDir) return null
+    try {
+      return (await readFile(resolve(commonGitDir, ref), "utf8")).trim() || null
+    } catch {
+      return null
+    }
+  }
+}
+
+async function resolveGitDir(cwd: string): Promise<string | null> {
+  let current = resolve(cwd)
+  while (true) {
+    const dotGit = resolve(current, ".git")
+    if (existsSync(dotGit)) {
+      try {
+        const info = await stat(dotGit)
+        if (info.isDirectory()) return dotGit
+        const raw = await readFile(dotGit, "utf8")
+        const match = raw.match(/^gitdir:\s*(.+)$/m)
+        if (match) return resolve(current, match[1].trim())
+      } catch {
+        return null
+      }
+    }
+    const parent = dirname(current)
+    if (parent === current) return null
+    current = parent
+  }
+}
+
+async function resolveCommonGitDir(gitDir: string): Promise<string | null> {
+  try {
+    const raw = (await readFile(resolve(gitDir, "commondir"), "utf8")).trim()
+    return resolve(gitDir, raw)
+  } catch {
+    return gitDir
+  }
 }
