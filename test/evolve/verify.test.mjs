@@ -60,6 +60,15 @@ test("verifyAndBuild leaves live dist untouched when a gate fails", async () => 
   }
 })
 
+test("defaultDeps run the real toolchain end-to-end (catches 'command not found')", async () => {
+  const { verifyToTemp } = await import("../../dist/evolve/verify.js")
+  // Runs real tsc --noEmit + esbuild-to-temp + node launch-smoke against this
+  // repo. Would fail if tsc/esbuild/node aren't resolvable from the evolve path
+  // (the exact regression where node_modules/.bin wasn't on PATH). Does NOT swap.
+  const result = await verifyToTemp(process.cwd())
+  assert.equal(result.ok, true, JSON.stringify(result))
+})
+
 test("performSwap replaces dist/cli.js and dist/prompts from the temp build", async () => {
   const { performSwap } = await import("../../dist/evolve/verify.js")
   const root = await mkdtemp(join(tmpdir(), "furnace-evolve-swap-"))
