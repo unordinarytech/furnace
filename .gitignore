@@ -12,6 +12,7 @@ coverage/
 
 # Local Furnace state
 .furnace/
+.evolve-staging/
 
 # Logs
 *.log
