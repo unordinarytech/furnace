@@ -71,6 +71,7 @@ import type {
 } from "./terminal-types.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
+import { defaultMaxOutputTokens } from "../preferences.js"
 import type { FurnacePreferences, ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
@@ -79,6 +80,97 @@ import type { ImageAttachment, ImageSource } from "../utils/images.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
+
+type AutocompleteListFactory = (prefix: string, items: AutocompleteItem[]) => SelectList
+type AutocompletePreviewHandler = (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
+type AutocompleteSelectList = SelectList & { getSelectedItem?: () => AutocompleteItem | null }
+
+function isPromptAutocompleteItem(item: AutocompleteItem): item is AutocompleteItem & PromptAutocompleteItem {
+  return "relatedValue" in item
+}
+
+class RelatedAutocompleteSelectList extends SelectList {
+  private readonly rawItems: AutocompleteItem[]
+
+  constructor(items: AutocompleteItem[], maxVisible: number) {
+    super(items, maxVisible, getSelectListTheme(), {
+      minPrimaryColumnWidth: 12,
+      maxPrimaryColumnWidth: 32,
+    })
+    this.rawItems = items
+  }
+
+  render(width: number): string[] {
+    const selected = this.getSelectedItem?.()
+    const relatedValue = selected && isPromptAutocompleteItem(selected) ? selected.relatedValue : undefined
+    if (!relatedValue) return super.render(width)
+
+    const related = this.rawItems.find((item) => item.value === relatedValue)
+    if (!related) return super.render(width)
+
+    const originalLabel = related.label
+    const originalDescription = related.description
+    related.label = `↳ ${originalLabel}`
+    related.description = originalDescription ? `fork parent · ${originalDescription}` : "fork parent"
+    const lines = super.render(width).map((line) => line.includes("↳ ") ? theme.fg("warning", line) : line)
+    related.label = originalLabel
+    related.description = originalDescription
+    return lines
+  }
+}
+
+function wireSlashAutocompletePreview(editor: CustomEditor, onPreview: AutocompletePreviewHandler | undefined): void {
+  const editorWithFactory = editor as unknown as { createAutocompleteList?: AutocompleteListFactory }
+  const createAutocompleteList = editorWithFactory.createAutocompleteList?.bind(editor)
+  if (!createAutocompleteList) return
+
+  editorWithFactory.createAutocompleteList = (prefix, items) => {
+    const list = prefix.startsWith("/")
+      ? new RelatedAutocompleteSelectList(items, editor.getAutocompleteMaxVisible()) as AutocompleteSelectList
+      : createAutocompleteList(prefix, items) as AutocompleteSelectList
+    if (prefix.startsWith("/") && onPreview) {
+      list.onSelectionChange = (item) => {
+        onPreview({ ...item, selected: true })
+      }
+    }
+    return list
+  }
+}
+
+function compactTokenLabel(tokens: number): string {
+  if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
+  if (tokens % 1000 === 0) return `${tokens / 1000}k`
+  if (tokens > 1000) return `${Math.round(tokens / 1000)}k`
+  return String(tokens)
+}
+
+function tokenChoiceLabel(tokens: number): string {
+  return `${compactTokenLabel(tokens)} (${tokens})`
+}
+
+function parseTokenChoice(value: string): number | undefined {
+  const match = /\((\d+)\)$/.exec(value)
+  return match ? Number(match[1]) : undefined
+}
+
+function uniqueTokenChoices(values: number[]): string[] {
+  return [...new Set(values.filter((value) => Number.isInteger(value) && value > 0))]
+    .sort((a, b) => a - b)
+    .map(tokenChoiceLabel)
+}
+
+function currentTokenChoice(configured: number | undefined, fallbackLabel: string): string {
+  return configured && configured > 0 ? tokenChoiceLabel(configured) : fallbackLabel
+}
+
+function supportsReasoningParameter(choice: ModelChoice): boolean {
+  return choice.supportedParameters.includes("reasoning") || choice.supportedParameters.includes("reasoning_effort")
+}
+
+function supportsFastContext(contextLength: number | undefined): boolean {
+  return !contextLength || contextLength <= 300_000
+}
 
 /** Pi's Expandable contract (interactive-mode.ts). */
 interface Expandable {
@@ -154,7 +246,9 @@ export type CreateFurnaceTerminalOptions = {
 
 export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): FurnaceTerminal {
   // Theme must be initialized before any component reads the global theme proxy.
-  initTheme(resolveTheme(options.themeName).name)
+  const initialTheme = resolveTheme(options.themeName)
+  let currentThemeName = initialTheme.displayLabel
+  initTheme(initialTheme.name)
 
   const keybindings = KeybindingsManager.create()
   setKeybindings(keybindings)
@@ -167,7 +261,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   // ---------------------------------------------------------------------------
 
   let currentTitle = options.title
+  let currentForkParentTitle: string | undefined
   let currentModel = options.model
+  let currentModelDisplayName: string | undefined
   let currentModelSettings: ModelSettings = { ...options.modelSettings }
   let currentMode: AgentMode = "agent"
   let lofiEnabled = false
@@ -186,6 +282,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       id,
       provider,
       contextWindow: contextUsage?.window ?? 0,
+      name: currentModelDisplayName,
       reasoning: currentModelSettings.reasoningEffort !== undefined,
     }
   }
@@ -195,6 +292,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       return {
         model: footerModel(),
         thinkingLevel: thinkingLevelFromSettings(currentModelSettings),
+        fast: currentModelSettings.fast === true && supportsFastContext(currentModelSettings.contextLength),
+        mode: currentMode,
+        configuredContextWindow: currentModelSettings.contextLength,
+        themeName: currentThemeName,
+        forkParentTitle: currentForkParentTitle,
       }
     },
     sessionManager: {
@@ -243,12 +345,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     paddingX: 1,
     autocompleteMaxVisible: 10,
   })
+  wireSlashAutocompletePreview(editor, options.onAutocompleteHover)
   const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
   editor.setAutocompleteProvider(slashProvider)
   editorContainer.addChild(editor)
 
   const footerDataProvider = new FooterDataProvider(options.cwd)
-  const footer = new FooterComponent(footerSession, footerDataProvider)
+  const footer = new FooterComponent(footerSession, footerDataProvider, options.statusLine)
 
   // Startup header: FURNACE banner + version, then pi-style keybinding hints.
   const logo = () => theme.fg("dim", `v${packageVersion}`)
@@ -520,14 +623,15 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   // ---------------------------------------------------------------------------
 
   const updateFooterStatuses = () => {
-    footerDataProvider.setExtensionStatus("mode", currentMode === "plan" ? theme.fg("warning", "plan mode") : undefined)
+    footerDataProvider.setExtensionStatus("mode", undefined)
     footerDataProvider.setExtensionStatus("lofi", lofiEnabled ? "lofi" : undefined)
     footer.invalidate()
     ui.requestRender()
   }
 
-  const setModel = (model: string, settings: ModelSettings, _displayName?: string) => {
+  const setModel = (model: string, settings: ModelSettings, displayName?: string) => {
     currentModel = model
+    currentModelDisplayName = displayName
     currentModelSettings = { ...settings }
     updateEditorBorderColor()
     footer.invalidate()
@@ -564,16 +668,19 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const setSessionMeta = (meta: { forkParentTitle?: string; title: string }) => {
+    currentForkParentTitle = meta.forkParentTitle
     setTitle(meta.title)
   }
 
   const setStatusLinePreferences = (_prefs: StatusLinePreferences) => {
+    footer.setStatusLinePreferences(_prefs)
     footer.invalidate()
     ui.requestRender()
   }
 
   const setTheme = (themeName: string) => {
     const choice = resolveTheme(themeName)
+    currentThemeName = choice.displayLabel
     setPiTheme(choice.name)
   }
 
@@ -800,31 +907,70 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     onSelect: (model: string, settings: ModelSettings, done: boolean) => void,
     onCancel: () => void,
   ) => {
-    const supportsReasoning = choice.supportedParameters.includes("reasoning")
-    const supportsFast = choice.supportedParameters.includes("fast")
+    const supportsReasoning = supportsReasoningParameter(choice)
     const updatedSettings: ModelSettings = { ...settings }
+    const autoContextLabel = choice.contextLength ? `auto (${compactTokenLabel(choice.contextLength)})` : "auto"
+    const contextValues = [
+      autoContextLabel,
+      ...uniqueTokenChoices([
+        32_000,
+        64_000,
+        128_000,
+        200_000,
+        ...(choice.contextLength ? [choice.contextLength] : []),
+        ...(settings.contextLength ? [settings.contextLength] : []),
+      ]),
+    ]
+    const defaultMaxOutputLabel = `default (${defaultMaxOutputTokens})`
+    const maxOutputValues = [
+      defaultMaxOutputLabel,
+      ...uniqueTokenChoices([
+        1024,
+        2048,
+        4096,
+        defaultMaxOutputTokens,
+        12_000,
+        16_000,
+        32_000,
+        ...(settings.maxOutputTokens ? [settings.maxOutputTokens] : []),
+      ]),
+    ]
 
     const settingItems = [
+      {
+        id: "contextLength",
+        label: "Context window",
+        description: "Auto uses the selected model's advertised context window",
+        currentValue: currentTokenChoice(settings.contextLength, autoContextLabel),
+        values: contextValues,
+      },
+      {
+        id: "maxOutputTokens",
+        label: "Max output tokens",
+        description: "Caps one assistant turn; lower values avoid huge provider reservations",
+        currentValue: currentTokenChoice(settings.maxOutputTokens, defaultMaxOutputLabel),
+        values: maxOutputValues,
+      },
       ...(supportsReasoning
         ? [{
             id: "reasoning",
             label: "Reasoning effort",
+            description: "Controls provider reasoning/thinking budget when the model supports it",
             currentValue: settings.reasoningEffort ?? "none",
             values: ["none", "low", "medium", "high", "xhigh"],
           }]
         : []),
-      ...(supportsFast
-        ? [{
-            id: "fast",
-            label: "Fast mode",
-            currentValue: settings.fast ? "on" : "off",
-            values: ["on", "off"],
-          }]
-        : []),
+      {
+        id: "fast",
+        label: "Fast provider routing",
+        description: "Prefer throughput routing when context is 300K or less",
+        currentValue: settings.fast && supportsFastContext(settings.contextLength) ? "on" : "off",
+        values: ["on", "off"],
+      },
       // SettingsList only fires onChange for items with a non-empty values
       // list (Enter cycles values); a single empty value makes Enter on
-      // "Done" fire onChange without displaying anything on the right.
-      { id: "done", label: "Done", currentValue: "", values: [""] },
+      // "Save" fire onChange.
+      { id: "done", label: "Save and use model", currentValue: "Enter", values: ["Enter"] },
     ]
 
     showSelectorPanel(`Model: ${choice.name}`, (done) => {
@@ -833,12 +979,28 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         MAX_VISIBLE_SETTINGS_LIST,
         getSettingsListTheme(),
         (id, value) => {
-          if (id === "reasoning") updatedSettings.reasoningEffort = value as ReasoningEffort
-          if (id === "fast") updatedSettings.fast = value === "on"
           if (id === "done") {
             done()
             onSelect(choice.id, updatedSettings, true)
+            return
           }
+          if (id === "contextLength") {
+            const parsed = parseTokenChoice(value)
+            if (parsed) updatedSettings.contextLength = parsed
+            else delete updatedSettings.contextLength
+            if (!supportsFastContext(updatedSettings.contextLength)) {
+              updatedSettings.fast = false
+              list.updateValue("fast", "off")
+            }
+          }
+          if (id === "maxOutputTokens") {
+            const parsed = parseTokenChoice(value)
+            if (parsed) updatedSettings.maxOutputTokens = parsed
+            else delete updatedSettings.maxOutputTokens
+          }
+          if (id === "reasoning") updatedSettings.reasoningEffort = value as ReasoningEffort
+          if (id === "fast") updatedSettings.fast = value === "on" && supportsFastContext(updatedSettings.contextLength)
+          onSelect(choice.id, updatedSettings, false)
         },
         () => {
           done()
@@ -944,29 +1106,30 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const showSettings = (prefs: FurnacePreferences, onSave: (prefs: FurnacePreferences) => void) => {
+    let currentPrefs = { ...prefs }
     const contextValue = (): string => {
-      if (prefs.statusContextMode === "off" || prefs.statusShowContext === false) return "off"
-      if (prefs.statusContextMode === "percent") return "percent only"
-      if (prefs.statusContextMode === "tokens-percent" || prefs.statusShowContextPercent === true) return "percent"
+      if (currentPrefs.statusContextMode === "off" || currentPrefs.statusShowContext === false) return "off"
+      if (currentPrefs.statusContextMode === "percent") return "percent only"
+      if (currentPrefs.statusContextMode === "tokens-percent" || currentPrefs.statusShowContextPercent === true) return "percent"
       return "on"
     }
 
     const settingItems = [
-      { id: "typingIndicator", label: "Typing indicator", currentValue: prefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
-      { id: "typingIndicatorBlink", label: "Typing blink", currentValue: prefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
-      { id: "notifications", label: "Notifications", currentValue: prefs.notifications === true ? "on" : "off", values: ["off", "on"] },
-      { id: "statusShowAppName", label: "App name", currentValue: prefs.statusShowAppName === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowCwd", label: "Cwd", currentValue: prefs.statusShowCwd === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowTitle", label: "Title", currentValue: prefs.statusShowTitle === false ? "off" : "on", values: ["on", "off"] },
+      { id: "typingIndicator", label: "Typing indicator", currentValue: currentPrefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
+      { id: "typingIndicatorBlink", label: "Typing blink", currentValue: currentPrefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
+      { id: "notifications", label: "Notifications", currentValue: currentPrefs.notifications === true ? "on" : "off", values: ["off", "on"] },
+      { id: "statusShowAppName", label: "App name", currentValue: currentPrefs.statusShowAppName === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowCwd", label: "Cwd", currentValue: currentPrefs.statusShowCwd === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowTitle", label: "Title", currentValue: currentPrefs.statusShowTitle === false ? "off" : "on", values: ["on", "off"] },
       { id: "statusShowContext", label: "Context", currentValue: contextValue(), values: ["on", "percent", "percent only", "off"] },
-      { id: "statusShowCost", label: "Cost", currentValue: prefs.statusShowCost === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowMode", label: "Mode", currentValue: prefs.statusShowMode === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowWindow", label: "Window", currentValue: prefs.statusShowWindow === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowTheme", label: "Theme", currentValue: prefs.statusShowTheme === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowModel", label: "Model", currentValue: prefs.statusShowModel === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowReasoning", label: "Reasoning", currentValue: prefs.statusShowReasoning === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowFast", label: "Fast routing", currentValue: prefs.statusShowFast === false ? "off" : "on", values: ["on", "off"] },
-      { id: "statusShowForkParent", label: "Fork parent", currentValue: prefs.statusShowForkParent === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowCost", label: "Cost", currentValue: currentPrefs.statusShowCost === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowMode", label: "Mode", currentValue: currentPrefs.statusShowMode === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowWindow", label: "Window", currentValue: currentPrefs.statusShowWindow === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowTheme", label: "Theme", currentValue: currentPrefs.statusShowTheme === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowModel", label: "Model", currentValue: currentPrefs.statusShowModel === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowReasoning", label: "Reasoning", currentValue: currentPrefs.statusShowReasoning === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowFast", label: "Fast routing", currentValue: currentPrefs.statusShowFast === false ? "off" : "on", values: ["on", "off"] },
+      { id: "statusShowForkParent", label: "Fork parent", currentValue: currentPrefs.statusShowForkParent === false ? "off" : "on", values: ["on", "off"] },
     ]
 
     showSelectorPanel("Settings", (done) => {
@@ -975,7 +1138,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         MAX_VISIBLE_SETTINGS_LIST,
         getSettingsListTheme(),
         (id, value) => {
-          const updated = { ...prefs }
+          const updated = { ...currentPrefs }
           switch (id) {
             case "typingIndicator":
               updated.typingIndicator = value as "block" | "underscore" | "bar"
@@ -997,6 +1160,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
               }
               break
           }
+          currentPrefs = updated
           onSave(updated)
         },
         () => done(),

@@ -247,7 +247,7 @@ export async function runInteractive(input: {
           choice,
           choice.id === input.config.model ? input.config.modelSettings : {},
           (_model, settings, done) => {
-            if (done) void applyModelSelection(choice, settings)
+            void applyModelSelection(choice, settings, { persist: done, refresh: done })
           },
           () => refreshCurrentSession(),
         )
@@ -1085,7 +1085,9 @@ export async function runInteractive(input: {
    * Apply a model choice, switching the active provider first when the model
    * belongs to a different (credentialed) provider.
    */
-  async function applyModelSelection(match: ProviderModel, settings: ModelSettings, opts?: { global?: boolean }): Promise<boolean> {
+  async function applyModelSelection(match: ProviderModel, settings: ModelSettings, opts?: { global?: boolean; persist?: boolean; refresh?: boolean }): Promise<boolean> {
+    const persist = opts?.persist ?? true
+    const refresh = opts?.refresh ?? true
     if (match.providerId !== input.config.provider) {
       const customProviders = await loadCustomProviders().catch(() => [] as CustomProvider[])
       const def = resolveProvider(match.providerId, customProviders)
@@ -1102,18 +1104,20 @@ export async function runInteractive(input: {
       input.config.apiKey = apiKey
       input.config.openRouterApiKey = apiKey
       input.config.providerConfig = { ...def, apiKey, siteUrl: input.config.siteUrl, appName: input.config.appName }
-      await saveGlobalPreferences({ provider: def.id }).catch(() => {})
+      if (persist) await saveGlobalPreferences({ provider: def.id }).catch(() => {})
     }
     input.config.model = match.id
     input.config.modelSettings = settings
     terminal.setModel(match.id, settings, match.name)
-    await (opts?.global
-      ? saveGlobalPreferences({ model: match.id, modelSettings: settings })
-      : saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings })
-    ).catch((error) => {
-      terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
-    })
-    refreshCurrentSession()
+    if (persist) {
+      await (opts?.global
+        ? saveGlobalPreferences({ model: match.id, modelSettings: settings })
+        : saveModelPreferences(input.cwd, { model: match.id, modelSettings: settings })
+      ).catch((error) => {
+        terminal.setTranscript([{ role: "assistant", content: `Failed to save model preference: ${formatError(error)}` }])
+      })
+    }
+    if (refresh) refreshCurrentSession()
     return true
   }
 
@@ -1171,7 +1175,7 @@ export async function runInteractive(input: {
           match,
           match.id === input.config.model ? input.config.modelSettings : {},
           (_model, settings, done) => {
-            if (done) void applyModelSelection(match, settings)
+            void applyModelSelection(match, settings, { persist: done, refresh: done })
           },
           () => {},
         )
