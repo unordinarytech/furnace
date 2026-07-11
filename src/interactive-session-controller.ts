@@ -135,6 +135,7 @@ export async function runInteractive(input: {
   const sessionRuntimeUi = new Map<string, SessionRuntimeUi>()
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
+  let persistentUpgradeNotice: string | undefined
   let repoIndexOnboardingRunning = false
   const initialSession = input.store.getSession(sessionId)
   let terminal!: FurnaceTerminal
@@ -307,9 +308,12 @@ export async function runInteractive(input: {
     showTransientStatus(`Repo indexing failed: ${formatError(error)}`, 6000)
   })
 
-  // Non-blocking startup update check
+  // Non-blocking startup update check — shown persistently until the session ends
   void checkForUpdate().then((notice) => {
-    if (notice) showTransientStatus(notice, 6000)
+    if (notice) {
+      persistentUpgradeNotice = notice
+      syncPersistentStatusNotice()
+    }
   })
 
   refreshCurrentSession()
@@ -731,6 +735,10 @@ export async function runInteractive(input: {
     const notice = missingApiKeyNotice()
     if (notice) {
       terminal.setStatusNotice(notice, "warning")
+      return
+    }
+    if (persistentUpgradeNotice) {
+      terminal.setStatusNotice(persistentUpgradeNotice)
       return
     }
     terminal.setStatusNotice(undefined)

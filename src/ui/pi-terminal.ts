@@ -828,7 +828,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     title: string,
     items: AutocompleteItem[],
     onSelect: (item: AutocompleteItem) => void,
-    onCancel: () => void,
+    onCancel: (() => void) | null,
     extras?: Component[],
   ) => {
     showSelectorPanel(title, (done) => {
@@ -837,9 +837,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         done()
         onSelect(item)
       }
-      list.onCancel = () => {
-        done()
-        onCancel()
+      if (onCancel !== null) {
+        list.onCancel = () => {
+          done()
+          onCancel()
+        }
       }
       const wrapper = new Container()
       for (const extra of extras ?? []) {
@@ -858,6 +860,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         label: request.questions.length > 1 ? `${question.prompt}: ${option.label}` : option.label,
       })),
     )
+    const mustAnswer = request.questions.every((q) => q.allowRefuse === false)
     selectListPanel(
       request.questions[0]?.prompt || "Question",
       items,
@@ -874,7 +877,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           ],
         })
       },
-      () => resolve({ rejected: true, answers: [] }),
+      mustAnswer ? null : () => resolve({ rejected: true, answers: [] }),
     )
   }
 
