@@ -21,6 +21,7 @@ import {
   type AutocompleteItem,
   type Component,
   type Terminal,
+  visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
   getEditorTheme,
@@ -77,6 +78,7 @@ import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
+import { saveClipboardImage } from "../utils/clipboard.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
@@ -103,19 +105,31 @@ class RelatedAutocompleteSelectList extends SelectList {
   render(width: number): string[] {
     const selected = this.getSelectedItem?.()
     const relatedValue = selected && isPromptAutocompleteItem(selected) ? selected.relatedValue : undefined
-    if (!relatedValue) return super.render(width)
 
-    const related = this.rawItems.find((item) => item.value === relatedValue)
-    if (!related) return super.render(width)
+    let baseLines: string[]
+    if (!relatedValue) {
+      baseLines = super.render(width)
+    } else {
+      const related = this.rawItems.find((item) => item.value === relatedValue)
+      if (!related) {
+        baseLines = super.render(width)
+      } else {
+        const originalLabel = related.label
+        const originalDescription = related.description
+        related.label = `↳ ${originalLabel}`
+        related.description = originalDescription ? `fork parent · ${originalDescription}` : "fork parent"
+        baseLines = super.render(width).map((line) => (line.includes("↳ ") ? theme.fg("warning", line) : line))
+        related.label = originalLabel
+        related.description = originalDescription
+      }
+    }
 
-    const originalLabel = related.label
-    const originalDescription = related.description
-    related.label = `↳ ${originalLabel}`
-    related.description = originalDescription ? `fork parent · ${originalDescription}` : "fork parent"
-    const lines = super.render(width).map((line) => line.includes("↳ ") ? theme.fg("warning", line) : line)
-    related.label = originalLabel
-    related.description = originalDescription
-    return lines
+    // Apply a subtle background to each autocomplete row so the slash menu
+    // reads as a distinct panel rather than floating plain text.
+    return baseLines.map((line) => {
+      const pad = " ".repeat(Math.max(0, width - visibleWidth(line)))
+      return theme.bg("toolPendingBg", line + pad)
+    })
   }
 }
 
@@ -216,6 +230,71 @@ class ExpandableText extends Text implements Expandable {
 
   setExpanded(expanded: boolean): void {
     this.setText(expanded ? this.getExpandedText() : this.getCollapsedText())
+  }
+}
+
+/**
+ * Styled top border for the chat input area.
+ * Renders ╭──────────────────╮ using corner chars and border color — distinct
+ * from pi's plain DynamicBorder and signals that the input below is "boxed in".
+ */
+class InputTopBorder implements Component {
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    if (width < 2) return [theme.fg("border", "─".repeat(Math.max(1, width)))]
+    const inner = Math.max(0, width - 2)
+    return [theme.fg("border", "╭" + "─".repeat(inner) + "╮")]
+  }
+}
+
+// Strips ANSI SGR codes and APC cursor-marker sequences so we can inspect raw
+// character content of a rendered line (used to detect the editor border line).
+const STRIP_ANSI_RE = /\x1b(?:\[[^m]*m|_[^\x07]*\x07)/g
+function stripAnsi(s: string): string {
+  return s.replace(STRIP_ANSI_RE, "")
+}
+
+/**
+ * Wraps the chat editor with │ side borders and replaces the editor's own
+ * horizontal bottom-border line with ╰──────╯ corners, producing a full
+ * rounded box. Extends Container so TUI.isComponentMounted() can find the
+ * inner editor for focus tracking.
+ */
+class SideBorderedEditor extends Container {
+  private readonly inner: CustomEditor
+
+  constructor(editor: CustomEditor) {
+    super()
+    this.addChild(editor)
+    this.inner = editor
+  }
+
+  override render(width: number): string[] {
+    const innerWidth = Math.max(1, width - 4)
+    const lines = this.inner.render(innerWidth)
+    const left = theme.fg("border", "│") + " "
+    const right = " " + theme.fg("border", "│")
+    const bottomBorder = theme.fg("border", "╰" + "─".repeat(Math.max(0, width - 2)) + "╯")
+
+    // The editor always emits a top border AND a bottom border (both pure ─ chars).
+    // InputTopBorder already supplies ╭──────╮, so we suppress the editor's top
+    // border and replace only the bottom one with ╰──────╯.
+    let suppressedTopBorder = false
+    const result: string[] = []
+    for (const line of lines) {
+      const raw = stripAnsi(line)
+      const isPureDash = raw.length > 0 && /^─+$/.test(raw)
+      if (isPureDash && !suppressedTopBorder) {
+        suppressedTopBorder = true
+        // skip — InputTopBorder owns the top of the box
+      } else if (isPureDash) {
+        result.push(bottomBorder)
+      } else {
+        result.push(left + line + right)
+      }
+    }
+    return result
   }
 }
 
@@ -348,7 +427,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   wireSlashAutocompletePreview(editor, options.onAutocompleteHover)
   const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
   editor.setAutocompleteProvider(slashProvider)
-  editorContainer.addChild(editor)
+  editorContainer.addChild(new InputTopBorder())
+  editorContainer.addChild(new SideBorderedEditor(editor))
 
   const footerDataProvider = new FooterDataProvider(options.cwd)
   const footer = new FooterComponent(footerSession, footerDataProvider, options.statusLine)
@@ -500,7 +580,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         continue
       }
       if (message.role === "user") {
-        const suffix = message.imageCount ? theme.fg("dim", `\n[${message.imageCount} image${message.imageCount > 1 ? "s" : ""} attached]`) : ""
+        const suffix = ""
         addUserMessage(message.content + suffix)
       } else if (message.role === "assistant" && message.content) {
         chatContainer.addChild(new AssistantMessageComponent(assistantMessageFromText(message.content), false, getMarkdownTheme(), "Thinking...", 1))
@@ -783,6 +863,44 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     options.onInputChange?.(value)
   }
 
+  // Wire up clipboard image paste (Ctrl+V / Cmd+V / Alt+V).
+  // Saves the clipboard image to .furnace/images/, assigns a sequential label,
+  // and inserts [Image #N] at the cursor so the token references the attachment.
+  editor.onPasteImage = () => {
+    void (async () => {
+      const label = String(imageAttachments.length + 1)
+      const timestamp = Date.now()
+      const imgDir = `${options.cwd}/.furnace/images`
+      const imgPath = `${imgDir}/clip_${timestamp}.png`
+
+      const saved = await saveClipboardImage(imgPath)
+      if (!saved) {
+        setStatusNotice("No image in clipboard", "warning")
+        return
+      }
+
+      try {
+        const { readFile } = await import("node:fs/promises")
+        const buffer = await readFile(imgPath)
+        const base64 = buffer.toString("base64")
+        const size = buffer.length
+
+        imageAttachments.push({
+          id: crypto.randomUUID(),
+          source: { type: "base64", media_type: "image/png", data: base64 },
+          displayName: `clip_${timestamp}.png`,
+          size,
+          label,
+        })
+
+        editor.insertTextAtCursor(`[Image #${label}]`)
+        ui.requestRender()
+      } catch {
+        setStatusNotice("Failed to read clipboard image", "error")
+      }
+    })()
+  }
+
   // Global fallback so Ctrl+C works while a selector has focus, like pi's
   // SIGINT handling.
   ui.addInputListener((data) => {
@@ -801,7 +919,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const restoreEditor = () => {
     editorContainer.clear()
-    editorContainer.addChild(editor)
+    editorContainer.addChild(new InputTopBorder())
+    editorContainer.addChild(new SideBorderedEditor(editor))
     ui.setFocus(editor)
     ui.requestRender()
   }
