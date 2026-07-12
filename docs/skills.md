@@ -13,8 +13,6 @@ Furnace's skill system is a hybrid of the harnesses we inspected:
 - Hermes Agent influenced hidden/scaffolded explicit skill invocation messages, user-inspection commands, agent-created skill management, and the safety stance that persistent skill writes need explicit approval and a preview.
 - Cursor and Claude Code influenced the discovery roots. Furnace can read existing Cursor and Claude Code skill directories so the user's installed skills are available in Furnace too.
 
-The research snapshot is in `report/skills.md`. This document records the current Furnace behavior.
-
 ## Skill Format
 
 Furnace discovers skills as directories containing `SKILL.md`:

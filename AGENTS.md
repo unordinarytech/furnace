@@ -153,7 +153,7 @@ nvm use
 - Web search/fetch are MCP-style HTTP integrations with bounded output; provider configuration, error surfacing, and tests should stay current as those services change.
 - Skills load from many local/plugin roots. Be careful about duplicate names, disabled model invocation, and never treating managed/plugin cache skill roots as writable.
 - File stale-write protection depends on read receipts/snapshots. Preserve this when changing `read`, `write`, `edit`, or session persistence.
-- Plan artifacts live under `.furnace/plans/`; historical docs under `docs/plans/` are implementation notes, not the active roadmap.
+- Plan artifacts live under `.furnace/plans/`.
 
 ## Useful Comparisons
 

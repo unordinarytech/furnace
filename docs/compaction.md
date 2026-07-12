@@ -19,8 +19,6 @@ Furnace combines the strongest parts of the inspected systems:
 - Hermes Agent: hardened summary behavior. Furnace summaries are reference-only, preserve exact operational facts, redact secrets, protect the latest user intent, and use a deterministic fallback when LLM summarization fails.
 - Headroom: later context-bloat direction. Headroom is best treated as a future live-zone/tool-output compression layer, not as the primary session compactor.
 
-The research snapshot lives in `report/compaction.md`.
-
 ## Storage Model
 
 Compaction appends a normal session entry:

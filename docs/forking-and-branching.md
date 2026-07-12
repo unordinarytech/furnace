@@ -106,7 +106,7 @@ This prevents manual forks, subagents, future delegation sessions, and other chi
 
 ## Harness Provenance
 
-This design combines lessons from the reference harnesses inspected locally in `report/forking-and-branching.md`.
+This design combines lessons from the reference harnesses inspected while building Furnace.
 
 - **Pi** influenced the core architecture: append-only entry trees, active-leaf paths, and the distinction between same-session branching and new-session forking.
 - **OpenCode** influenced the UX: choose a prior user prompt, fork before it, and put that prompt back in the composer for editing.

@@ -214,7 +214,6 @@ Current behavior:
 Current implementation:
 
 - `docs/skills.md` is the canonical skills design and behavior reference.
-- `report/skills.md` is the inspected-source research snapshot.
 - `src/skills/loader.ts` handles discovery, validation, provenance, and configured paths.
 - `src/skills/context.ts` renders guidance, loaded skill output, and hidden invocation messages.
 - `src/skills/manage.ts` constrains agent-created skill writes.
@@ -249,7 +248,6 @@ Current behavior:
 Current implementation:
 
 - `docs/plan.md` is the canonical plan-mode behavior reference.
-- `report/plan-mode.md` is the inspected-source research snapshot.
 - `src/plan-mode.ts` owns mode reconstruction, plan path generation, plan guidance, and execution handoff text.
 - `src/permissions.ts` enforces the mode-aware safety clamp.
 - `src/cli.ts` wires slash commands, mode entries, subagent inheritance, and the execute/refine/stay bridge.
@@ -297,7 +295,6 @@ Current behavior:
 Current implementation:
 
 - `docs/compaction.md` is the canonical compaction behavior reference.
-- `report/compaction.md` is the inspected-source research snapshot.
 - `src/session/compaction.ts` owns token estimation, cut selection, summary prompting, fallback, and redaction.
 - `src/session/context.ts` projects latest compaction summary plus the kept suffix into model messages.
 - `src/session/store.ts` persists compaction entries and clears session file-read state.
