@@ -59,6 +59,17 @@ function asciiMark(width: number): string[] {
   return [theme.bold(theme.fg("accent", "FURNACE"))]
 }
 
+const EARLY_ACCESS_MESSAGE = "EARLY STAGES · OPEN AN ISSUE IF SOMETHING FEELS OFF"
+const ISSUE_URL = "https://github.com/amoreX/furnace/issues"
+
+function earlyAccessBanner(width: number): string {
+  const full = `${EARLY_ACCESS_MESSAGE} · ${ISSUE_URL}`
+  const compact = `EARLY STAGES · ${ISSUE_URL}`
+  const content = visibleWidth(full) <= width - 4 ? full : compact
+  const label = theme.bold(theme.fg("accent", ` ${content}`))
+  return truncateToWidth(label, width, "…")
+}
+
 export class LayoutHeaderComponent implements Component {
   private expanded = false
 
@@ -77,6 +88,7 @@ export class LayoutHeaderComponent implements Component {
         return [
           "",
           ...(showPart(state, "statusShowAppName") ? asciiMark(width) : []),
+          earlyAccessBanner(width),
           "",
           theme.fg("accent", horizontalRule(width, showPart(state, "statusShowAppName") ? "╔═[ OPERATOR CONSOLE ]" : "╔═", "═", "╗")),
           rightAligned(
@@ -89,6 +101,7 @@ export class LayoutHeaderComponent implements Component {
         return [
           "",
           ...(showPart(state, "statusShowAppName") ? asciiMark(width) : []),
+          earlyAccessBanner(width),
           rightAligned(
             theme.fg("dim", `v${state.version}`),
             showPart(state, "statusShowTitle") ? theme.fg("dim", `№ ${state.title}`) : "",
@@ -102,7 +115,7 @@ export class LayoutHeaderComponent implements Component {
         const hints = this.expanded
           ? ["ctrl+c interrupt / clear", "ctrl+d exit", "ctrl+o expand tools", "/ commands", "drop files to attach"]
           : ["ctrl+c interrupt · / commands · ctrl+o more"]
-        return ["", ...mark, "", ` ${theme.fg("dim", `v${state.version}`)}`, ...hints.map((hint) => ` ${theme.fg("muted", hint)}`), ""]
+        return ["", ...mark, earlyAccessBanner(width), "", ` ${theme.fg("dim", `v${state.version}`)}`, ...hints.map((hint) => ` ${theme.fg("muted", hint)}`), ""]
       }
     }
   }

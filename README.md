@@ -21,7 +21,8 @@ The project is still early, but it is no longer just a plan: the current codebas
 - Delegates independent work to subagent task groups.
 - Provides plan mode for implementation planning before mutating code.
 - Can create a compact local repository index for faster project orientation.
-- Provides six structural UI layouts plus configurable themes, status line fields, model settings, and typing indicators.
+- Provides three structural UI layouts plus configurable themes, status line fields, model settings, and typing indicators.
+- Shows an early-access feedback banner linking directly to the Furnace issue tracker.
 
 ## Requirements
 
