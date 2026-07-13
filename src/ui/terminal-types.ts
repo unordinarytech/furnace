@@ -1,6 +1,6 @@
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
-import type { FurnacePreferences, ModelSettings, StatusLinePreferences } from "../preferences.js"
+import type { FurnacePreferences, ModelSettings, StatusLinePreferences, TerminalLayout } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import type { AgentMode } from "../plan-mode.js"
@@ -40,6 +40,7 @@ export type FurnaceTerminal = {
   setStatusLinePreferences(preferences: StatusLinePreferences): void
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
+  setLayout(layout: TerminalLayout): void
   setMode(mode: AgentMode, planPath?: string): void
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void

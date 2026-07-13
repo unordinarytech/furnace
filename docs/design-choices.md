@@ -70,6 +70,26 @@ Local adaptation:
 
 License: Pi's TUI is MIT licensed.
 
+## Structural Terminal Layouts
+
+Themes and layouts are separate settings. A theme changes color treatment; a layout changes information hierarchy, component order, transcript framing, composer chrome, and status placement.
+
+Current layouts:
+
+- `classic` preserves the original Pi-shaped vertical flow.
+- `focus` removes the large banner and footer in favor of a minimal session rail.
+- `forge` uses a responsive two-column transcript and telemetry sidecar above 100 columns, with a single-column fallback.
+- `console` puts live status above the transcript and docks a heavily framed command deck after session telemetry.
+- `notebook` treats messages as labelled editorial entries and moves session metadata before the composer.
+- `signal` uses a transmission header, framed transcript rows, and a broadcast status rail.
+
+Local adaptation:
+
+- Layout selection is persisted independently from the color theme and can be changed live in `/settings`.
+- Stable transcript, editor, queue, and status containers are recomposed instead of recreating runtime state.
+- `src/ui/pi/layouts.ts` owns profile-specific presentation; `src/ui/pi-terminal.ts` owns live component wiring.
+- The wide split view collapses at narrow terminal widths, so every layout remains usable without hiding core controls.
+
 ## Harness Self-Modification (`/evolve`)
 
 Pi is aggressively extensible and compile-free: extensions, skills, themes, and prompt templates load via `jiti` at runtime and hot-reload with `/reload`, so "ask pi to build it and it customizes itself on the fly" (see pi `packages/coding-agent/docs/extensions.md` and pi.dev). Furnace's `/evolve` targets the same "modify the harness" outcome but adapts it to Furnace's architecture.

@@ -44,7 +44,6 @@ import {
 } from "./pi/components/footer.js"
 import { CustomEditor } from "./pi/components/custom-editor.js"
 import { DynamicBorder } from "./pi/components/dynamic-border.js"
-import { keyHint, keyText, rawKeyHint } from "./pi/components/keybinding-hints.js"
 import {
   IdleStatus,
   WorkingStatusIndicator,
@@ -54,6 +53,12 @@ import { ModelSelectorComponent, type Model as PiSelectorModel } from "./pi/comp
 import { UserMessageComponent } from "./pi/components/user-message.js"
 import { AssistantMessageComponent, type AssistantMessage } from "./pi/components/assistant-message.js"
 import { ToolExecutionComponent } from "./pi/components/tool-execution.js"
+import {
+  LAYOUT_OPTIONS,
+  LayoutHeaderComponent,
+  LayoutTranscriptSurface,
+  LayoutTranscriptItem,
+} from "./pi/layouts.js"
 import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
 import { resolveTheme } from "./terminal-themes/index.js"
 import { packageVersion } from "../version.js"
@@ -73,7 +78,7 @@ import type {
 import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
 import { defaultMaxOutputTokens } from "../preferences.js"
-import type { FurnacePreferences, ModelSettings, ReasoningEffort, StatusLinePreferences } from "../preferences.js"
+import { normalizeTerminalLayout, type FurnacePreferences, type ModelSettings, type ReasoningEffort, type StatusLinePreferences, type TerminalLayout } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
 import type { TaskRecord } from "../tasks/types.js"
 import type { AgentMode } from "../plan-mode.js"
@@ -195,59 +200,6 @@ function isExpandable(obj: unknown): obj is Expandable {
   return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof (obj as Expandable).setExpanded === "function"
 }
 
-/** FURNACE banner from main's ink terminal, rendered width-aware in the header. */
-const FURNACE_BANNER = [
-  "███████╗██╗   ██╗██████╗ ███╗   ██╗███████╗ ██████╗███████╗",
-  "██╔════╝██║   ██║██╔══██╗████╗  ██║██╔════╝██╔════╝██╔════╝",
-  "█████╗  ██║   ██║██████╔╝██╔██╗ ██║███████╗██║     █████╗  ",
-  "██╔══╝  ██║   ██║██╔══██╗██║╚██╗██║██╔══██║██║     ██╔══╝  ",
-  "██║     ╚██████╔╝██║  ██║██║ ╚████║██║  ██║╚██████╗███████╗",
-  "╚═╝      ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝╚══════╝",
-]
-const FURNACE_BANNER_WIDTH = 65
-
-class FurnaceBannerComponent implements Component {
-  invalidate(): void {}
-
-  render(width: number): string[] {
-    if (width >= FURNACE_BANNER_WIDTH) {
-      return FURNACE_BANNER.map((row) => ` ${theme.bold(theme.fg("accent", row))}`)
-    }
-    return [` ${theme.bold(theme.fg("accent", "FURNACE"))}`]
-  }
-}
-
-/** Pi's ExpandableText (interactive-mode.ts) — used for the startup header. */
-class ExpandableText extends Text implements Expandable {
-  private readonly getCollapsedText: () => string
-  private readonly getExpandedText: () => string
-
-  constructor(getCollapsedText: () => string, getExpandedText: () => string, expanded = false, paddingX = 0, paddingY = 0) {
-    super(expanded ? getExpandedText() : getCollapsedText(), paddingX, paddingY)
-    this.getCollapsedText = getCollapsedText
-    this.getExpandedText = getExpandedText
-  }
-
-  setExpanded(expanded: boolean): void {
-    this.setText(expanded ? this.getExpandedText() : this.getCollapsedText())
-  }
-}
-
-/**
- * Styled top border for the chat input area.
- * Renders ╭──────────────────╮ using corner chars and border color — distinct
- * from pi's plain DynamicBorder and signals that the input below is "boxed in".
- */
-class InputTopBorder implements Component {
-  invalidate(): void {}
-
-  render(width: number): string[] {
-    if (width < 2) return [theme.fg("border", "─".repeat(Math.max(1, width)))]
-    const inner = Math.max(0, width - 2)
-    return [theme.fg("border", "╭" + "─".repeat(inner) + "╮")]
-  }
-}
-
 // Strips ANSI SGR codes and APC cursor-marker sequences so we can inspect raw
 // character content of a rendered line (used to detect the editor border line).
 const STRIP_ANSI_RE = /\x1b(?:\[[^m]*m|_[^\x07]*\x07)/g
@@ -255,51 +207,66 @@ function stripAnsi(s: string): string {
   return s.replace(STRIP_ANSI_RE, "")
 }
 
-/**
- * Wraps the chat editor with │ side borders and replaces the editor's own
- * horizontal bottom-border line with ╰──────╯ corners, producing a full
- * rounded box. Extends Container so TUI.isComponentMounted() can find the
- * inner editor for focus tracking.
- */
-class SideBorderedEditor extends Container {
+/** Layout-aware composer frame that keeps the inner editor mounted for focus. */
+class LayoutEditorFrame extends Container {
   private readonly inner: CustomEditor
 
-  constructor(editor: CustomEditor) {
+  constructor(
+    editor: CustomEditor,
+    private readonly readLayout: () => TerminalLayout,
+  ) {
     super()
     this.addChild(editor)
     this.inner = editor
   }
 
   override render(width: number): string[] {
+    const layout = this.readLayout()
+    if (layout === "notebook") {
+      const lines = this.inner.render(Math.max(1, width))
+      const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
+      return [
+        theme.fg("border", "─".repeat(Math.max(1, width))),
+        ...content,
+      ]
+    }
+
     const innerWidth = Math.max(1, width - 4)
     const lines = this.inner.render(innerWidth)
-    const left = theme.fg("border", "│") + " "
-    const right = " " + theme.fg("border", "│")
-    const bottomBorder = theme.fg("border", "╰" + "─".repeat(Math.max(0, width - 2)) + "╯")
+    const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
 
-    // The editor always emits a top border AND a bottom border (both pure ─ chars).
-    // InputTopBorder already supplies ╭──────╮, so we suppress the editor's top
-    // border and replace only the bottom one with ╰──────╯.
-    let suppressedTopBorder = false
-    const result: string[] = []
-    for (const line of lines) {
-      const raw = stripAnsi(line)
-      const isPureDash = raw.length > 0 && /^─+$/.test(raw)
-      if (isPureDash && !suppressedTopBorder) {
-        suppressedTopBorder = true
-        // skip — InputTopBorder owns the top of the box
-      } else if (isPureDash) {
-        result.push(bottomBorder)
-      } else {
-        result.push(left + line + right)
-      }
+    const frames: Record<Exclude<TerminalLayout, "notebook">, {
+      bottom: string
+      label: string
+      left: string
+      right: string
+      rightLabel: string
+      top: string
+    }> = {
+      classic:  { top: "╭", bottom: "╰", left: "│", right: "│", label: "", rightLabel: "" },
+      console:  { top: "╠", bottom: "╚", left: "║", right: "║", label: " >_ PROMPT ", rightLabel: " EXECUTE " },
     }
-    return result
+    const frame = frames[layout] ?? frames.classic
+    const topRight = frame.top === "╭" ? "╮" : frame.top === "╠" ? "╣" : "┐"
+    const leftLabel = width >= frame.label.length + 6 ? frame.label : ""
+    const rightLabel = width >= frame.label.length + frame.rightLabel.length + 8 ? frame.rightLabel : ""
+    const topDecoration = leftLabel || rightLabel
+      ? `─${leftLabel}${"─".repeat(Math.max(0, width - 4 - leftLabel.length - rightLabel.length))}${rightLabel}─`
+      : "─".repeat(Math.max(0, width - 2))
+    const top = frame.top + topDecoration + topRight
+    const bottomRight = frame.bottom === "╰" ? "╯" : frame.bottom === "╚" ? "╝" : "┘"
+    const bottom = frame.bottom + "─".repeat(Math.max(0, width - 2)) + bottomRight
+    return [
+      theme.fg("border", top),
+      ...content.map((line) => `${theme.fg("border", frame.left)} ${line} ${theme.fg("border", frame.right)}`),
+      theme.fg("border", bottom),
+    ]
   }
 }
 
 export type CreateFurnaceTerminalOptions = {
   cwd: string
+  layout?: TerminalLayout
   model: string
   modelSettings: ModelSettings
   onQueueEdit?: (id: string) => void
@@ -345,6 +312,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentModelDisplayName: string | undefined
   let currentModelSettings: ModelSettings = { ...options.modelSettings }
   let currentMode: AgentMode = "agent"
+  let currentLayout = normalizeTerminalLayout(options.layout)
   let lofiEnabled = false
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
@@ -408,8 +376,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   // ---------------------------------------------------------------------------
-  // Layout — mirrors pi interactive-mode init(): header, chat, pending,
-  // status, widgets above, editor, widgets below, footer.
+  // Layout primitives are stable containers. Profiles below recompose those
+  // primitives so switching layout never loses transcript or editor state.
   // ---------------------------------------------------------------------------
 
   const headerContainer = new Container()
@@ -421,63 +389,62 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const widgetContainerBelow = new Container()
 
   const editor = new CustomEditor(ui, getEditorTheme(), keybindings, {
-    paddingX: 1,
+    paddingX: 0,
     autocompleteMaxVisible: 10,
   })
   wireSlashAutocompletePreview(editor, options.onAutocompleteHover)
   const slashProvider = new SlashCommandAutocompleteProvider([], options.onAutocompleteTab)
   editor.setAutocompleteProvider(slashProvider)
-  editorContainer.addChild(new InputTopBorder())
-  editorContainer.addChild(new SideBorderedEditor(editor))
+  const editorFrame = new LayoutEditorFrame(editor, () => currentLayout)
+  editorContainer.addChild(editorFrame)
 
   const footerDataProvider = new FooterDataProvider(options.cwd)
   const footer = new FooterComponent(footerSession, footerDataProvider, options.statusLine)
+  const readLayoutState = () => ({
+    context: contextUsage,
+    costUsd,
+    cwd: options.cwd,
+    layout: currentLayout,
+    mode: currentMode,
+    model: currentModelDisplayName || currentModel,
+    themeName: currentThemeName,
+    title: currentTitle,
+    version: packageVersion,
+  })
+  const layoutHeader = new LayoutHeaderComponent(readLayoutState)
+  const transcriptSurface = new LayoutTranscriptSurface(chatContainer, readLayoutState)
+  const notebookBottomSpacing = new Spacer(1)
+  const notebookStatusBorder = new DynamicBorder()
+  headerContainer.addChild(layoutHeader)
+  widgetContainerAbove.addChild(new Spacer(2))
 
-  // Startup header: FURNACE banner + version, then pi-style keybinding hints.
-  const logo = () => theme.fg("dim", `v${packageVersion}`)
-  const expandedInstructions = () =>
-    [
-      keyHint("app.interrupt", "to interrupt"),
-      keyHint("app.clear", "to clear"),
-      rawKeyHint(`${keyText("app.clear")} twice`, "to exit"),
-      keyHint("app.exit", "to exit (empty)"),
-      keyHint("app.tools.expand", "to expand tools"),
-      keyHint("app.editor.external", "for external editor"),
-      rawKeyHint("/", "for commands"),
-      keyHint("app.message.dequeue", "to edit all queued messages"),
-      rawKeyHint("drop files", "to attach"),
-    ].join("\n")
-  const compactInstructions = () =>
-    [
-      keyHint("app.interrupt", "interrupt"),
-      rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
-      rawKeyHint("/", "commands"),
-      keyHint("app.tools.expand", "more"),
-    ].join(theme.fg("muted", " · "))
-  const builtInHeader = new ExpandableText(
-    () => `${logo()}\n${compactInstructions()}`,
-    () => `${logo()}\n${expandedInstructions()}`,
-    false,
-    1,
-    0,
-  )
-  headerContainer.addChild(new Spacer(1))
-  headerContainer.addChild(new FurnaceBannerComponent())
-  headerContainer.addChild(new Spacer(1))
-  headerContainer.addChild(builtInHeader)
-  headerContainer.addChild(new Spacer(1))
-
-  // Widget containers default to a single spacer, like pi's renderWidgets().
-  widgetContainerAbove.addChild(new Spacer(1))
-
-  ui.addChild(headerContainer)
-  ui.addChild(chatContainer)
-  ui.addChild(pendingMessagesContainer)
-  ui.addChild(statusContainer)
-  ui.addChild(widgetContainerAbove)
-  ui.addChild(editorContainer)
-  ui.addChild(widgetContainerBelow)
-  ui.addChild(footer)
+  const rebuildRootLayout = () => {
+    ui.clear()
+    const add = (...components: Component[]) => components.forEach((component) => ui.addChild(component))
+    switch (currentLayout) {
+      case "console":
+        add(headerContainer, statusContainer, pendingMessagesContainer, transcriptSurface, widgetContainerAbove, editorContainer, footer)
+        break
+      case "notebook":
+        add(
+          headerContainer,
+          transcriptSurface,
+          pendingMessagesContainer,
+          statusContainer,
+          widgetContainerAbove,
+          editorContainer,
+          notebookBottomSpacing,
+          notebookStatusBorder,
+          footer,
+        )
+        break
+      case "classic":
+      default:
+        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, widgetContainerBelow, footer)
+        break
+    }
+  }
+  rebuildRootLayout()
   ui.setFocus(editor)
 
   terminal.setTitle(`${currentTitle} — furnace`)
@@ -549,13 +516,17 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     if (chatContainer.children.length > 0) {
       chatContainer.addChild(new Spacer(1))
     }
-    chatContainer.addChild(new UserMessageComponent(text, getMarkdownTheme(), 1))
+    chatContainer.addChild(new LayoutTranscriptItem(
+      new UserMessageComponent(text, getMarkdownTheme(), 1),
+      "user",
+      () => currentLayout,
+    ))
   }
 
   const addToolComponent = (id: string, name: string, args: string): ToolExecutionComponent => {
     const component = new ToolExecutionComponent(name, id, parseToolArgs(args), toolOptions(), undefined, ui, options.cwd)
     component.setExpanded(toolOutputExpanded)
-    chatContainer.addChild(component)
+    chatContainer.addChild(new LayoutTranscriptItem(component, "tool", () => currentLayout))
     return component
   }
 
@@ -583,7 +554,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         const suffix = ""
         addUserMessage(message.content + suffix)
       } else if (message.role === "assistant" && message.content) {
-        chatContainer.addChild(new AssistantMessageComponent(assistantMessageFromText(message.content), false, getMarkdownTheme(), "Thinking...", 1))
+        chatContainer.addChild(new LayoutTranscriptItem(
+          new AssistantMessageComponent(assistantMessageFromText(message.content), false, getMarkdownTheme(), "Thinking...", 1),
+          "assistant",
+          () => currentLayout,
+        ))
       }
     }
     ui.requestRender()
@@ -598,7 +573,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     }
     if (!streamingComponent) {
       streamingComponent = new AssistantMessageComponent(undefined, false, getMarkdownTheme(), "Thinking...", 1)
-      chatContainer.addChild(streamingComponent)
+      chatContainer.addChild(new LayoutTranscriptItem(streamingComponent, "assistant", () => currentLayout))
     }
     streamingComponent.updateContent(assistantMessageFromText(text))
     ui.requestRender()
@@ -634,7 +609,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setToolsExpanded = (expanded: boolean) => {
     toolOutputExpanded = expanded
-    builtInHeader.setExpanded(expanded)
+    layoutHeader.setExpanded(expanded)
     for (const child of chatContainer.children) {
       if (isExpandable(child)) {
         child.setExpanded(expanded)
@@ -762,6 +737,13 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     const choice = resolveTheme(themeName)
     currentThemeName = choice.displayLabel
     setPiTheme(choice.name)
+  }
+
+  const setLayout = (layout: TerminalLayout) => {
+    currentLayout = normalizeTerminalLayout(layout)
+    rebuildRootLayout()
+    ui.invalidate()
+    ui.requestRender(true)
   }
 
   onThemeChange(() => {
@@ -919,8 +901,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const restoreEditor = () => {
     editorContainer.clear()
-    editorContainer.addChild(new InputTopBorder())
-    editorContainer.addChild(new SideBorderedEditor(editor))
+    editorContainer.addChild(editorFrame)
     ui.setFocus(editor)
     ui.requestRender()
   }
@@ -1236,7 +1217,15 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       return "on"
     }
 
+    const currentLayoutOption = LAYOUT_OPTIONS.find((option) => option.value === normalizeTerminalLayout(currentPrefs.layout))
     const settingItems = [
+      {
+        id: "layout",
+        label: "Interface layout",
+        description: currentLayoutOption?.description,
+        currentValue: currentLayoutOption?.label ?? "Classic",
+        values: LAYOUT_OPTIONS.map((option) => option.label),
+      },
       { id: "typingIndicator", label: "Typing indicator", currentValue: currentPrefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
       { id: "typingIndicatorBlink", label: "Typing blink", currentValue: currentPrefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
       { id: "notifications", label: "Notifications", currentValue: currentPrefs.notifications === true ? "on" : "off", values: ["off", "on"] },
@@ -1262,6 +1251,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         (id, value) => {
           const updated = { ...currentPrefs }
           switch (id) {
+            case "layout":
+              updated.layout = LAYOUT_OPTIONS.find((option) => option.label === value)?.value ?? "classic"
+              break
             case "typingIndicator":
               updated.typingIndicator = value as "block" | "underscore" | "bar"
               break
@@ -1425,6 +1417,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setCostUsage,
     setInputDisabled,
     setInputDraft,
+    setLayout,
     setLofi,
     setMode,
     setModel,

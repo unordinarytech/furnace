@@ -21,20 +21,12 @@ The project is still early, but it is no longer just a plan: the current codebas
 - Delegates independent work to subagent task groups.
 - Provides plan mode for implementation planning before mutating code.
 - Can create a compact local repository index for faster project orientation.
-- Provides configurable themes, status line fields, model settings, and typing indicators.
+- Provides six structural UI layouts plus configurable themes, status line fields, model settings, and typing indicators.
 
 ## Requirements
 
-- Node.js 22.x only. The repo is pinned to Node `22.22.3` via `.nvmrc` and `.node-version`.
-- npm.
+- Node.js 22.x.
 - A provider API key configured through `/login` or an environment variable.
-
-The scripts use `scripts/with-node22.sh` so native `better-sqlite3` stays compiled for the Node 22 ABI. If you switch Node versions, rebuild:
-
-```bash
-nvm use
-npm rebuild better-sqlite3
-```
 
 ## Install And Update
 
@@ -64,20 +56,6 @@ Start Furnace, then type `/login` to choose a provider and save an API key:
 
 ```bash
 furnace
-```
-
-Safety note: Furnace has permission gates for file writes, shell commands, and other risky tools, but it does not provide an OS-level sandbox yet. Use it in repositories where you are comfortable reviewing tool approvals.
-
-The `/login` provider list shows which providers are configured and whether each key comes from the environment, saved auth file, or a custom provider. Keys saved through `/login` are stored locally at `~/.furnace/auth.json` with file mode `0600`; select a provider and press `d` to delete its saved key from that file.
-
-You can also configure keys with environment variables:
-
-```bash
-OPENROUTER_API_KEY=...
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...
-DEEPSEEK_API_KEY=...
-GLM_API_KEY=...
 ```
 
 Run from a source checkout:
@@ -193,6 +171,13 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
 
 `/settings` opens a keyboard-driven preferences panel. Current settings include:
 
+- Interface layout:
+  - `Classic`: the original banner, transcript, composer, and footer stack
+  - `Focus`: minimal chrome and a compact single-line rail
+  - `Forge`: a wide two-column command center with a live session sidecar
+  - `Console`: an operator layout with top telemetry and a bottom command deck
+  - `Notebook`: an editorial conversation log with labelled entries
+  - `Signal`: a broadcast-style transmission desk
 - Typing indicator: block, underscore, or bar.
 - Typing blink: off/on, applied to any indicator style.
 - Notifications on/off.
@@ -285,12 +270,6 @@ The built-in model tools are:
 
 Each tool has a schema, permission metadata, execution logic, and bounded model-facing output. See [docs/tools.md](docs/tools.md).
 
-## Sessions, Forks, And Subagents
-
-Sessions are stored locally in SQLite at `.furnace/furnace.sqlite` inside the current workspace and represented as append-only entry trees. Furnace keeps an active leaf for each conversation path instead of rewriting old history.
-
-The `.furnace/` directory is local runtime state and should stay out of version control. In git workspaces, Furnace adds `.furnace/` to the repo's local `.git/info/exclude` file so it does not appear in `git status` without changing committed `.gitignore` files. Deleting `.furnace/furnace.sqlite` removes saved Furnace conversations for that workspace.
-
 ## Repository Index
 
 In interactive mode, Furnace can offer to initialize a git workspace by creating `.furnace/repo-index.md`. The prompt appears only when an API key is configured, the current folder is inside a git repo, and no index exists yet.
@@ -309,27 +288,6 @@ Current session behavior:
 - Subagent sessions are related to their parent but hidden from normal history.
 
 See [docs/session-management.md](docs/session-management.md) and [docs/forking-and-branching.md](docs/forking-and-branching.md).
-
-## Context Management
-
-Furnace has two complementary context systems:
-
-1. **Session compaction** summarizes older conversation entries when context gets large or when `/compact` is run.
-2. **Headroom-lite tool-output compression** compresses oversized tool outputs while saving the full original locally.
-
-Compressed originals are stored under:
-
-```txt
-.furnace/context-store/ctx_<id>.txt
-```
-
-The model can retrieve them with:
-
-```txt
-context_retrieve({"id":"ctx_..."})
-```
-
-See [docs/compaction.md](docs/compaction.md) and [docs/headroom-lite.md](docs/headroom-lite.md).
 
 ## Safety Model
 
@@ -373,25 +331,6 @@ flowchart TD
   Controller --> Subagents[Task/Subagent Manager]
 ```
 
-Important source areas:
-
-- `src/cli.ts` — CLI entrypoint and Commander setup.
-- `src/interactive-session-controller.ts` — interactive/headless/piped session orchestration.
-- `src/prompt-queue.ts`, `src/session-switching.ts`, `src/slash-command-router.ts`, `src/task-ui-bridge.ts` — focused orchestration helpers.
-- `src/agent/loop.ts` — reusable streamed agent loop and tool-call iteration.
-- `src/openrouter.ts` — OpenRouter completion/model-list integration.
-- `src/tools/registry.ts` and `src/tools/*` — built-in tool schemas, dispatch, and domain handlers.
-- `src/permissions.ts` — permission engine and plan-mode gating.
-- `src/session/store.ts` — SQLite session and entry persistence.
-- `src/session/context.ts` — session entries to model messages/transcript rows.
-- `src/session/compaction.ts` — context compaction.
-- `src/compression/*` — Headroom-lite output compression.
-- `src/ui/ink-terminal.tsx` and `src/ui/components/*` — terminal UI.
-- `src/commands.ts` — built-in slash command definitions.
-- `src/skills/*` — skill discovery/loading/management.
-- `src/tasks/*` — delegated subagent tasks.
-- `src/preferences.ts` — global/project preferences.
-
 ## Documentation
 
 Useful docs:
@@ -409,20 +348,3 @@ Useful docs:
 - [Plan mode](docs/plan.md)
 - [Design choices](docs/design-choices.md)
 
-## Current Limitations
-
-- Provider support is OpenRouter-first.
-- Interactive orchestration is still evolving, but it is split out of the CLI entrypoint into focused controller modules.
-- There is no container/OS sandbox adapter yet.
-- JSON/headless output exists, but there is not yet a stable public RPC/SDK event API.
-- The TUI is featureful and still evolving, especially around focus, autocomplete, and settings panels.
-
-## Prior Art
-
-Furnace borrows lessons from existing coding agents without trying to clone any single one:
-
-- Pi: minimal TypeScript harness and extension-first design.
-- OpenCode: keeping runtime concerns separate from terminal clients.
-- Codex CLI: strong sandboxing as a long-term trust model.
-- Claude Code: one engine across terminal, IDE, SDK, hooks, skills, and background agents.
-- Headroom: reversible, content-aware compression of large tool output.

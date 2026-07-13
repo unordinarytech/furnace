@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
 import dotenv from "dotenv"
-import { loadPreferences, type ModelSettings, type StatusLinePreferences, type TypingIndicatorStyle } from "./preferences.js"
+import { loadPreferences, normalizeTerminalLayout, type ModelSettings, type StatusLinePreferences, type TerminalLayout, type TypingIndicatorStyle } from "./preferences.js"
 import { getStoredKey, resolveKeyValue } from "./keys.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { resolveProvider, BUILTIN_PROVIDERS } from "./providers/registry.js"
@@ -16,6 +16,7 @@ const titlePromptPath = join(promptsDir, "title-system.md")
 
 export type FurnaceConfig = {
   appName: string
+  layout: TerminalLayout
   model: string
   modelSettings: ModelSettings
   notifications: boolean
@@ -68,6 +69,7 @@ export async function loadConfig(): Promise<FurnaceConfig> {
 
   return {
     appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
+    layout: normalizeTerminalLayout(preferences.layout || process.env.FURNACE_LAYOUT?.trim()),
     model: preferences.model?.trim() || process.env.OPENROUTER_MODEL?.trim() || "anthropic/claude-sonnet-4-6",
     notifications: preferences.notifications === true,
     modelSettings: preferences.modelSettings || {},

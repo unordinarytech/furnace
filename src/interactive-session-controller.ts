@@ -182,6 +182,7 @@ export async function runInteractive(input: {
   const { createFurnaceTerminal } = await import("./ui/pi-terminal.js")
   terminal = createFurnaceTerminal({
     cwd: input.cwd,
+    layout: input.config.layout,
     statusLine: input.config.statusLine,
     model: input.config.model,
     modelSettings: input.config.modelSettings,
@@ -456,6 +457,7 @@ export async function runInteractive(input: {
     }
     if (command.name === "/settings" || command.name === "/prefs") {
       const currentPrefs: FurnacePreferences = {
+        layout: input.config.layout,
         typingIndicator: input.config.typingIndicator,
         typingIndicatorBlink: input.config.typingIndicatorBlink,
         notifications: input.config.notifications,
@@ -466,11 +468,13 @@ export async function runInteractive(input: {
       }
       terminal.showSettings(currentPrefs, async (updated) => {
         Object.assign(input.config, {
+          layout: updated.layout ?? input.config.layout,
           typingIndicator: updated.typingIndicator ?? input.config.typingIndicator,
           typingIndicatorBlink: updated.typingIndicatorBlink === true,
           notifications: updated.notifications === true,
           statusLine: statusLinePreferencesFromPrefs(updated),
         })
+        terminal.setLayout(input.config.layout)
         terminal.setStatusLinePreferences(input.config.statusLine)
         await saveGlobalPreferences(updated).catch(() => {})
       })
@@ -1941,7 +1945,8 @@ export async function runPiped(input: {
               ? "percent"
               : "on"
       process.stdout.write(
-        `typingIndicator=${input.config.typingIndicator ?? "block"}\n` +
+        `layout=${input.config.layout}\n` +
+          `typingIndicator=${input.config.typingIndicator ?? "block"}\n` +
           `typingIndicatorBlink=${input.config.typingIndicatorBlink === true}\n` +
           `notifications=${input.config.notifications === true}\n` +
           `statusAppName=${statusLine.statusShowAppName !== false}\n` +
