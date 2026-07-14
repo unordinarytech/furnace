@@ -37,7 +37,16 @@ export type ToolCallInput = {
 
 export type ToolExecution = {
   content: string
+  control?: {
+    backgrounded?: boolean
+  }
   name: string
+  status: "error" | "success"
+}
+
+export type ToolHandlerResult = string | {
+  content: string
+  control?: ToolExecution["control"]
 }
 
 export type ToolDefinition = {
@@ -49,7 +58,7 @@ export type ToolDefinition = {
   }
 }
 
-export type ToolHandler = (args: unknown, context: ToolContext) => Promise<string>
+export type ToolHandler = (args: unknown, context: ToolContext) => Promise<ToolHandlerResult>
 
 export type RegisteredTool = {
   definition: ToolDefinition

@@ -1,5 +1,5 @@
 import { Container, type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui"
-import { normalizeTerminalLayout, type TerminalLayout } from "../../preferences.js"
+import { normalizeTerminalLayout, type StatusLinePreferences, type TerminalLayout } from "../../preferences.js"
 import { theme } from "./theme.js"
 
 export type LayoutOption = {
@@ -21,18 +21,13 @@ export type LayoutLiveState = {
   layout: TerminalLayout
   mode: "agent" | "plan"
   model: string
+  statusLine?: StatusLinePreferences
   themeName: string
   title: string
   version: string
 }
 
 type LayoutStateReader = () => LayoutLiveState
-
-function compactNumber(value: number): string {
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`
-  if (value >= 1000) return `${(value / 1000).toFixed(value % 1000 === 0 ? 0 : 1)}K`
-  return String(value)
-}
 
 function horizontalRule(width: number, left = "", fill = "─", right = ""): string {
   return left + fill.repeat(Math.max(0, width - visibleWidth(left) - visibleWidth(right))) + right
@@ -46,15 +41,8 @@ function rightAligned(left: string, right: string, width: number): string {
   return clippedLeft + " ".repeat(gap) + clippedRight
 }
 
-function contextLabel(state: LayoutLiveState): string {
-  if (!state.context || state.context.window <= 0) return "ctx —"
-  const percent = Math.round((state.context.tokens / state.context.window) * 100)
-  return `ctx ${percent}%`
-}
-
-function centered(content: string, width: number): string {
-  const clipped = truncateToWidth(content, width, "…")
-  return " ".repeat(Math.max(0, Math.floor((width - visibleWidth(clipped)) / 2))) + clipped
+function showPart(state: LayoutLiveState, key: keyof StatusLinePreferences): boolean {
+  return state.statusLine?.[key] !== false
 }
 
 const ASCII_WIDE = [
@@ -88,25 +76,29 @@ export class LayoutHeaderComponent implements Component {
       case "console":
         return [
           "",
-          ...asciiMark(width),
+          ...(showPart(state, "statusShowAppName") ? asciiMark(width) : []),
           "",
-          theme.fg("accent", horizontalRule(width, "╔═[ OPERATOR CONSOLE ]", "═", "╗")),
+          theme.fg("accent", horizontalRule(width, showPart(state, "statusShowAppName") ? "╔═[ OPERATOR CONSOLE ]" : "╔═", "═", "╗")),
           rightAligned(
-            theme.fg("muted", `║ ${state.cwd}`),
-            theme.fg("accent", `${state.mode.toUpperCase()} ║`),
+            showPart(state, "statusShowCwd") ? theme.fg("muted", `║ ${state.cwd}`) : "║",
+            showPart(state, "statusShowMode") ? theme.fg("accent", `${state.mode.toUpperCase()} ║`) : "║",
             width,
           ),
         ]
       case "notebook":
         return [
           "",
-          ...asciiMark(width),
-          rightAligned(theme.fg("dim", `v${state.version}`), theme.fg("dim", `№ ${state.title}`), width),
+          ...(showPart(state, "statusShowAppName") ? asciiMark(width) : []),
+          rightAligned(
+            theme.fg("dim", `v${state.version}`),
+            showPart(state, "statusShowTitle") ? theme.fg("dim", `№ ${state.title}`) : "",
+            width,
+          ),
           "",
         ]
       case "classic":
       default: {
-        const mark = asciiMark(width).map((row) => ` ${row}`)
+        const mark = showPart(state, "statusShowAppName") ? asciiMark(width).map((row) => ` ${row}`) : []
         const hints = this.expanded
           ? ["ctrl+c interrupt / clear", "ctrl+d exit", "ctrl+o expand tools", "/ commands", "drop files to attach"]
           : ["ctrl+c interrupt · / commands · ctrl+o more"]

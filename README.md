@@ -1,6 +1,6 @@
 # Furnace
 
-Furnace is a terminal-first agentic coding harness built from scratch in TypeScript. It runs an AI coding loop against real repositories with streamed model output, typed tools, permission gates, local SQLite session history, context compaction, multimodal image input, skills, subagents, and an Ink-based TUI.
+Furnace is a terminal-first agentic coding harness built from scratch in TypeScript. It runs an AI coding loop against real repositories with streamed model output, typed tools, permission gates, local SQLite session history, context compaction, multimodal image input, skills, subagents, and a Pi-based TUI.
 
 The project is still early, but it is no longer just a plan: the current codebase is a usable local coding-agent CLI with interactive and headless modes.
 
@@ -8,7 +8,7 @@ The project is still early, but it is no longer just a plan: the current codebas
 
 - Runs interactive agent sessions in a terminal UI.
 - Runs one-shot/headless prompts with text or JSON output.
-- Streams OpenRouter chat completions and tool calls.
+- Streams chat completions and tool calls through OpenRouter, Anthropic, and custom OpenAI-compatible providers.
 - Persists local sessions in SQLite at `.furnace/furnace.sqlite`.
 - Replays sessions as append-only active-leaf histories with fork support.
 - Reads, searches, edits, writes files, and runs bounded shell commands through typed tools.
@@ -325,7 +325,7 @@ flowchart TD
   Controller --> Sessions[SQLite Session Store]
   Controller --> Compaction[Session Compaction]
   Tools --> Compression[Headroom-lite Compression]
-  Controller --> TUI[Ink Terminal UI]
+  Controller --> TUI[Pi Terminal UI]
   Controller --> Headless[Headless Text/JSON Output]
   Controller --> Skills[Skills and Custom Commands]
   Controller --> Subagents[Task/Subagent Manager]

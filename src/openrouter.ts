@@ -1,14 +1,12 @@
 import type { FurnaceConfig } from "./config.js"
 import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
 import { createAnthropicProvider } from "./providers/anthropic.js"
-import type { Provider, ResolvedProvider, ChatMessage, ToolDefinition, ToolChoice, ModelInfo, AssistantResponse } from "./providers/types.js"
+import type { AssistantResponse, Provider, ResolvedProvider, ChatMessage, ToolDefinition, ToolChoice, ModelInfo } from "./providers/types.js"
 
 // Re-export types for backward compatibility
 export type ContentBlock = import("./providers/types.js").ContentBlock
 export type OpenRouterMessage = ChatMessage
 export type OpenRouterToolDefinition = ToolDefinition
-export type OpenRouterToolCall = import("./providers/types.js").ChatToolCall
-export type OpenRouterAssistantResponse = AssistantResponse
 export type OpenRouterToolChoice = ToolChoice
 export type OpenRouterModel = ModelInfo
 export type OpenRouterModelPricing = { completion: number; prompt: number }
@@ -23,14 +21,6 @@ function getAdapter(config: FurnaceConfig): Provider {
 
 function toResolvedProvider(config: FurnaceConfig): ResolvedProvider {
   return config.providerConfig
-}
-
-export async function* streamOpenRouterResponse(
-  config: FurnaceConfig,
-  messages: ChatMessage[],
-  signal?: AbortSignal,
-): AsyncGenerator<string> {
-  yield* getAdapter(config).streamChat(toResolvedProvider(config), config.model, messages, config.modelSettings, signal)
 }
 
 export async function completeOpenRouterResponse(

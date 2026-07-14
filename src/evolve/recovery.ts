@@ -36,7 +36,19 @@ function newId(): string {
 
 function git(root: string, args: string[]): { code: number; stdout: string; stderr: string } {
   const result = spawnSync("git", args, { cwd: resolve(root), encoding: "utf8" })
-  return { code: result.status ?? 1, stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim() }
+  return {
+    code: result.status ?? 1,
+    stdout: (result.stdout ?? "").trim(),
+    stderr: (result.stderr ?? result.error?.message ?? "").trim(),
+  }
+}
+
+function checkedGit(root: string, args: string[]): string {
+  const result = git(root, args)
+  if (result.code !== 0) {
+    throw new Error(`git ${args.join(" ")} failed (${result.code}): ${result.stderr || "no error output"}`)
+  }
+  return result.stdout
 }
 
 function readRegistry(): RecoveryPoint[] {
@@ -56,7 +68,7 @@ function writeRegistry(points: RecoveryPoint[]): void {
 
 /** All porcelain status paths — used to detect whether the tree is clean. */
 export function snapshotStatus(root: string): string[] {
-  const { stdout } = git(root, ["status", "--porcelain", "-unormal"])
+  const stdout = checkedGit(root, ["status", "--porcelain", "-unormal"])
   if (!stdout) return []
   return stdout.split("\n").map((line) => line.slice(3).trim()).filter(Boolean)
 }
@@ -67,7 +79,7 @@ export function snapshotStatus(root: string): string[] {
  * excluded: they are reverted by `git checkout <ref> -- .`, not deleted.
  */
 export function listNewFiles(root: string): string[] {
-  const { stdout } = git(root, ["status", "--porcelain", "-unormal"])
+  const stdout = checkedGit(root, ["status", "--porcelain", "-unormal"])
   if (!stdout) return []
   return stdout
     .split("\n")
@@ -83,11 +95,12 @@ export function createRecoveryPoint(root: string, description: string): Recovery
 
   const clean = snapshotStatus(absRoot).length === 0
   const ref = clean
-    ? git(absRoot, ["rev-parse", "HEAD"]).stdout
-    : git(absRoot, ["stash", "create", `furnace-evolve pre-change ${id}`]).stdout || git(absRoot, ["rev-parse", "HEAD"]).stdout
+    ? checkedGit(absRoot, ["rev-parse", "HEAD"])
+    : checkedGit(absRoot, ["stash", "create", `furnace-evolve pre-change ${id}`]) || checkedGit(absRoot, ["rev-parse", "HEAD"])
+  if (!ref) throw new Error("Git did not produce a recovery snapshot ref.")
 
   // Tag the snapshot so it survives GC; namespace by root for multi-worktree safety.
-  git(absRoot, ["tag", `furnace-recovery/${rootHash}/${id}`, ref])
+  checkedGit(absRoot, ["tag", `furnace-recovery/${rootHash}/${id}`, ref])
 
   // Copy the current known-good dist so recovery never needs a rebuild.
   const distCopyPath = join(recoveryDir(absRoot, id), "dist")
@@ -168,7 +181,7 @@ export function resetToBaseline(root: string): ResetResult {
       cpSync(baseline.distCopyPath, liveDist, { recursive: true })
     }
     // Revert tracked source to the baseline snapshot (no branch move).
-    git(absRoot, ["checkout", baseline.ref, "--", "."])
+    checkedGit(absRoot, ["checkout", baseline.ref, "--", "."])
     // Delete exactly the files evolve created (never a blanket clean).
     for (const relative of deletedFiles) {
       rmSync(join(absRoot, relative), { recursive: true, force: true })
@@ -201,7 +214,7 @@ export function restoreRecoveryPoint(id: string, runningRoot: string): RestoreRe
       cpSync(point.distCopyPath, liveDist, { recursive: true })
     }
     // 2. Revert tracked source to the snapshot (no branch move).
-    git(point.furnaceRoot, ["checkout", point.ref, "--", "."])
+    checkedGit(point.furnaceRoot, ["checkout", point.ref, "--", "."])
     // 3. Delete exactly the files the evolve created (never a blanket clean).
     for (const relative of point.createdFiles) {
       rmSync(join(point.furnaceRoot, relative), { recursive: true, force: true })

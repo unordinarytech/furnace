@@ -2,7 +2,7 @@ import { formatAskQuestionResult, normalizeAskQuestionRequest } from "../questio
 import type { TodoItem, TodoPriority, TodoStatus } from "../session/types.js"
 import type { TaskRunResult, TaskSpec } from "../tasks/types.js"
 import { getArg, optionalBoolean, optionalString } from "./common.js"
-import type { ToolContext } from "./types.js"
+import type { ToolContext, ToolHandlerResult } from "./types.js"
 
 export async function askQuestionTool(args: unknown, context: ToolContext): Promise<string> {
   const request = normalizeAskQuestionRequest(args)
@@ -12,7 +12,7 @@ export async function askQuestionTool(args: unknown, context: ToolContext): Prom
   return formatAskQuestionResult(await context.questionPrompt(request))
 }
 
-export async function taskTool(args: unknown, context: ToolContext): Promise<string> {
+export async function taskTool(args: unknown, context: ToolContext): Promise<ToolHandlerResult> {
   if (!context.taskRunner || !context.sessionId) return "Task delegation is unavailable in this mode."
   const tasks = normalizeTaskSpecs(args)
   if (tasks.length === 0) throw new Error("Expected at least one task prompt")
@@ -22,11 +22,10 @@ export async function taskTool(args: unknown, context: ToolContext): Promise<str
     signal: context.signal,
     tasks,
   })
-  return formatTaskRunResult(result)
-}
-
-export function isBackgroundedTaskToolResult(toolName: string, content: string): boolean {
-  return toolName === "task" && /^Task group \S+ backgrounded\./.test(content)
+  return {
+    content: formatTaskRunResult(result),
+    control: result.backgrounded ? { backgrounded: true } : undefined,
+  }
 }
 
 export async function taskStatusTool(_args: unknown, context: ToolContext): Promise<string> {

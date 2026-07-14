@@ -5,15 +5,9 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { SessionStore } from "../dist/session/store.js"
 import { executeToolCall, toolDefinitions } from "../dist/tools/registry.js"
+import { withTemporaryWorkspace } from "./helpers/workspace.mjs"
 
-async function withWorkspace(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "furnace-tools-"))
-  try {
-    await fn(dir)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-}
+const withWorkspace = (fn) => withTemporaryWorkspace("furnace-tools-", fn)
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -200,6 +194,8 @@ test("ask_question filters duplicate custom and refusal meta-options", async () 
               id: "scope",
               prompt: "Which scope?",
               allowCustom: true,
+              allowMultiple: true,
+              allowRefuse: false,
               options: [
                 { id: "minimal", label: "Minimal" },
                 { id: "specify", label: "Let me specify" },
@@ -215,6 +211,8 @@ test("ask_question filters duplicate custom and refusal meta-options", async () 
         questionPrompt: async (request) => {
           assert.deepEqual(request.questions[0].options.map((option) => option.label), ["Minimal"])
           assert.equal(request.questions[0].allowCustom, true)
+          assert.equal(request.questions[0].allowMultiple, true)
+          assert.equal(request.questions[0].allowRefuse, false)
           return {
             answers: [
               {
@@ -257,6 +255,7 @@ test("read refuses secret-like env files", async () => {
   await withWorkspace(async (cwd) => {
     await writeFile(join(cwd, ".env"), "OPENROUTER_API_KEY=nope\n", "utf8")
     const result = await executeToolCall({ name: "read", arguments: JSON.stringify({ path: ".env" }) }, { cwd })
+    assert.equal(result.status, "error")
     assert.match(result.content, /Refusing to read secret-like file/)
   })
 })

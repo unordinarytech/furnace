@@ -69,6 +69,7 @@ function normalizeQuestion(value: unknown, index: number): AskQuestionItem {
   return {
     allowCustom,
     allowMultiple: record.allowMultiple === true || record.multiple === true,
+    allowRefuse: record.allowRefuse !== false && record.refuse !== false,
     id: rawId || `q${index + 1}`,
     options,
     prompt,

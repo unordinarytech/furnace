@@ -78,6 +78,7 @@ export type ToolCallEntryData = {
 export type ToolResultEntryData = {
   content: string
   name: string
+  status?: "error" | "success"
   toolCallId: string
 }
 

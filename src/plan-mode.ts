@@ -1,4 +1,5 @@
 import { relative, resolve, sep } from "node:path"
+import type { SessionStore } from "./session/store.js"
 import type { EntryRecord } from "./session/types.js"
 
 export type AgentMode = "agent" | "plan"
@@ -25,6 +26,28 @@ export function currentPlanModeState(entries: EntryRecord[]): PlanModeState {
     return data.mode === "plan" ? { mode: "plan", planPath: data.planPath } : { mode: "agent" }
   }
   return { mode: "agent" }
+}
+
+export function transitionPlanMode(input: {
+  cwd: string
+  mode: AgentMode
+  planPath?: string
+  reason: NonNullable<PlanModeEntryData["reason"]>
+  seed?: string
+  sessionId: string
+  store: SessionStore
+}): PlanModeState {
+  const current = currentPlanModeState(input.store.getActivePath(input.sessionId))
+  const planPath = input.mode === "plan"
+    ? input.planPath || current.planPath || createPlanPath(input.cwd, input.seed || input.store.getSession(input.sessionId).title)
+    : undefined
+  input.store.appendEntry<PlanModeEntryData>(input.sessionId, "custom", null, {
+    kind: "mode_change",
+    mode: input.mode,
+    planPath,
+    reason: input.reason,
+  })
+  return input.mode === "plan" ? { mode: "plan", planPath } : { mode: "agent" }
 }
 
 export function createPlanPath(cwd: string, seed: string, now = new Date()): string {

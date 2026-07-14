@@ -50,6 +50,19 @@ describe("key storage", async () => {
     assert.equal(keys.anthropic, "sk-ant")
   })
 
+  it("concurrent key saves do not overwrite another provider", async () => {
+    const { setStoredKey, loadStoredKeys } = await import("../dist/keys.js")
+    await Promise.all([
+      setStoredKey("openrouter", "sk-or-concurrent"),
+      setStoredKey("anthropic", "sk-ant-concurrent"),
+      setStoredKey("custom", "sk-custom-concurrent"),
+    ])
+    const keys = await loadStoredKeys()
+    assert.equal(keys.openrouter, "sk-or-concurrent")
+    assert.equal(keys.anthropic, "sk-ant-concurrent")
+    assert.equal(keys.custom, "sk-custom-concurrent")
+  })
+
   it("removeStoredKey deletes only the selected provider", async () => {
     const { setStoredKey, getStoredKey, removeStoredKey } = await import("../dist/keys.js")
     await setStoredKey("openrouter", "sk-or-delete")

@@ -40,11 +40,11 @@ When Furnace adopts an idea from another coding harness, document the source and
 
 Current influences:
 
-- Pi: parent-linked session entries, `active_leaf_id`, future branching/forking semantics, and keeping the agent runtime independent of the terminal UI.
+- Pi: parent-linked session entries, `active_leaf_id`, fork semantics, and keeping the agent runtime independent of the terminal UI.
 - Pi-style apply patch: Furnace exposes one model-facing `edit` tool but implements it as a structured apply-patch envelope.
 - Pi-style questionnaire UX: Furnace's `ask_question` panel adapts Pi's multi-question tab navigation, option selection, custom answer, and cancellation/refusal direction.
 - Pi-style skills: Furnace uses `SKILL.md` directories, explicit `/skill:<name>` invocation, and `disable-model-invocation` manual-only behavior.
-- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/tool-output/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, the idea that subagents are launched through a normal model-callable task tool linked to child sessions, and compact skill guidance plus a `skill` tool.
+- OpenCode: web search/fetch direction, MCP-style web provider calls, bounded tool-output previews saved under `.furnace/context-store/`, the allow/ask/deny permission rule model, the pending question-request architecture, queued-prompt manager behavior, the idea that subagents are launched through a normal model-callable task tool linked to child sessions, and compact skill guidance plus a `skill` tool.
 - Hermes Agent: durable tool-call/tool-result persistence, file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool semantics, busy-input modes, subagent batching/fan-out, background completion re-entry, hidden/scaffolded explicit skill invocation, guarded skill management, and the future direction for SQLite FTS session search.
 - Headroom: content-type-aware tool-output compression, CCR-style local artifact handles, request-local compression transforms for oversized tool results, and read-result lifecycle compression after a file has gone quiet.
 - Anthropic/OpenRouter: prompt cache-control hints on stable prompt blocks and provider-reported cache read/write usage where available.
@@ -63,10 +63,10 @@ Local adaptation:
 
 - The existing `FurnaceTerminal` interface (now in `src/ui/terminal-types.ts`) was kept as the adapter boundary. `src/interactive-session-controller.ts` still drives the UI through that contract, and the engine, session store, permission model, and slash command definitions were not changed.
 - A new `src/ui/pi-terminal.ts` implements `FurnaceTerminal` using Pi's primitives.
-- Furnace's theme definitions are mapped to Pi's `MarkdownTheme`, `EditorTheme`, `SelectListTheme`, and `SettingsListTheme` in `src/ui/pi-themes.ts` so existing user theme preferences remain stable.
+- Furnace's theme definitions are mapped to Pi's `MarkdownTheme`, `EditorTheme`, `SelectListTheme`, and `SettingsListTheme` in `src/ui/pi/theme.ts` so existing user theme preferences remain stable.
 - The Pi TUI package is consumed as an npm dependency and externalized from the esbuild bundle so its native prebuilds are resolved at runtime.
 - `createFurnaceTerminal` is imported dynamically inside `runInteractive` only, so headless and piped modes never load the TUI or its native prebuilds.
-- The previous Ink components under `src/ui/components/` and `src/ui/pi-terminal.ts` were removed once the Pi adapter was wired and tested.
+- The previous Ink components under `src/ui/components/` and the old Ink terminal adapter were removed once `src/ui/pi-terminal.ts` was wired and tested.
 
 License: Pi's TUI is MIT licensed.
 

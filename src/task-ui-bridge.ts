@@ -85,6 +85,7 @@ export function createSessionTerminalBridge(input: {
     },
     setBusy(busy) { if (visible()) terminal.setBusy(busy) },
     setContextUsage(tokens, window) { if (visible()) terminal.setContextUsage(tokens, window) },
+    setCostUsage(costUsd) { if (visible()) terminal.setCostUsage(costUsd) },
     setMode(mode, planPath) { if (visible()) terminal.setMode(mode, planPath) },
     setSessionMeta(meta) { if (visible()) terminal.setSessionMeta(meta) },
     setStreamingContent(text) {

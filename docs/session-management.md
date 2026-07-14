@@ -1,6 +1,6 @@
 # Session Management
 
-Furnace currently stores conversation state locally in SQLite at `.furnace/furnace.sqlite`. The implementation is intentionally small, but the data model is already shaped around the Pi-style session tree we chose for long conversations, future compaction, and forks.
+Furnace stores conversation state locally in SQLite at `.furnace/furnace.sqlite`. The data model uses a Pi-style active-leaf tree for long conversations, compaction, and forked sessions.
 
 ## Current Scope
 
@@ -19,16 +19,15 @@ Implemented:
 - `--continue` for the latest non-empty session.
 - `/new` for a fresh chat.
 - `/history` for arrow-key selection of saved non-empty conversations.
+- Resume by explicit session id.
+- New-session forks from the current tip or an earlier user prompt.
+- Compaction entries with `firstKeptEntryId` replay semantics.
 - Cheap-model title generation after the first user prompt.
 - Cleanup of empty placeholder sessions.
 
 Not implemented yet:
 
-- Resume by explicit session id.
 - Same-session branching from an old entry.
-- Forking into a new session from an old entry.
-- Compaction entries.
-- `firstKeptEntryId` handling.
 - SQLite FTS session search.
 - `session_search` tool for old-session recall.
 - Session memory or durable preference ledgers.
@@ -47,8 +46,8 @@ Important fields:
 - `title`: user-visible conversation title.
 - `cwd`: workspace directory the session belongs to.
 - `active_leaf_id`: the current tail entry for this session.
-- `parent_session_id`: reserved for future forked sessions.
-- `forked_from_entry_id`: reserved for the parent entry where a future fork begins.
+- `parent_session_id`: parent conversation for forks and subagent sessions.
+- `forked_from_entry_id`: parent entry where a fork begins.
 - `created_at`, `updated_at`, `archived_at`: lifecycle metadata.
 
 Empty sessions have `active_leaf_id = null`. They can exist while the user is sitting in a new blank chat, but they are hidden from `/history` and deleted on startup/shutdown.
@@ -216,11 +215,9 @@ New sessions begin as `New Chat`.
 
 After the first user prompt, Furnace tries to generate a short title using `OPENROUTER_TITLE_MODEL` and the prompt in `src/prompts/title-system.md`. If title generation fails, Furnace falls back to a local title derived from the first user message.
 
-## Future Forking Semantics
+## Forking Semantics
 
-The fields `parent_session_id` and `forked_from_entry_id` are reserved for future new-session forks.
-
-Expected behavior:
+`/fork current` copies the active path into a new fork session. Selecting an earlier user prompt forks immediately before that prompt, preserving the completed conversation that precedes it.
 
 ```text
 Parent session:
@@ -232,13 +229,13 @@ Forked session:
 A' -> B' -> C'
 ```
 
-The fork should copy or replay only the root-to-`forked_from_entry_id` path from the parent. It should not pull unrelated siblings or future entries from the parent session.
+Fork creation copies only the selected root-to-boundary path. It does not pull unrelated siblings or future parent entries.
 
 Same-session branching should not set `parent_session_id`. It should create another child under an older entry and move `active_leaf_id` to the selected branch.
 
-## Future Compaction Semantics
+## Compaction Semantics
 
-Compaction is not implemented yet, but the intended model is:
+Automatic, overflow-triggered, and manual compaction append a compaction entry:
 
 ```text
 A -> B -> C -> D -> E(compaction) -> F(user)
@@ -257,7 +254,7 @@ summary of older context
 raw entries from firstKeptEntryId onward
 ```
 
-That preserves recent raw context while allowing older turns to be summarized.
+That preserves recent raw context while allowing older turns to be summarized. See `docs/compaction.md` for trigger, fallback, and replay details.
 
 ## Where To Look
 
@@ -265,6 +262,6 @@ That preserves recent raw context while allowing older turns to be summarized.
 - `src/session/store.ts`: SQLite schema and append/path logic.
 - `src/session/context.ts`: transcript/model-message conversion.
 - `src/session/title.ts`: title generation.
-- `src/cli.ts`: `/new`, `/history`, `--continue`, and session lifecycle wiring.
+- `src/interactive-session-controller.ts`: `/new`, `/history`, forks, compaction, and session lifecycle wiring.
 - `test/session-store.test.mjs`: current session-store regression tests.
 - `test/session-context.test.mjs`: model-message reconstruction tests, including tool-call replay.

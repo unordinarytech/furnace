@@ -38,6 +38,20 @@ test("plan mode denies side effects except the active plan artifact", async () =
     sessionId: "session-1",
     toolName: "write",
   })
+  const planEdit = createToolPermissionRequest({
+    args: JSON.stringify({ patch: `*** Begin Patch\n*** Update File: ${planPath}\n@@\n-Old\n+New\n*** End Patch` }),
+    callId: "call-plan-edit",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "edit",
+  })
+  const malformedPlanEdit = createToolPermissionRequest({
+    args: JSON.stringify({ patch: `*** Update File: ${planPath}\n@@\n-Old\n+New` }),
+    callId: "call-malformed-plan-edit",
+    cwd: "/tmp/project",
+    sessionId: "session-1",
+    toolName: "edit",
+  })
   const mutatingBash = createToolPermissionRequest({
     args: JSON.stringify({ command: "npm install left-pad" }),
     callId: "call-bash",
@@ -61,6 +75,8 @@ test("plan mode denies side effects except the active plan artifact", async () =
   })
 
   assert.equal(await store.authorize(planWrite), "allow_once")
+  assert.equal(await store.authorize(planEdit), "allow_once")
+  assert.equal(await store.authorize(malformedPlanEdit), "deny")
   assert.equal(await store.authorize(sourceWrite, async () => "allow_all_session"), "deny")
   assert.equal(await store.authorize(mutatingBash), "deny")
   assert.equal(await store.authorize(readOnlyBash), "allow_once")

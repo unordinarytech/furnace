@@ -26,7 +26,7 @@ export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[]
       const item = pendingToolCalls.get(data.toolCallId)
       if (item?.toolCall) {
         item.toolCall.result = data.content
-        item.toolCall.isError = data.content.startsWith("Error")
+        item.toolCall.isError = data.status ? data.status === "error" : legacyToolResultIsError(data.content)
         pendingToolCalls.delete(data.toolCallId)
       }
       continue
@@ -40,6 +40,11 @@ export function entriesToTranscript(entries: EntryRecord[]): TranscriptMessage[]
     transcript.push({ role: entry.role, content: data.content, imageCount })
   }
   return transcript
+}
+
+function legacyToolResultIsError(content: string): boolean {
+  return content.startsWith("Error")
+    || /^Tool \S+ (failed|denied):/.test(content)
 }
 
 export function entriesToModelMessages(systemPrompt: string, entries: EntryRecord[], runtimeContext?: RuntimeContextInput): OpenRouterMessage[] {

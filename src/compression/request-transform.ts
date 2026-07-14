@@ -44,7 +44,7 @@ export async function applyHeadroomLiteRequestTransforms(input: { cwd: string; m
       continue
     }
 
-    const artifact = await storeContextArtifact({ content: message.content, cwd: input.cwd, label: "request-tool-result" })
+    const artifact = await storeContextArtifact({ content: message.content, cwd: input.cwd })
     const compressed = compressToolOutput({
       artifact,
       content: message.content,
@@ -115,7 +115,7 @@ async function matureReadResultIfQuiet(input: {
   const quietMessages = input.totalMessages - Math.max(input.index, lastActivity) - 1
   if (quietMessages < readMaturationQuietMessages) return undefined
 
-  const artifact = await storeContextArtifact({ content: input.content, cwd: input.cwd, label: "matured-read-result" })
+  const artifact = await storeContextArtifact({ content: input.content, cwd: input.cwd })
   const byteLength = Buffer.byteLength(input.content, "utf8")
   const lines = input.content.split(/\r?\n/)
   const preview = renderReadPreview(lines)

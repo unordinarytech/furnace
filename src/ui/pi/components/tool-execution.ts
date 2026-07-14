@@ -80,13 +80,14 @@ export class ToolExecutionComponent extends Container {
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentText = new Text("", 0, 0);
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
 			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
 		} else {
-			this.addChild(this.contentText);
+			this.contentBox.addChild(this.contentText);
+			this.addChild(this.contentBox);
 		}
 
 		this.updateDisplay();
@@ -327,7 +328,7 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else {
-			this.contentText.setCustomBgFn(bgFn);
+			this.contentBox.setBgFn(bgFn);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}
@@ -377,26 +378,39 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private formatToolExecution(): string {
-		const title = theme.fg("toolTitle", theme.bold(this.toolName));
+		const title = theme.fg("toolTitle", theme.bold(`◆ ${this.toolName}`));
+		const status = this.isPartial
+			? theme.fg("warning", "● running")
+			: this.result?.isError
+				? theme.fg("error", "✕ failed")
+				: theme.fg("success", "✓ done");
+		const heading = `${title}  ${status}`;
+		const summary = this.formatArgsSummary();
+		const output = this.getTextOutput();
 
-		// Collapsed default: a single line — tool name plus a short arg summary.
-		// Full args/output stay behind the expand toggle, like pi's built-in
-		// tool renderers.
 		if (!this.expanded) {
-			const summary = this.formatArgsSummary();
-			return summary ? `${title} ${theme.fg("toolOutput", summary)}` : title;
+			const rows = [heading];
+			if (summary) rows.push(`${theme.fg("muted", "├─ input")}  ${theme.fg("toolOutput", summary)}`);
+			const outputPreview = this.formatOutputSummary(output);
+			if (outputPreview) rows.push(`${theme.fg("muted", "└─ output")} ${theme.fg(this.result?.isError ? "error" : "toolOutput", outputPreview)}`);
+			return rows.join("\n");
 		}
 
-		let text = title;
+		const rows = [heading];
 		const content = JSON.stringify(this.args, null, 2);
 		if (content) {
-			text += `\n\n${content}`;
+			rows.push("", theme.fg("muted", "INPUT"), theme.fg("toolOutput", content));
 		}
-		const output = this.getTextOutput();
 		if (output) {
-			text += `\n${output}`;
+			rows.push("", theme.fg("muted", "OUTPUT"), theme.fg(this.result?.isError ? "error" : "toolOutput", output));
 		}
-		return text;
+		return rows.join("\n");
+	}
+
+	private formatOutputSummary(output: string): string {
+		const summary = output.replace(/\s+/g, " ").trim();
+		const maxLength = 120;
+		return summary.length > maxLength ? `${summary.slice(0, maxLength - 1)}…` : summary;
 	}
 
 	/** One-line summary of the primary argument for the collapsed fallback view. */

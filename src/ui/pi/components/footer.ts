@@ -290,7 +290,7 @@ export class FooterComponent implements Component {
 
 		// Show cost with "(sub)" indicator if using OAuth subscription
 		const usingSubscription = state.model ? this.session.modelRegistry.isUsingOAuth(state.model) : false;
-		if (showStatusPart(this.statusLine, "statusShowCost") && (totalCost || usingSubscription)) {
+		if (showStatusPart(this.statusLine, "statusShowCost")) {
 			const costStr = `${formatCostUsd(totalCost)}${usingSubscription ? " (sub)" : ""}`;
 			statsParts.push(costStr);
 		}

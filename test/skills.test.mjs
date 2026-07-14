@@ -1,23 +1,10 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { test } from "node:test"
+import { withTemporaryHomeWorkspace } from "./helpers/workspace.mjs"
 
-async function withWorkspace(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "furnace-skills-"))
-  const home = await mkdtemp(join(tmpdir(), "furnace-skills-home-"))
-  const previousHome = process.env.HOME
-  process.env.HOME = home
-  try {
-    await fn(dir, home)
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME
-    else process.env.HOME = previousHome
-    await rm(dir, { recursive: true, force: true })
-    await rm(home, { recursive: true, force: true })
-  }
-}
+const withWorkspace = (fn) => withTemporaryHomeWorkspace("furnace-skills-", fn)
 
 async function writeSkill(root, name, frontmatter = "") {
   const dir = join(root, name)

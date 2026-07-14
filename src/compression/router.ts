@@ -18,7 +18,11 @@ export type ToolOutputCompressionResult = {
 
 export function compressToolOutput(input: ToolOutputCompressionInput): ToolOutputCompressionResult {
   const kind = detectContentKind(input.content)
-  const body = compressByKind(kind, input.content, input.maxLines, input.maxBytes)
+  const body = boundCompressedBody(
+    compressByKind(kind, input.content, input.maxLines, input.maxBytes),
+    input.maxLines,
+    input.maxBytes,
+  )
   const beforeLines = input.content.split(/\r?\n/).length
   const beforeBytes = Buffer.byteLength(input.content, "utf8")
   const header = [
@@ -202,10 +206,15 @@ function compressLog(content: string): string {
 }
 
 function compressGeneric(content: string, maxLines: number, maxBytes: number): string {
-  const marker = "... middle omitted from generic preview ..."
   const lines = content.split(/\r?\n/)
   const preview = headTail(lines, Math.min(maxLines, 240))
-  return takeBytes(["Generic bounded preview:", preview.includes(marker) ? preview : preview].join("\n"), Math.min(maxBytes, 24 * 1024))
+  return takeBytes(["Generic bounded preview:", preview].join("\n"), Math.min(maxBytes, 24 * 1024))
+}
+
+function boundCompressedBody(content: string, maxLines: number, maxBytes: number): string {
+  const lines = content.split(/\r?\n/)
+  const lineBounded = headTail(lines, Math.max(1, maxLines))
+  return takeBytes(lineBounded, Math.max(1, maxBytes))
 }
 
 function repeatedLineSummary(lines: string[]): Array<{ count: number; line: string }> {
@@ -230,11 +239,16 @@ function safeJson(value: unknown): string {
 }
 
 function takeBytes(value: string, maxBytes: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value
+  const marker = "\n... truncated ..."
+  const markerBytes = Buffer.byteLength(marker, "utf8")
+  if (maxBytes <= markerBytes) return marker.slice(0, maxBytes)
+  const contentBudget = maxBytes - markerBytes
   let bytes = 0
   let output = ""
   for (const char of value) {
     const size = Buffer.byteLength(char, "utf8")
-    if (bytes + size > maxBytes) return `${output}\n... truncated ...`
+    if (bytes + size > contentBudget) return `${output}${marker}`
     output += char
     bytes += size
   }

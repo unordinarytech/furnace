@@ -12,6 +12,7 @@ import {
   resolveToolPath,
   truncate,
 } from "./common.js"
+import { parsePatchEnvelope, type ParsedPatch } from "./patch.js"
 import type { ToolContext } from "./types.js"
 
 type FileReadTracker = {
@@ -76,9 +77,13 @@ export async function writeTool(args: unknown, context: ToolContext): Promise<st
 
 export async function editTool(args: unknown, context: ToolContext): Promise<string> {
   const patch = requiredString(args, "patch")
-  const targets = patchTargets(context.cwd, patch)
+  const parsed = parsePatchEnvelope(patch)
+  const targets = parsed.targets.map((target) => ({
+    file: resolveToolPath(context.cwd, target.path),
+    kind: target.operation,
+  }))
   const warnings = await staleWriteWarnings(context, targets.filter((target) => target.kind !== "add").map((target) => target.file))
-  const result = await applyPatchEnvelope(context.cwd, patch)
+  const result = await applyPatchEnvelope(context.cwd, parsed)
   await Promise.all(targets.map((target) => recordFileWrite(context, target.file)))
   return [...warnings, ...result].join("\n")
 }
@@ -137,7 +142,6 @@ function getFileReadReceipt(context: ToolContext, file: string, offset: number |
 
 function recordFileRead(context: ToolContext, file: string, snapshot: FileReadSnapshot, rangeKey: string, offset: number | undefined, limit: number | undefined): void {
   const normalizedCwd = resolve(context.cwd)
-  const tracker = getFileReadTracker(context)
   const normalizedFile = resolve(file)
   const receipt: FileReadReceipt = {
     ...snapshot,
@@ -152,7 +156,9 @@ function recordFileRead(context: ToolContext, file: string, snapshot: FileReadSn
       sessionId: context.sessionId,
       ...receipt,
     })
+    return
   }
+  const tracker = getFileReadTracker(context)
   tracker.latestByFile.set(normalizedFile, snapshot)
   tracker.returnedRanges.set(rangeKey, receipt)
 }
@@ -184,126 +190,62 @@ async function staleWriteWarning(context: ToolContext, file: string): Promise<st
 }
 
 async function recordFileWrite(context: ToolContext, file: string): Promise<void> {
-  const tracker = getFileReadTracker(context)
   const normalizedFile = resolve(file)
-  for (const key of tracker.returnedRanges.keys()) {
-    if (key.includes(`\0${normalizedFile}\0`)) tracker.returnedRanges.delete(key)
-  }
-  try {
-    const snapshot = fileSnapshot(await stat(normalizedFile))
-    if (context.sessionId && context.fileReadStore) {
+  if (context.sessionId && context.fileReadStore) {
+    try {
+      const snapshot = fileSnapshot(await stat(normalizedFile))
       context.fileReadStore.recordFileWrite({
         cwd: resolve(context.cwd),
         file: normalizedFile,
         sessionId: context.sessionId,
         snapshot,
       })
-    }
-    tracker.latestByFile.set(normalizedFile, snapshot)
-  } catch {
-    if (context.sessionId && context.fileReadStore) {
+    } catch {
       context.fileReadStore.recordFileWrite({
         cwd: resolve(context.cwd),
         file: normalizedFile,
         sessionId: context.sessionId,
       })
     }
+    return
+  }
+
+  const tracker = getFileReadTracker(context)
+  for (const key of tracker.returnedRanges.keys()) {
+    if (key.includes(`\0${normalizedFile}\0`)) tracker.returnedRanges.delete(key)
+  }
+  try {
+    const snapshot = fileSnapshot(await stat(normalizedFile))
+    tracker.latestByFile.set(normalizedFile, snapshot)
+  } catch {
     tracker.latestByFile.delete(normalizedFile)
   }
 }
 
-function patchTargets(cwd: string, patch: string): Array<{ file: string; kind: "add" | "delete" | "update" }> {
-  const targets: Array<{ file: string; kind: "add" | "delete" | "update" }> = []
-  for (const line of patch.replace(/\r\n/g, "\n").split("\n")) {
-    if (line.startsWith("*** Add File: ")) targets.push({ file: resolveToolPath(cwd, line.slice("*** Add File: ".length).trim()), kind: "add" })
-    else if (line.startsWith("*** Update File: ")) targets.push({ file: resolveToolPath(cwd, line.slice("*** Update File: ".length).trim()), kind: "update" })
-    else if (line.startsWith("*** Delete File: ")) targets.push({ file: resolveToolPath(cwd, line.slice("*** Delete File: ".length).trim()), kind: "delete" })
-  }
-  return targets
-}
-
-async function applyPatchEnvelope(cwd: string, patch: string): Promise<string[]> {
-  const lines = patch.replace(/\r\n/g, "\n").split("\n")
-  if (lines[0] !== "*** Begin Patch") throw new Error("Patch must start with *** Begin Patch")
-  if (!lines.some((line) => line === "*** End Patch")) throw new Error("Patch must end with *** End Patch")
-  if (lines.some((line) => line.startsWith("--- ") || line.startsWith("+++ "))) throw new Error("Unified diff syntax is not supported. Use Furnace patch envelope syntax: *** Begin Patch, *** Update File: <path>, @@, context/removal/addition lines, *** End Patch.")
-
+async function applyPatchEnvelope(cwd: string, parsed: ParsedPatch): Promise<string[]> {
   const results: string[] = []
-  let index = 1
-  while (index < lines.length) {
-    const line = lines[index]
-    if (line === "*** End Patch") break
-    if (!line) {
-      index += 1
-      continue
-    }
-    if (line.startsWith("*** Add File: ")) {
-      const file = resolveToolPath(cwd, line.slice("*** Add File: ".length).trim())
-      const contentLines: string[] = []
-      index += 1
-      while (index < lines.length && !lines[index].startsWith("*** ") && !lines[index].startsWith("@@")) {
-        const current = lines[index]
-        if (!current.startsWith("+")) throw new Error(`Add file lines must start with + near ${displayPath(cwd, file)}`)
-        contentLines.push(current.slice(1))
-        index += 1
-      }
+  for (const operation of parsed.operations) {
+    const file = resolveToolPath(cwd, operation.path)
+    if (operation.operation === "add") {
       if (await exists(file)) throw new Error(`File already exists: ${displayPath(cwd, file)}`)
       await mkdir(dirname(file), { recursive: true })
-      await writeFile(file, `${contentLines.join("\n")}${contentLines.length > 0 ? "\n" : ""}`, "utf8")
+      await writeFile(file, `${operation.contentLines.join("\n")}${operation.contentLines.length > 0 ? "\n" : ""}`, "utf8")
       results.push(`Added ${displayPath(cwd, file)}`)
       continue
     }
-    if (line.startsWith("*** Update File: ")) {
-      const file = resolveToolPath(cwd, line.slice("*** Update File: ".length).trim())
+    if (operation.operation === "update") {
       let contents = await readFile(file, "utf8")
-      index += 1
-      let hunks = 0
-      while (index < lines.length && !lines[index].startsWith("*** ")) {
-        if (!lines[index].startsWith("@@")) throw new Error(`Expected hunk header in ${displayPath(cwd, file)}`)
-        index += 1
-        const oldLines: string[] = []
-        const newLines: string[] = []
-        while (index < lines.length && !lines[index].startsWith("@@") && !lines[index].startsWith("*** ")) {
-          const current = lines[index]
-          if (current === "*** End of File") {
-            index += 1
-            continue
-          }
-          const marker = current[0]
-          const text = current.slice(1)
-          if (marker === " ") {
-            oldLines.push(text)
-            newLines.push(text)
-          } else if (marker === "-") {
-            oldLines.push(text)
-          } else if (marker === "+") {
-            newLines.push(text)
-          } else if (current === "") {
-            oldLines.push("")
-            newLines.push("")
-          } else {
-            throw new Error(`Invalid hunk line in ${displayPath(cwd, file)}: ${current}`)
-          }
-          index += 1
-        }
-        contents = replaceHunk(contents, oldLines.join("\n"), newLines.join("\n"), displayPath(cwd, file))
-        hunks += 1
+      for (const hunk of operation.hunks) {
+        contents = replaceHunk(contents, hunk.oldLines.join("\n"), hunk.newLines.join("\n"), displayPath(cwd, file))
       }
       await writeFile(file, contents, "utf8")
-      results.push(`Updated ${displayPath(cwd, file)} (${hunks} hunks)`)
+      results.push(`Updated ${displayPath(cwd, file)} (${operation.hunks.length} hunks)`)
       continue
     }
-    if (line.startsWith("*** Delete File: ")) {
-      const file = resolveToolPath(cwd, line.slice("*** Delete File: ".length).trim())
+    if (operation.operation === "delete") {
       await rm(file)
       results.push(`Deleted ${displayPath(cwd, file)}`)
-      index += 1
-      continue
     }
-    if (line.startsWith("--- ") || line.startsWith("+++ ")) {
-      throw new Error("Unified diff syntax is not supported. Use Furnace patch envelope syntax with *** Update File: <path> instead of ---/+++ file headers.")
-    }
-    throw new Error(`Unknown patch operation: ${line}. Expected *** Add File:, *** Update File:, *** Delete File:, or *** End Patch.`)
   }
   return results
 }

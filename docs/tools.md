@@ -9,7 +9,7 @@ Current implementation lives in `src/tools/registry.ts`.
 Several tool-system choices were informed by other coding harnesses:
 
 - Pi influenced the small primitive-tool shape, the decision to expose one edit primitive, and the multi-question terminal UX for `ask_question`.
-- OpenCode influenced the web tooling shape, bounded tool-output behavior, allow/ask/deny permission model, pending question-request architecture, queued prompt manager behavior, and session-linked `task` tool direction. Furnace's `websearch`, `webfetch`, `.furnace/tool-output/` previews, first approval layer, `ask_question` runtime shape, queued prompt UI, and task delegation spine follow that direction.
+- OpenCode influenced the web tooling shape, bounded tool-output behavior, allow/ask/deny permission model, pending question-request architecture, queued prompt manager behavior, and session-linked `task` tool direction. Furnace's `websearch`, `webfetch`, `.furnace/context-store/` previews, first approval layer, `ask_question` runtime shape, queued prompt UI, and task delegation spine follow that direction.
 - Hermes Agent influenced file read deduplication, stale-write warnings, session-scoped broad approval, clarify-tool answer semantics, busy-input modes, richer tool history for debugging/resume, batch subagent fan-out, and grouped background completion. Furnace implements smaller versions of those ideas in the local TypeScript runtime and session store.
 
 ## Runtime Shape
@@ -309,7 +309,7 @@ Example:
 Output format:
 
 ```text
-src/ui/ink-terminal.tsx
+src/ui/pi-terminal.ts
 src/ui/terminal.ts
 ```
 

@@ -133,7 +133,7 @@ test("agent turn stops immediately when a task group is backgrounded", async () 
       config: fakeConfig(),
       cwd: "/tmp/furnace",
       messages: [{ role: "user", content: "delegate" }],
-      onToolResult: (_call, content) => toolResults.push(content),
+      onToolResult: (_call, content, execution) => toolResults.push({ content, execution }),
       sessionId: "parent",
       taskRunner,
     })
@@ -142,7 +142,8 @@ test("agent turn stops immediately when a task group is backgrounded", async () 
     assert.equal(result.backgrounded, true)
     assert.equal(result.content, "Subagents are running in the background. I'll continue when they finish.")
     assert.equal(result.usage.promptTokens, 10)
-    assert.match(toolResults[0], /Task group group_bg backgrounded\./)
+    assert.match(toolResults[0].content, /Task group group_bg backgrounded\./)
+    assert.equal(toolResults[0].execution.control.backgrounded, true)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -227,7 +228,6 @@ function fakeConfig(overrides = {}) {
     modelSettings: {},
     provider: "openrouter",
     apiKey: "test-key",
-    openRouterApiKey: "test-key",
     providerConfig: {
       id: "openrouter",
       displayName: "OpenRouter",

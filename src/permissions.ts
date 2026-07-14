@@ -1,5 +1,6 @@
 import { resolve } from "node:path"
 import type { AgentMode, PlanModeState } from "./plan-mode.js"
+import { parsePatchEnvelope, summarizePatchTargets } from "./tools/patch.js"
 
 export type PermissionAction = "allow" | "ask" | "deny"
 
@@ -132,7 +133,7 @@ export function createToolPermissionRequest(input: {
       cwd: input.cwd,
     description: permissionDescription(input.toolName, pattern),
     pattern,
-    permission: permissionName(input.toolName),
+    permission: input.toolName,
     sessionId: input.sessionId,
     toolName: input.toolName,
   }
@@ -164,7 +165,12 @@ function isPlanArtifactEdit(request: PermissionRequest, mode: PlanModeState): bo
   if (!mode.planPath) return false
   const patch = stringArg(parseArgs(request.args), "patch")
   if (!patch) return false
-  const targets = patchTargetEntries(patch)
+  let targets
+  try {
+    targets = parsePatchEnvelope(patch).targets
+  } catch {
+    return false
+  }
   if (targets.length === 0) return false
   return targets.every((target) => target.operation !== "delete" && sameResolvedPath(resolve(request.cwd, target.path), resolve(request.cwd, mode.planPath || "")))
 }
@@ -241,16 +247,6 @@ function isPlanModeSafeCommand(command: string): boolean {
   ].some((pattern) => pattern.test(command))
 }
 
-function patchTargetEntries(patch: string): Array<{ operation: "add" | "delete" | "update"; path: string }> {
-  const targets: Array<{ operation: "add" | "delete" | "update"; path: string }> = []
-  for (const line of patch.replace(/\r\n/g, "\n").split("\n")) {
-    if (line.startsWith("*** Add File: ")) targets.push({ operation: "add", path: line.slice("*** Add File: ".length).trim() })
-    else if (line.startsWith("*** Update File: ")) targets.push({ operation: "update", path: line.slice("*** Update File: ".length).trim() })
-    else if (line.startsWith("*** Delete File: ")) targets.push({ operation: "delete", path: line.slice("*** Delete File: ".length).trim() })
-  }
-  return targets.filter((target) => Boolean(target.path))
-}
-
 function sameResolvedPath(left: string, right: string): boolean {
   return resolve(left) === resolve(right)
 }
@@ -267,11 +263,6 @@ function permissionSessionLineage(sessionId: string | undefined, inheritedSessio
     seen.add(parent)
     current = parent
   }
-}
-
-function permissionName(toolName: string): string {
-  if (toolName === "write" || toolName === "edit") return toolName
-  return toolName
 }
 
 function permissionPattern(toolName: string, args: string): string {
@@ -307,20 +298,6 @@ function parseArgs(args: string): Record<string, unknown> {
 function stringArg(args: Record<string, unknown>, key: string): string | undefined {
   const value = args[key]
   return typeof value === "string" && value.trim() ? value.trim() : undefined
-}
-
-function summarizePatchTargets(patch: string): string {
-  const targets = patch
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .flatMap((line) => {
-      if (line.startsWith("*** Add File: ")) return [line.slice("*** Add File: ".length).trim()]
-      if (line.startsWith("*** Update File: ")) return [line.slice("*** Update File: ".length).trim()]
-      if (line.startsWith("*** Delete File: ")) return [line.slice("*** Delete File: ".length).trim()]
-      return []
-    })
-    .filter(Boolean)
-  return targets.join(", ")
 }
 
 function wildcardMatch(pattern: string, value: string): boolean {

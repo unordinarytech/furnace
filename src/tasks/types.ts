@@ -5,8 +5,6 @@ export type TaskSpec = {
   prompt: string
 }
 
-export type TaskRunMode = "foreground" | "background"
-
 export type TaskRunInput = {
   background?: boolean
   parentSessionId: string

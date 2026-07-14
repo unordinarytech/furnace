@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process"
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises"
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -11,6 +11,8 @@ function keysPath(): string {
 
 // Cache shell command results for the process lifetime (same as Pi).
 const cmdCache = new Map<string, string | undefined>()
+let keyOperationQueue: Promise<unknown> = Promise.resolve()
+let temporaryFileCounter = 0
 
 /**
  * Resolve a stored key value.
@@ -46,10 +48,7 @@ export async function loadStoredKeys(): Promise<StoredKeys> {
 }
 
 export async function saveStoredKeys(keys: StoredKeys): Promise<void> {
-  const path = keysPath()
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, `${JSON.stringify(keys, null, 2)}\n`, "utf8")
-  await chmod(path, 0o600)
+  await enqueueKeyOperation(() => writeStoredKeys(keys))
 }
 
 export async function getStoredKey(provider: keyof StoredKeys): Promise<string | undefined> {
@@ -57,14 +56,39 @@ export async function getStoredKey(provider: keyof StoredKeys): Promise<string |
 }
 
 export async function setStoredKey(provider: keyof StoredKeys, key: string): Promise<void> {
-  const current = await loadStoredKeys()
-  await saveStoredKeys({ ...current, [provider]: key })
+  await enqueueKeyOperation(async () => {
+    const current = await loadStoredKeys()
+    await writeStoredKeys({ ...current, [provider]: key })
+  })
 }
 
 export async function removeStoredKey(provider: keyof StoredKeys): Promise<boolean> {
-  const current = await loadStoredKeys()
-  if (!(provider in current)) return false
-  delete current[provider]
-  await saveStoredKeys(current)
-  return true
+  return enqueueKeyOperation(async () => {
+    const current = await loadStoredKeys()
+    if (!(provider in current)) return false
+    delete current[provider]
+    await writeStoredKeys(current)
+    return true
+  })
+}
+
+async function enqueueKeyOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const next = keyOperationQueue.catch(() => undefined).then(operation)
+  keyOperationQueue = next
+  return next
+}
+
+async function writeStoredKeys(keys: StoredKeys): Promise<void> {
+  const path = keysPath()
+  await mkdir(dirname(path), { recursive: true })
+  temporaryFileCounter += 1
+  const temporaryPath = `${path}.${process.pid}.${temporaryFileCounter}.tmp`
+  try {
+    await writeFile(temporaryPath, `${JSON.stringify(keys, null, 2)}\n`, { encoding: "utf8", mode: 0o600 })
+    await chmod(temporaryPath, 0o600)
+    await rename(temporaryPath, path)
+    await chmod(path, 0o600)
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => {})
+  }
 }

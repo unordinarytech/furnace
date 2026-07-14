@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 
 const { createFurnaceTerminal } = await import("../../dist/ui/pi-terminal.js")
 const { FooterComponent, formatContextDisplay } = await import("../../dist/ui/pi/components/footer.js")
+const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
 const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
 const { initTheme } = await import("../../dist/ui/pi/theme.js")
 
@@ -51,7 +52,6 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "showApprovalPrompt",
     "run",
     "stop",
-    "waitForInputFocus",
     "setBusy",
     "setContextUsage",
     "setCostUsage",
@@ -65,7 +65,6 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "setThinking",
     "setQueuedPrompts",
     "setSlashCommandItems",
-    "setTasks",
     "showModelEditor",
     "showPermissions",
     "showPlanActions",
@@ -107,6 +106,30 @@ test("setTranscript and setStreamingContent do not throw", () => {
     ])
     terminal.setStreamingContent("streaming...")
   })
+})
+
+test("generic tool cards show visible status, input, and output summaries", () => {
+  initTheme("default")
+  const component = new ToolExecutionComponent(
+    "ask_question",
+    "call_question",
+    { questions: [{ prompt: "Which colors?", options: ["Red", "Blue"] }] },
+    {},
+    undefined,
+    { requestRender: () => {} },
+    "/tmp",
+  )
+  component.setArgsComplete()
+  component.markExecutionStarted()
+  component.updateResult({
+    content: [{ type: "text", text: 'User answered the questions:\ncolor: user selected "Red"' }],
+    isError: false,
+  })
+
+  const rendered = stripAnsi(component.render(100).join("\n"))
+  assert.match(rendered, /◆ ask_question\s+✓ done/)
+  assert.match(rendered, /input/)
+  assert.match(rendered, /output.*User answered the questions/)
 })
 
 test("all terminal layouts have distinct structural headers", () => {

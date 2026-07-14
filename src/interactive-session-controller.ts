@@ -6,22 +6,23 @@ import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand } from "./commands.js"
-import { isApiKeyMissing, loadConfig, type FurnaceConfig } from "./config.js"
+import { isApiKeyMissing, loadConfig } from "./config.js"
 import { calculateUsageCostUsd, summarizeUsageCosts } from "./usage/cost.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
-import { setStoredKey, getStoredKey, removeStoredKey, resolveKeyValue } from "./keys.js"
+import { setStoredKey, removeStoredKey } from "./keys.js"
 import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
 import { loadCustomProviders } from "./providers/custom.js"
-import { createOpenAICompatibleProvider } from "./providers/openai-compatible.js"
-import { createAnthropicProvider } from "./providers/anthropic.js"
+import { createModelListCache, type ProviderModel } from "./providers/catalog.js"
+import { activateProvider, resolveProviderKey } from "./providers/resolution.js"
 import type { CustomProvider, ProviderDefinition } from "./providers/types.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
 import type { PermissionDecision, PermissionRequest } from "./permissions.js"
-import { appendPlanModeGuidance, createPlanPath, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
-import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, type FurnacePreferences, type ModelSettings, type StatusLinePreferences } from "./preferences.js"
+import { appendPlanModeGuidance, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, transitionPlanMode, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
+import { saveGlobalPreferences, saveModelPreferences, saveThemePreference, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
 import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
+import { resolveForkEntryId } from "./session/navigation.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
 import type { MessageEntryData, SessionRecord } from "./session/types.js"
@@ -33,7 +34,7 @@ import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/cont
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
 import { isSkillCommand, slashAutocompleteItems } from "./slash-command-router.js"
-import { TaskManager, makeTaskId } from "./tasks/manager.js"
+import { TaskManager, makeTaskId, type TaskManagerOptions } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./task-ui-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
@@ -48,62 +49,6 @@ import {
   renderDone,
 } from "./ui/terminal.js"
 import { packageName, packageVersion } from "./version.js"
-
-export type ProviderModel = OpenRouterModel & {
-  providerId: string
-  providerLabel: string
-}
-
-type ModelListCache = {
-  models?: ProviderModel[]
-  promise: Promise<ProviderModel[]>
-  settled: boolean
-}
-
-async function resolveProviderApiKey(def: ProviderDefinition, customProviders: CustomProvider[]): Promise<string> {
-  const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
-  if (envKey) return envKey
-  const rawStoredKey = await getStoredKey(def.id).catch(() => undefined)
-  const storedKey = rawStoredKey ? resolveKeyValue(rawStoredKey) : undefined
-  if (storedKey) return storedKey
-  const rawCustomKey = customProviders.find((provider) => provider.id === def.id)?.apiKey
-  return (rawCustomKey ? resolveKeyValue(rawCustomKey) : undefined) || ""
-}
-
-/** Aggregate models from every provider with a resolvable credential, active provider first. */
-async function fetchAllProviderModels(config: FurnaceConfig): Promise<ProviderModel[]> {
-  const customProviders = await loadCustomProviders().catch(() => [] as CustomProvider[])
-  const defs: ProviderDefinition[] = [...BUILTIN_PROVIDERS, ...customProviders.map(({ apiKey: _unused, ...def }) => def)]
-  const results = await Promise.all(
-    defs.map(async (def) => {
-      const apiKey = await resolveProviderApiKey(def, customProviders)
-      if (!apiKey) return []
-      const adapter = def.protocol === "anthropic" ? createAnthropicProvider() : createOpenAICompatibleProvider()
-      const models = await adapter
-        .listModels({ ...def, apiKey, siteUrl: config.siteUrl, appName: config.appName })
-        .catch(() => [] as OpenRouterModel[])
-      return models.map((model) => ({ ...model, providerId: def.id, providerLabel: def.displayName }))
-    }),
-  )
-  const flat = results.flat()
-  flat.sort((a, b) => (a.providerId === config.provider ? 0 : 1) - (b.providerId === config.provider ? 0 : 1))
-  return flat
-}
-
-function createModelListCache(config: FurnaceConfig): ModelListCache {
-  const promise = fetchAllProviderModels(config)
-  const cache: ModelListCache = { promise, settled: false }
-  promise.then(
-    (models) => {
-      cache.models = models
-      cache.settled = true
-    },
-    () => {
-      cache.settled = true
-    },
-  )
-  return cache
-}
 
 export async function runInteractive(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
@@ -142,23 +87,9 @@ export async function runInteractive(input: {
   const isCurrentSessionRunning = (): boolean => repoIndexOnboardingRunning || runningSessionIds.has(sessionId)
   const isSessionRunning = (id: string): boolean => runningSessionIds.has(id)
   const currentAbortController = (): AbortController | undefined => activeAbortControllers.get(sessionId)
-  const taskManager: TaskManager = new TaskManager({
-    createChildTask: ({ description, parentSessionId, prompt }) => {
-      const child = input.store.createSession({ cwd: input.cwd, parentSessionId, relationType: "subagent", rootSessionId: parentSessionId, title: `${description} (subagent)` })
-      permissions.inheritSession(child.id, parentSessionId)
-      inheritPlanMode(parentSessionId, child.id)
-      return {
-        background: false,
-        childSessionId: child.id,
-        description,
-        id: makeTaskId("task"),
-        parentSessionId,
-        prompt,
-        startedAt: Date.now(),
-        status: "running",
-      } satisfies TaskRecord
-    },
-    executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager, terminal: terminalForSession(record.parentSessionId) }),
+  const taskManager = createSubagentTaskManager({
+    cwd: input.cwd,
+    executeChildTask: (record, signal, manager) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager: manager, terminal: terminalForSession(record.parentSessionId) }),
     onGroupComplete: ({ backgrounded, parentSessionId, records }) => {
       if (!backgrounded) return
       const pendingRecords = [...(pendingBackgroundRecords.get(parentSessionId) || []), ...records]
@@ -174,10 +105,8 @@ export async function runInteractive(input: {
       pending.push(prompt)
       pendingBackgroundPrompts.set(parentSessionId, pending)
     },
-    onUpdate: (snapshot) => {
-      if (snapshot.parentSessionId !== activeDisplaySessionId) return
-      terminal.setTasks(snapshot.tasks)
-    },
+    permissions,
+    store: input.store,
   })
   const { createFurnaceTerminal } = await import("./ui/pi-terminal.js")
   terminal = createFurnaceTerminal({
@@ -434,13 +363,7 @@ export async function runInteractive(input: {
       clearTransientStatus()
       const session = input.store.getSession(sessionId)
       const next = session.activeLeafId ? input.store.createSession({ cwd: input.cwd, title: "New Chat" }) : session
-      sessionId = next.id
-      activeDisplaySessionId = next.id
-      unreadCompletedSessionIds.delete(next.id)
-      terminal.clearTranscriptDisplay()
-      refreshCurrentSession()
-      syncQueuedPrompts()
-      flushPendingBackgroundPrompts()
+      activateSession(next.id)
       return
     }
     if (command.name === "/permissions") {
@@ -472,11 +395,16 @@ export async function runInteractive(input: {
           typingIndicator: updated.typingIndicator ?? input.config.typingIndicator,
           typingIndicatorBlink: updated.typingIndicatorBlink === true,
           notifications: updated.notifications === true,
-          statusLine: statusLinePreferencesFromPrefs(updated),
+          statusLine: statusLinePreferencesFrom(updated),
         })
         terminal.setLayout(input.config.layout)
         terminal.setStatusLinePreferences(input.config.statusLine)
-        await saveGlobalPreferences(updated).catch(() => {})
+        try {
+          await saveGlobalPreferences(updated)
+          showTransientStatus("Settings saved globally.", 1800)
+        } catch (error) {
+          showTransientStatus(`Failed to save settings: ${formatError(error)}`, 8000)
+        }
       })
       return
     }
@@ -850,24 +778,19 @@ export async function runInteractive(input: {
   }
 
   async function resolveProviderKeyState(def: ProviderDefinition, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): Promise<{ apiKey: string; hasSavedKey: boolean; sourceLabel: string }> {
-    const envKey = def.envVar ? process.env[def.envVar]?.trim() : undefined
-    const rawStoredKey = await getStoredKey(def.id)
-    const storedKey = rawStoredKey ? resolveKeyValue(rawStoredKey) : undefined
-    const rawCustomKey = customProviders.find((p) => p.id === def.id)?.apiKey
-    const customKey = rawCustomKey ? resolveKeyValue(rawCustomKey) : undefined
-    const apiKey = envKey || storedKey || customKey || ""
-    const sourceLabel = envKey
-      ? rawStoredKey ? "env + saved" : "env"
-      : storedKey
+    const state = await resolveProviderKey(def, customProviders)
+    const sourceLabel = state.source === "environment"
+      ? state.hasSavedKey ? "env + saved" : "env"
+      : state.source === "saved"
         ? "saved"
-        : rawStoredKey
-          ? "saved unresolved"
-          : customKey
-            ? "custom"
-            : rawCustomKey
+        : state.source === "custom"
+          ? "custom"
+          : state.hasSavedKey
+            ? "saved unresolved"
+            : state.hasCustomKey
               ? "custom unresolved"
               : "not configured"
-    return { apiKey, hasSavedKey: Boolean(rawStoredKey), sourceLabel }
+    return { apiKey: state.apiKey, hasSavedKey: state.hasSavedKey, sourceLabel }
   }
 
   function showApiKeySetupForProvider(providerId: string, customProviders: Awaited<ReturnType<typeof loadCustomProviders>>): void {
@@ -878,16 +801,18 @@ export async function runInteractive(input: {
       providerId,
       label,
       async (key) => {
+        const normalizedKey = key.trim()
+        if (!normalizedKey) {
+          showTransientStatus(`API key for ${label} cannot be empty.`, 6000)
+          return
+        }
         try {
-          await setStoredKey(providerId, key)
+          await setStoredKey(providerId, normalizedKey)
         } catch (error) {
           showTransientStatus(`Failed to save API key to ~/.furnace/auth.json: ${formatError(error)}`, 8000)
           return
         }
-        input.config.provider = providerId
-        input.config.apiKey = key
-        input.config.openRouterApiKey = key
-        input.config.providerConfig = { ...def, apiKey: key, siteUrl: input.config.siteUrl, appName: input.config.appName }
+        activateProvider(input.config, def, normalizedKey)
         const newModel = def.defaultModel || def.models?.[0]?.id || input.config.model
         if (newModel !== input.config.model) {
           input.config.model = newModel
@@ -922,9 +847,7 @@ export async function runInteractive(input: {
     }
     if (providerId === input.config.provider) {
       const next = await resolveProviderKeyState(def, customProviders)
-      input.config.apiKey = next.apiKey
-      input.config.openRouterApiKey = next.apiKey
-      input.config.providerConfig = { ...def, apiKey: next.apiKey, siteUrl: input.config.siteUrl, appName: input.config.appName }
+      activateProvider(input.config, def, next.apiKey)
       refreshModelListCache()
     }
     showTransientStatus(`Deleted saved ${def.displayName} key from ~/.furnace/auth.json.`, 4000)
@@ -948,7 +871,6 @@ export async function runInteractive(input: {
   function showTaskStatus(): void {
     const status = formatTaskStatusForUser(taskManager.status(sessionId).tasks)
     terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
-    terminal.setTasks(taskManager.status(sessionId).tasks)
   }
 
   function applyBaseAutocompleteItems(items: PromptAutocompleteItem[]): void {
@@ -1039,16 +961,15 @@ export async function runInteractive(input: {
   }
 
   function switchToSession(targetSessionId: string): void {
+    activateSession(targetSessionId, { clearScreen: targetSessionId !== sessionId })
+  }
+
+  function activateSession(targetSessionId: string, options: { clearDraft?: boolean; clearScreen?: boolean } = {}): void {
     unreadCompletedSessionIds.delete(targetSessionId)
-    if (targetSessionId === sessionId) {
-      refreshCurrentSession()
-      restoreSessionRuntimeUi(targetSessionId)
-      restoreSessionInteractionState(targetSessionId)
-      return
-    }
     sessionId = targetSessionId
     activeDisplaySessionId = targetSessionId
-    process.stdout.write("\x1b[2J\x1b[H")
+    if (options.clearScreen) process.stdout.write("\x1b[2J\x1b[H")
+    if (options.clearDraft) terminal.setInputDraft("")
     terminal.clearTranscriptDisplay()
     refreshCurrentSession()
     syncQueuedPrompts()
@@ -1107,15 +1028,12 @@ export async function runInteractive(input: {
         showTransientStatus(`Unknown provider: ${match.providerId}`)
         return false
       }
-      const apiKey = await resolveProviderApiKey(def, customProviders)
+      const apiKey = (await resolveProviderKey(def, customProviders)).apiKey
       if (!apiKey) {
         showTransientStatus(`No API key for ${def.displayName}. Use /login to add one.`)
         return false
       }
-      input.config.provider = def.id
-      input.config.apiKey = apiKey
-      input.config.openRouterApiKey = apiKey
-      input.config.providerConfig = { ...def, apiKey, siteUrl: input.config.siteUrl, appName: input.config.appName }
+      activateProvider(input.config, def, apiKey)
       if (persist) await saveGlobalPreferences({ provider: def.id }).catch(() => {})
     }
     input.config.model = match.id
@@ -1221,7 +1139,7 @@ export async function runInteractive(input: {
       return
     }
     const isCurrent = ["current", "tip", "head"].includes(trimmed.toLowerCase())
-    const sourceEntryId = isCurrent ? undefined : resolveForkEntryId(trimmed)
+    const sourceEntryId = isCurrent ? undefined : resolveForkEntryId(input.store, sessionId, trimmed)
     if (!isCurrent && !sourceEntryId) {
       showTransientStatus(`Unknown fork point: ${trimmed}. Type /fork and pick a prompt.`)
       return
@@ -1232,27 +1150,11 @@ export async function runInteractive(input: {
         sourceEntryId,
         sourceSessionId: sessionId,
       })
-      sessionId = result.forkedSession.id
-      activeDisplaySessionId = result.forkedSession.id
-      unreadCompletedSessionIds.delete(result.forkedSession.id)
-      terminal.setInputDraft("")
-      terminal.clearTranscriptDisplay()
-      refreshCurrentSession()
-      syncQueuedPrompts()
-      flushPendingBackgroundPrompts()
+      activateSession(result.forkedSession.id, { clearDraft: true })
       showTransientStatus(`Forked into ${result.forkedSession.title}.`, 6000)
     } catch (error) {
       showTransientStatus(formatError(error), 8000)
     }
-  }
-
-  function resolveForkEntryId(token: string): string | undefined {
-    const points = input.store.listForkPoints(sessionId)
-    const normalized = token.trim().toLowerCase()
-    return points.find(({ entry }) => {
-      const content = firstLine((entry.data as { content: string }).content)
-      return entry.id === token || shortEntryId(entry.id) === token || entry.id.startsWith(token) || content.toLowerCase() === normalized || content.toLowerCase().startsWith(normalized)
-    })?.entry.id
   }
 
   async function setThemeByName(name: string): Promise<void> {
@@ -1291,30 +1193,18 @@ export async function runInteractive(input: {
 
   async function switchMode(mode: AgentMode, options: { reason: PlanModeEntryData["reason"]; seed?: string }): Promise<void> {
     clearTransientStatus()
-    const current = currentPlanModeState(input.store.getActivePath(sessionId))
-    const planPath = mode === "plan" ? current.planPath || createPlanPath(input.cwd, options.seed || input.store.getSession(sessionId).title) : undefined
-    input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, {
-      kind: "mode_change",
+    const state = transitionPlanMode({
+      cwd: input.cwd,
       mode,
-      planPath,
-      reason: options.reason,
+      reason: options.reason || "user",
+      seed: options.seed,
+      sessionId,
+      store: input.store,
     })
-    permissions.setSessionMode(sessionId, mode, planPath)
-    terminal.setMode(mode, planPath)
+    permissions.setSessionMode(sessionId, state.mode, state.planPath)
+    terminal.setMode(state.mode, state.planPath)
     if (mode === "agent") terminal.clearPlanActions()
-    showTransientStatus(mode === "plan" ? `Plan mode active. Plan artifact: ${planPath}` : "Agent mode active.")
-  }
-
-  function inheritPlanMode(parentSessionId: string, childSessionId: string): void {
-    const state = currentPlanModeState(input.store.getActivePath(parentSessionId))
-    if (state.mode !== "plan") return
-    input.store.appendEntry<PlanModeEntryData>(childSessionId, "custom", null, {
-      kind: "mode_change",
-      mode: "plan",
-      planPath: state.planPath,
-      reason: "inherited",
-    })
-    permissions.setSessionMode(childSessionId, "plan", state.planPath)
+    showTransientStatus(state.mode === "plan" ? `Plan mode active. Plan artifact: ${state.planPath}` : "Agent mode active.")
   }
 
   async function handlePlanAction(action: "execute" | "refine" | "stay", planPath: string): Promise<void> {
@@ -1624,7 +1514,6 @@ export async function runInteractive(input: {
     permissions.setSessionMode(sessionId, state.mode, state.planPath)
     terminal.setMode(state.mode, state.planPath)
     if (state.mode !== "plan") terminal.clearPlanActions()
-    terminal.setTasks(taskManager.status(sessionId).tasks)
     const usage = estimateContextUsage()
     terminal.setContextUsage(usage.tokens, usage.window)
     updateTerminalCostUsage(terminal, input.store, sessionId)
@@ -1735,7 +1624,7 @@ export async function runInteractive(input: {
         terminal.setBusy(false)
         terminal.setThinking(false)
       }
-      process.stdout.write("\x07")
+      if (input.config.notifications) process.stdout.write("\x07")
       syncQueuedPrompts()
     }
   }
@@ -1789,19 +1678,17 @@ export async function runPiped(input: {
       continue
     }
     if (command.name === "/plan") {
-      const state = currentPlanModeState(input.store.getActivePath(sessionId))
-      const planPath = state.planPath || createPlanPath(process.cwd(), command.argument || input.store.getSession(sessionId).title)
-      input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "plan", planPath, reason: "user" })
-      permissions.setSessionMode(sessionId, "plan", planPath)
-      process.stdout.write(`Plan mode active. Plan artifact: ${planPath}\n`)
+      const state = transitionPlanMode({ cwd: process.cwd(), mode: "plan", reason: "user", seed: command.argument, sessionId, store: input.store })
+      permissions.setSessionMode(sessionId, state.mode, state.planPath)
+      process.stdout.write(`Plan mode active. Plan artifact: ${state.planPath}\n`)
       if (command.argument) {
         await runSingleTurn({ config: input.config, cwd: process.cwd(), permissions, prompt: command.argument, sessionId, store: input.store })
       }
       continue
     }
     if (command.name === "/agent") {
-      input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "agent", reason: "user" })
-      permissions.setSessionMode(sessionId, "agent")
+      const state = transitionPlanMode({ cwd: process.cwd(), mode: "agent", reason: "user", sessionId, store: input.store })
+      permissions.setSessionMode(sessionId, state.mode)
       process.stdout.write("Agent mode active.\n")
       continue
     }
@@ -1813,17 +1700,15 @@ export async function runPiped(input: {
         continue
       }
       if (requested === "agent") {
-        input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "agent", reason: "user" })
-        permissions.setSessionMode(sessionId, "agent")
+        const state = transitionPlanMode({ cwd: process.cwd(), mode: "agent", reason: "user", sessionId, store: input.store })
+        permissions.setSessionMode(sessionId, state.mode)
         process.stdout.write("Agent mode active.\n")
         continue
       }
       if (requested === "plan") {
-        const state = currentPlanModeState(input.store.getActivePath(sessionId))
-        const planPath = state.planPath || createPlanPath(process.cwd(), input.store.getSession(sessionId).title)
-        input.store.appendEntry<PlanModeEntryData>(sessionId, "custom", null, { kind: "mode_change", mode: "plan", planPath, reason: "user" })
-        permissions.setSessionMode(sessionId, "plan", planPath)
-        process.stdout.write(`Plan mode active. Plan artifact: ${planPath}\n`)
+        const state = transitionPlanMode({ cwd: process.cwd(), mode: "plan", reason: "user", sessionId, store: input.store })
+        permissions.setSessionMode(sessionId, state.mode, state.planPath)
+        process.stdout.write(`Plan mode active. Plan artifact: ${state.planPath}\n`)
         continue
       }
       process.stdout.write("Usage: /mode [agent|plan]\n")
@@ -1849,13 +1734,8 @@ export async function runPiped(input: {
         process.stdout.write("Use /fork current or /fork <prompt preview>.\n")
         continue
       }
-      const points = input.store.listForkPoints(sessionId)
       const isCurrent = ["current", "tip", "head"].includes(arg.toLowerCase())
-      const normalized = arg.toLowerCase()
-      const sourceEntryId = isCurrent ? undefined : points.find(({ entry }) => {
-        const preview = firstLine(entry.data.content).toLowerCase()
-        return entry.id === arg || shortEntryId(entry.id) === arg || entry.id.startsWith(arg) || preview === normalized || preview.startsWith(normalized)
-      })?.entry.id
+      const sourceEntryId = isCurrent ? undefined : resolveForkEntryId(input.store, sessionId, arg)
       if (!isCurrent && !sourceEntryId) {
         process.stdout.write(`Unknown fork point: ${arg}\n`)
         continue
@@ -2008,32 +1888,11 @@ export async function runSingleTurn(input: {
   const permissions = input.permissions || new SessionPermissionStore()
   const taskRunner: TaskManager =
     input.taskRunner ||
-    new TaskManager({
-      createChildTask: ({ description, parentSessionId, prompt }) => {
-        const child = input.store.createSession({ cwd: input.cwd, parentSessionId, relationType: "subagent", rootSessionId: parentSessionId, title: `${description} (subagent)` })
-        permissions.inheritSession(child.id, parentSessionId)
-        const parentPlanState = currentPlanModeState(input.store.getActivePath(parentSessionId))
-        if (parentPlanState.mode === "plan") {
-          input.store.appendEntry<PlanModeEntryData>(child.id, "custom", null, {
-            kind: "mode_change",
-            mode: "plan",
-            planPath: parentPlanState.planPath,
-            reason: "inherited",
-          })
-          permissions.setSessionMode(child.id, "plan", parentPlanState.planPath)
-        }
-        return {
-          background: false,
-          childSessionId: child.id,
-          description,
-          id: makeTaskId("task"),
-          parentSessionId,
-          prompt,
-          startedAt: Date.now(),
-          status: "running",
-        } satisfies TaskRecord
-      },
-      executeChildTask: (record, signal) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager: taskRunner, terminal: input.terminal }),
+    createSubagentTaskManager({
+      cwd: input.cwd,
+      executeChildTask: (record, signal, manager) => runSubagentTask({ config: input.config, cwd: input.cwd, permissions, record, signal, store: input.store, taskManager: manager, terminal: input.terminal }),
+      permissions,
+      store: input.store,
     })
 
   const referencedImages = (input.images ?? []).filter((img) => {
@@ -2132,7 +1991,6 @@ export async function runSingleTurn(input: {
       tools: activeTools,
     }),
     onToolStart: (call) => {
-      const narrationBefore = streamingText
       streamingText = ""
       terminal?.setStreamingContent("")
       const fileSnapshot = captureFileSnapshot(call.name, call.arguments, input.cwd)
@@ -2142,19 +2000,20 @@ export async function runSingleTurn(input: {
         name: call.name,
         toolCallId: call.id,
       })
-      toolActivities.push({ args: call.arguments, id: call.id, name: call.name, narrationBefore, status: "running" })
+      toolActivities.push({ args: call.arguments, id: call.id, name: call.name, status: "running" })
       input.terminal?.setToolActivities([...toolActivities])
       input.terminal?.setThinking(true, `Running ${call.name}`)
     },
-    onToolResult: (call, content) => {
+    onToolResult: (call, content, execution) => {
       input.store.appendToolResult(input.sessionId, {
         content,
         name: call.name,
+        status: execution.status,
         toolCallId: call.id,
       })
       const index = toolActivities.findIndex((activity) => activity.id === call.id)
-      const status = content.startsWith(`Tool ${call.name} failed:`) || content.startsWith(`Tool ${call.name} denied:`) ? "failed" : "done"
-      const activity = { args: call.arguments, id: call.id, name: call.name, narrationBefore: toolActivities[index]?.narrationBefore, result: content, status } satisfies ToolActivity
+      const status = execution.status === "error" ? "failed" : "done"
+      const activity = { args: call.arguments, id: call.id, name: call.name, result: content, status } satisfies ToolActivity
       if (index >= 0) toolActivities[index] = activity
       else toolActivities.push(activity)
       input.terminal?.setToolActivities([...toolActivities])
@@ -2235,6 +2094,59 @@ export async function runSingleTurn(input: {
   }
 }
 
+function createSubagentTaskManager(input: {
+  cwd: string
+  executeChildTask: (record: TaskRecord, signal: AbortSignal, manager: TaskManager) => Promise<string>
+  onGroupComplete?: TaskManagerOptions["onGroupComplete"]
+  permissions: SessionPermissionStore
+  store: SessionStore
+}): TaskManager {
+  let manager!: TaskManager
+  manager = new TaskManager({
+    createChildTask: ({ description, parentSessionId, prompt }) => {
+      const child = input.store.createSession({
+        cwd: input.cwd,
+        parentSessionId,
+        relationType: "subagent",
+        rootSessionId: parentSessionId,
+        title: `${description} (subagent)`,
+      })
+      input.permissions.inheritSession(child.id, parentSessionId)
+      inheritPlanMode(input.store, input.permissions, parentSessionId, child.id)
+      return {
+        background: false,
+        childSessionId: child.id,
+        description,
+        id: makeTaskId("task"),
+        parentSessionId,
+        prompt,
+        startedAt: Date.now(),
+        status: "running",
+      }
+    },
+    executeChildTask: (record, signal) => input.executeChildTask(record, signal, manager),
+    onGroupComplete: input.onGroupComplete,
+  })
+  return manager
+}
+
+function inheritPlanMode(
+  store: SessionStore,
+  permissions: SessionPermissionStore,
+  parentSessionId: string,
+  childSessionId: string,
+): void {
+  const state = currentPlanModeState(store.getActivePath(parentSessionId))
+  if (state.mode !== "plan") return
+  store.appendEntry<PlanModeEntryData>(childSessionId, "custom", null, {
+    kind: "mode_change",
+    mode: "plan",
+    planPath: state.planPath,
+    reason: "inherited",
+  })
+  permissions.setSessionMode(childSessionId, "plan", state.planPath)
+}
+
 async function runSubagentTask(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
   cwd: string
@@ -2313,10 +2225,11 @@ async function runSubagentTask(input: {
       })
       input.taskManager?.recordToolActivity(input.record.childSessionId, call.name)
     },
-    onToolResult: (call, content) => {
+    onToolResult: (call, content, execution) => {
       input.store.appendToolResult(input.record.childSessionId, {
         content,
         name: call.name,
+        status: execution.status,
         toolCallId: call.id,
       })
     },
@@ -2493,25 +2406,6 @@ function sessionTitleById(store: SessionStore, sessionId: string): string {
     return store.getSession(sessionId).title
   } catch {
     return sessionId
-  }
-}
-
-function statusLinePreferencesFromPrefs(prefs: FurnacePreferences): StatusLinePreferences {
-  return {
-    statusShowAppName: prefs.statusShowAppName,
-    statusShowContext: prefs.statusShowContext,
-    statusShowContextPercent: prefs.statusShowContextPercent,
-    statusContextMode: prefs.statusContextMode,
-    statusShowCost: prefs.statusShowCost,
-    statusShowCwd: prefs.statusShowCwd,
-    statusShowFast: prefs.statusShowFast,
-    statusShowForkParent: prefs.statusShowForkParent,
-    statusShowMode: prefs.statusShowMode,
-    statusShowModel: prefs.statusShowModel,
-    statusShowReasoning: prefs.statusShowReasoning,
-    statusShowTheme: prefs.statusShowTheme,
-    statusShowTitle: prefs.statusShowTitle,
-    statusShowWindow: prefs.statusShowWindow,
   }
 }
 

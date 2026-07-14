@@ -178,7 +178,7 @@ export async function boundToolOutput(value: string, context: ToolContext): Prom
   const lines = value.split("\n")
   if (byteLength <= maxToolOutputBytes && lines.length <= maxToolOutputLines) return value
 
-  const artifact = await storeContextArtifact({ content: value, cwd: context.cwd, label: "tool-output" })
+  const artifact = await storeContextArtifact({ content: value, cwd: context.cwd })
   return compressToolOutput({ artifact, content: value, maxBytes: maxToolOutputBytes, maxLines: maxToolOutputLines }).content
 }
 

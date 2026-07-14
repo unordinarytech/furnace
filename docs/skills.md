@@ -162,6 +162,6 @@ Main files:
 - `src/skills/context.ts`: compact guidance, tool output, hidden invocation message.
 - `src/skills/manage.ts`: approved-root skill writing.
 - `src/tools/registry.ts`: `skill` and `skill_manage` tools.
-- `src/cli.ts`: `/skill:<name>`, `/skills list`, `/skills view`, and `/skills reload`.
-- `src/ui/components/prompt-input.tsx`: slash autocomplete, including multi-word commands.
-- `src/ui/ink-terminal.tsx`: dynamic autocomplete and `skill_manage` preview rendering.
+- `src/interactive-session-controller.ts`: `/skill:<name>`, `/skills list`, `/skills view`, and `/skills reload`.
+- `src/slash-command-router.ts`: skill command discovery and autocomplete items.
+- `src/ui/pi-terminal.ts`: dynamic slash autocomplete and tool previews.

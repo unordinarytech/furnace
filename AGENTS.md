@@ -1,6 +1,6 @@
 # Agent Instructions
 
-This repository builds Furnace, a terminal-first agentic coding harness. Treat it as a layered local agent runtime with typed tools, permissions, SQLite sessions, compaction, skills, subagents, and an Ink TUI. Do not treat it as only a chat wrapper around an LLM.
+This repository builds Furnace, a terminal-first agentic coding harness. Treat it as a layered local agent runtime with typed tools, permissions, SQLite sessions, compaction, skills, subagents, and a Pi TUI. Do not treat it as only a chat wrapper around an LLM.
 
 ## Product Direction
 
@@ -38,18 +38,18 @@ nvm use
 - Language: TypeScript.
 - Runtime: Node.js 22.x only; repo pins `22.22.3` through `.nvmrc` and `.node-version`.
 - CLI parser: Commander.
-- TUI: Ink React with local components under `src/ui/components/`.
+- TUI: `@earendil-works/pi-tui` with local components under `src/ui/pi/`.
 - Storage: local SQLite at `.furnace/furnace.sqlite` using `better-sqlite3`.
-- Provider: OpenRouter chat completions and model listing.
+- Providers: OpenRouter, Anthropic, and custom OpenAI-compatible endpoints.
 - Build: `tsc` plus `esbuild` to `dist/cli.js`; prompt markdown is copied by `scripts/copy-prompts.mjs`.
 - Tests: Node test runner after `npm run build`.
 
 ## Current Implementation Map
 
 - `src/cli.ts` is the CLI entrypoint. It wires Commander options, opens the session store, and delegates interactive/headless/piped execution to `src/interactive-session-controller.ts`.
-- `src/interactive-session-controller.ts` owns session orchestration for the TUI, headless turns, piped mode, plan mode, permissions, compaction, preferences, and subagent execution. Focused helpers live in `src/prompt-queue.ts`, `src/session-switching.ts`, `src/slash-command-router.ts`, and `src/task-ui-bridge.ts`.
+- `src/interactive-session-controller.ts` owns session orchestration for the TUI, headless turns, piped mode, plan mode, permissions, compaction, preferences, and subagent execution. Focused helpers live in `src/prompt-queue.ts`, `src/session/navigation.ts`, `src/slash-command-router.ts`, and `src/task-ui-bridge.ts`.
 - `src/agent/loop.ts` contains the reusable streamed agent turn loop. It handles tool-call iterations, asks the permission store before gated tools run, records callbacks, and can force web search for non-local current-info requests.
-- `src/openrouter.ts` contains streaming/completion/model-list OpenRouter calls, model settings, reasoning, context length, and fast routing payloads.
+- `src/openrouter.ts` is the provider-neutral request facade retained under its historical filename; provider adapters and model catalog logic live under `src/providers/`.
 - `src/tools/registry.ts` declares built-in tool schemas/registration and dispatches to handlers split by domain under `src/tools/`:
   - file/search: `read`, `ls`, `find`, `glob`, `grep`, `write`, `edit`;
   - execution/interaction: `bash`, `ask_question`;
@@ -78,7 +78,7 @@ nvm use
 
 - Headless prompt mode: `furnace -p "prompt"` or positional prompt arguments.
 - Piped stdin mode when stdin is not a TTY.
-- Interactive Ink TUI by default.
+- Interactive Pi TUI by default.
 - Session controls: new sessions by default, `--continue`, `--session <id>`, `/new`, `/resume`, `/history`.
 - Forking: `/fork`, `/fork current`, `/clone`; forks appear under their parent in history while subagents stay hidden from normal recents.
 - Output mode option: `--output-format text|json` for headless mode.
@@ -146,7 +146,7 @@ nvm use
 
 - Interactive orchestration is now split across `interactive-session-controller.ts` and focused helper modules. Keep new command/session/task logic in those focused modules rather than growing `src/cli.ts` again.
 - The runtime is more separated from the UI, but `interactive-session-controller.ts` still coordinates many concerns for modes, tasks, permissions, compaction, slash commands, preferences, and UI callbacks.
-- Provider support is OpenRouter-first. Anthropic/OpenAI-native adapters and a provider abstraction beyond the current OpenRouter module are not implemented.
+- Provider adapters support OpenRouter, Anthropic's native API, and custom OpenAI-compatible endpoints; keep provider-specific serialization outside the TUI and agent loop.
 - Sandboxing is permission-gate based. There is no OS/container sandbox adapter yet.
 - JSON/headless output exists, but the event stream is not yet exposed as a stable public JSON/RPC/SDK interface.
 - The pi-based TUI is featureful; watch for regressions around focus management, autocomplete scopes, queue controls, settings panels, task panels, and layout.

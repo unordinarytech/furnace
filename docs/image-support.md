@@ -172,29 +172,26 @@ Furnace validates images before sending:
 ### Files Modified
 
 - `src/session/types.ts` - Added `images` field to `MessageEntryData`
-- `src/openrouter.ts` - Updated `OpenRouterMessage` to support `ContentBlock[]`
+- `src/providers/types.ts` - Provider-neutral multimodal message and content-block types
 - `src/session/context.ts` - Updated message conversion to handle multi-modal content
 - `src/session/store.ts` - Added image attachment support to `appendMessage`
-- `src/cli.ts` - Added image handling to submission flow
-- `src/ui/ink-terminal.tsx` - Added image attachment state and methods
-- `src/ui/components/image-attachments.tsx` - NEW: Image preview component
-- `src/utils/images.ts` - NEW: Image validation and loading utilities
+- `src/interactive-session-controller.ts` - Image-aware submission and session replay
+- `src/ui/pi-terminal.ts` - Attachment state, prompt labels, and clipboard insertion
+- `src/utils/clipboard.ts` - Cross-platform clipboard image extraction
+- `src/utils/images.ts` - Image validation and loading utilities
 
 ### Key Functions
 
 - `loadImageAsBase64(filePath)` - Load and validate local image file
 - `isImagePath(text)` - Check if text is an image file path
 - `createImageAttachment(source, options)` - Create attachment record
-- `terminal.addImageAttachment(attachment)` - Queue image for next message
-- `terminal.removeImageAttachment(id)` - Remove queued image
-- `terminal.clearImageAttachments()` - Clear all queued images
+- `terminal.insertImageAttachment(source, options)` - Queue an image for the next message
 
 ## Future Enhancements
 
 Potential improvements not yet implemented:
 
 - Drag & drop image files into terminal
-- Clipboard paste support for images
 - Image thumbnail preview in transcript
 - Batch image loading from directory
 - Image URL auto-detection in prompts

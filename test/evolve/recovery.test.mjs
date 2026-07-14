@@ -119,6 +119,29 @@ test("restore refuses unknown id and cross-root ids", async () => {
   }
 })
 
+test("restore reports failure when the snapshot checkout fails", async () => {
+  const { home, root } = await makeGitRepo()
+  try {
+    await withRecovery(home, async ({ createRecoveryPoint, recoveryRegistryPath, restoreRecoveryPoint }) => {
+      const point = createRecoveryPoint(root, "broken snapshot")
+      const registryPath = recoveryRegistryPath()
+      const registry = JSON.parse(await readFile(registryPath, "utf8"))
+      registry.points.find((candidate) => candidate.id === point.id).ref = "definitely-not-a-git-ref"
+      await writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`, "utf8")
+      await writeFile(join(root, "tracked.txt"), "still-mutated\n", "utf8")
+
+      const result = restoreRecoveryPoint(point.id, root)
+      assert.equal(result.ok, false)
+      assert.equal(result.reason, "error")
+      assert.match(result.message, /git checkout/)
+      assert.equal(await readFile(join(root, "tracked.txt"), "utf8"), "still-mutated\n")
+    })
+  } finally {
+    await rm(home, { recursive: true, force: true })
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test("resetToBaseline reverts to the earliest point, removes all created files, and clears history", async () => {
   const { home, root } = await makeGitRepo()
   try {

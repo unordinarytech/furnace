@@ -4,8 +4,7 @@ import { createToolPermissionRequest, type PermissionPrompt, type SessionPermiss
 import { defaultMaxOutputTokens } from "../preferences.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
-import { isBackgroundedTaskToolResult } from "../tools/tasks.js"
-import { executeToolCall, toolDefinitions, type ToolFileReadStore, type ToolTodoStore } from "../tools/registry.js"
+import { executeToolCall, toolDefinitions, type ToolExecution, type ToolFileReadStore, type ToolTodoStore } from "../tools/registry.js"
 
 export type RunAgentTurnInput = {
   config: FurnaceConfig
@@ -24,7 +23,7 @@ export type RunAgentTurnInput = {
   onContextOverflow?: (messages: OpenRouterMessage[], tools: typeof toolDefinitions) => Promise<OpenRouterMessage[] | undefined>
   onTextDelta?: (delta: string) => void
   onToolStart?: (call: { arguments: string; id: string; name: string }) => void
-  onToolResult?: (call: { arguments: string; id: string; name: string }, content: string) => void
+  onToolResult?: (call: { arguments: string; id: string; name: string }, content: string, execution: ToolExecution) => void
 }
 
 export type RunAgentTurnResult = {
@@ -112,13 +111,17 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
       })
       const permissionDecision = await input.permissions?.authorize(permissionRequest, input.onPermissionRequest)
       if (permissionDecision === "deny") {
-        const content = `Tool ${call.name} denied: user denied permission for this specific tool call.`
-        input.onToolResult?.(call, content)
+        const denied: ToolExecution = {
+          content: `Tool ${call.name} denied: user denied permission for this specific tool call.`,
+          name: call.name,
+          status: "error",
+        }
+        input.onToolResult?.(call, denied.content, denied)
         messages.push({
           role: "tool",
           name: call.name,
           tool_call_id: toolCall.id,
-          content,
+          content: denied.content,
         })
         continue
       }
@@ -130,8 +133,8 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
         },
         { cwd: input.cwd, fileReadStore: input.fileReadStore, questionPrompt: input.onQuestionRequest, sessionId: input.sessionId, signal: input.signal, skillPaths: input.config.skillPaths, taskRunner: input.taskRunner, todoStore: input.todoStore },
       )
-      input.onToolResult?.(call, result.content)
-      if (isBackgroundedTaskToolResult(result.name, result.content)) {
+      input.onToolResult?.(call, result.content, result)
+      if (result.control?.backgrounded) {
         const usage = hasUsage(accumulatedPromptTokens, lastCompletionTokens, accumulatedCacheReadTokens, accumulatedCacheWriteTokens)
           ? {
             cacheReadTokens: accumulatedCacheReadTokens,

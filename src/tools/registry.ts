@@ -323,13 +323,20 @@ export const childToolDefinitions: ToolDefinition[] = registeredTools.filter((to
 
 export async function executeToolCall(call: ToolCallInput, context: ToolContext): Promise<ToolExecution> {
   const tool = registeredTools.find((candidate) => candidate.definition.function.name === call.name)
-  if (!tool) return { name: call.name, content: `Unknown tool: ${call.name}` }
+  if (!tool) return { name: call.name, content: `Unknown tool: ${call.name}`, status: "error" }
 
   try {
     const args = call.arguments.trim() ? JSON.parse(call.arguments) : {}
-    return { name: call.name, content: await boundToolOutput(await tool.execute(args, context), context) }
+    const handlerResult = await tool.execute(args, context)
+    const content = typeof handlerResult === "string" ? handlerResult : handlerResult.content
+    return {
+      name: call.name,
+      content: await boundToolOutput(content, context),
+      control: typeof handlerResult === "string" ? undefined : handlerResult.control,
+      status: "success",
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { name: call.name, content: `Tool ${call.name} failed: ${message}` }
+    return { name: call.name, content: `Tool ${call.name} failed: ${message}`, status: "error" }
   }
 }

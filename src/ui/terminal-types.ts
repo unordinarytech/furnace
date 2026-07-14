@@ -2,7 +2,6 @@ import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionGrantSummary, PermissionRequest } from "../permissions.js"
 import type { FurnacePreferences, ModelSettings, StatusLinePreferences, TerminalLayout } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
-import type { TaskRecord } from "../tasks/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
 
@@ -31,7 +30,6 @@ export type FurnaceTerminal = {
   showApprovalPrompt(request: PermissionRequest, resolve: (decision: PermissionDecision) => void): void
   run(): Promise<void>
   stop(): void
-  waitForInputFocus(): Promise<void>
   setBusy(busy: boolean): void
   setContextUsage(tokens: number, window: number): void
   setCostUsage(costUsd?: number): void
@@ -45,7 +43,6 @@ export type FurnaceTerminal = {
   setThinking(thinking: boolean, message?: string): void
   setQueuedPrompts(prompts: QueuedPrompt[]): void
   setSlashCommandItems(items: PromptAutocompleteItem[]): void
-  setTasks(tasks: TaskRecord[]): void
   showModelEditor(
     choice: ModelChoice,
     settings: ModelSettings,
@@ -114,7 +111,6 @@ export type ToolActivity = {
   args: string
   id: string
   name: string
-  narrationBefore?: string
   result?: string
   status: "running" | "done" | "failed"
 }

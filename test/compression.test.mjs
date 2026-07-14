@@ -1,26 +1,29 @@
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { storeContextArtifact } from "../dist/compression/artifacts.js"
 import { applyHeadroomLiteRequestTransforms } from "../dist/compression/request-transform.js"
 import { compressToolOutput, detectContentKind } from "../dist/compression/router.js"
+import { withTemporaryWorkspace } from "./helpers/workspace.mjs"
 
-async function withWorkspace(fn) {
-  const dir = await mkdtemp(join(tmpdir(), "furnace-compression-"))
-  try {
-    await fn(dir)
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-}
+const withWorkspace = (fn) => withTemporaryWorkspace("furnace-compression-", fn)
 
 test("content router detects common tool output shapes", () => {
   assert.equal(detectContentKind('[{"status":"error","message":"failed"}]'), "json")
   assert.equal(detectContentKind("diff --git a/a.ts b/a.ts\n@@ -1 +1 @@\n-old\n+new"), "diff")
   assert.equal(detectContentKind(Array.from({ length: 40 }, (_, i) => `src/a.ts:${i + 1}:match`).join("\n")), "search")
   assert.equal(detectContentKind("FAIL test\nError: expected true\n    at src/a.ts:1:1"), "log")
+})
+
+test("specialized compression enforces final body byte limits", async () => {
+  await withWorkspace(async (cwd) => {
+    const content = `FAIL\nError: ${"x".repeat(20_000)}`
+    const artifact = await storeContextArtifact({ cwd, content })
+    const result = compressToolOutput({ artifact, content, maxBytes: 512, maxLines: 10 })
+    const body = result.content.split("\n\n").slice(1).join("\n\n")
+
+    assert.ok(Buffer.byteLength(body, "utf8") <= 512)
+    assert.match(result.content, new RegExp(artifact.id))
+  })
 })
 
 test("json compression preserves error-like items and artifact retrieval hint", async () => {

@@ -78,7 +78,7 @@ test("session store blocks forking from fork sessions", async () => {
   }
 })
 
-test("session store forks before a user prompt and returns the selected prompt metadata", async () => {
+test("session store forks before a selected user prompt", async () => {
   const dir = await mkdtemp(join(tmpdir(), "furnace-session-"))
 
   try {
@@ -97,7 +97,6 @@ test("session store forks before a user prompt and returns the selected prompt m
     assert.equal(fork.relationType, "fork")
     assert.equal(fork.rootSessionId, parent.id)
     assert.equal(fork.forkedFromEntryId, selected.id)
-    assert.equal(result.prefillPrompt, "try sqlite instead")
     assert.equal(fork.title, "Fork: try sqlite instead")
     assert.deepEqual(forkPath.map((entry) => entry.data.content), ["first prompt", "first answer"])
     assert.equal(forkPath[0].parentEntryId, null)
@@ -266,7 +265,6 @@ function fakeConfig(settings = {}) {
     appName: "Furnace Test",
     model: "test-model",
     modelSettings: settings,
-    openRouterApiKey: "test-key",
     siteUrl: "http://localhost",
     skillPaths: [],
     subagentSystemPrompt: "subagent",

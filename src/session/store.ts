@@ -73,8 +73,6 @@ type FileReadRangeRow = FileReadFileRow & {
 
 export type ForkSessionResult = {
   forkedSession: SessionRecord
-  prefillPrompt?: string
-  sourceEntry?: EntryRecord<MessageEntryData>
 }
 
 export type ForkPoint = {
@@ -534,11 +532,7 @@ export class SessionStore {
     })
     transaction()
 
-    return {
-      forkedSession,
-      prefillPrompt: position === "before" && sourceEntry.type === "message" ? (sourceEntry.data as MessageEntryData).content : undefined,
-      sourceEntry: sourceEntry.type === "message" && sourceEntry.role === "user" ? sourceEntry as EntryRecord<MessageEntryData> : undefined,
-    }
+    return { forkedSession }
   }
 
   private migrate(): void {

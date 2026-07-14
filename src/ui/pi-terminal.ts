@@ -21,7 +21,6 @@ import {
   type AutocompleteItem,
   type Component,
   type Terminal,
-  visibleWidth,
 } from "@earendil-works/pi-tui"
 import {
   getEditorTheme,
@@ -48,6 +47,7 @@ import {
   IdleStatus,
   WorkingStatusIndicator,
   type StatusIndicator,
+  type WorkingIndicatorOptions,
 } from "./pi/components/status-indicator.js"
 import { ModelSelectorComponent, type Model as PiSelectorModel } from "./pi/components/model-selector.js"
 import { UserMessageComponent } from "./pi/components/user-message.js"
@@ -75,86 +75,18 @@ import type {
   ProviderDisplayRow,
   StatusNoticeTone,
 } from "./terminal-types.js"
-import type { AskQuestionRequest, AskQuestionResponse } from "../questions.js"
+import type { AskQuestionItem, AskQuestionRequest, AskQuestionResponse } from "../questions.js"
 import type { PermissionDecision, PermissionRequest, PermissionGrantSummary } from "../permissions.js"
-import { defaultMaxOutputTokens } from "../preferences.js"
-import { normalizeTerminalLayout, type FurnacePreferences, type ModelSettings, type ReasoningEffort, type StatusLinePreferences, type TerminalLayout } from "../preferences.js"
+import { defaultMaxOutputTokens, normalizeTerminalLayout, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings, type ReasoningEffort, type StatusLinePreferences, type TerminalLayout } from "../preferences.js"
 import type { TranscriptMessage } from "../session/types.js"
-import type { TaskRecord } from "../tasks/types.js"
 import type { AgentMode } from "../plan-mode.js"
 import type { ImageAttachment, ImageSource } from "../utils/images.js"
 import { saveClipboardImage } from "../utils/clipboard.js"
+import { wireSlashAutocompletePreview } from "./pi/autocomplete.js"
+import { LayoutEditorFrame } from "./pi/editor-frame.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
-
-type AutocompleteListFactory = (prefix: string, items: AutocompleteItem[]) => SelectList
-type AutocompletePreviewHandler = (match: PromptAutocompleteMatch | PromptAutocompleteItem | undefined) => void
-type AutocompleteSelectList = SelectList & { getSelectedItem?: () => AutocompleteItem | null }
-
-function isPromptAutocompleteItem(item: AutocompleteItem): item is AutocompleteItem & PromptAutocompleteItem {
-  return "relatedValue" in item
-}
-
-class RelatedAutocompleteSelectList extends SelectList {
-  private readonly rawItems: AutocompleteItem[]
-
-  constructor(items: AutocompleteItem[], maxVisible: number) {
-    super(items, maxVisible, getSelectListTheme(), {
-      minPrimaryColumnWidth: 12,
-      maxPrimaryColumnWidth: 32,
-    })
-    this.rawItems = items
-  }
-
-  render(width: number): string[] {
-    const selected = this.getSelectedItem?.()
-    const relatedValue = selected && isPromptAutocompleteItem(selected) ? selected.relatedValue : undefined
-
-    let baseLines: string[]
-    if (!relatedValue) {
-      baseLines = super.render(width)
-    } else {
-      const related = this.rawItems.find((item) => item.value === relatedValue)
-      if (!related) {
-        baseLines = super.render(width)
-      } else {
-        const originalLabel = related.label
-        const originalDescription = related.description
-        related.label = `↳ ${originalLabel}`
-        related.description = originalDescription ? `fork parent · ${originalDescription}` : "fork parent"
-        baseLines = super.render(width).map((line) => (line.includes("↳ ") ? theme.fg("warning", line) : line))
-        related.label = originalLabel
-        related.description = originalDescription
-      }
-    }
-
-    // Apply a subtle background to each autocomplete row so the slash menu
-    // reads as a distinct panel rather than floating plain text.
-    return baseLines.map((line) => {
-      const pad = " ".repeat(Math.max(0, width - visibleWidth(line)))
-      return theme.bg("toolPendingBg", line + pad)
-    })
-  }
-}
-
-function wireSlashAutocompletePreview(editor: CustomEditor, onPreview: AutocompletePreviewHandler | undefined): void {
-  const editorWithFactory = editor as unknown as { createAutocompleteList?: AutocompleteListFactory }
-  const createAutocompleteList = editorWithFactory.createAutocompleteList?.bind(editor)
-  if (!createAutocompleteList) return
-
-  editorWithFactory.createAutocompleteList = (prefix, items) => {
-    const list = prefix.startsWith("/")
-      ? new RelatedAutocompleteSelectList(items, editor.getAutocompleteMaxVisible()) as AutocompleteSelectList
-      : createAutocompleteList(prefix, items) as AutocompleteSelectList
-    if (prefix.startsWith("/") && onPreview) {
-      list.onSelectionChange = (item) => {
-        onPreview({ ...item, selected: true })
-      }
-    }
-    return list
-  }
-}
 
 function compactTokenLabel(tokens: number): string {
   if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
@@ -191,77 +123,26 @@ function supportsFastContext(contextLength: number | undefined): boolean {
   return !contextLength || contextLength <= 300_000
 }
 
-/** Pi's Expandable contract (interactive-mode.ts). */
+function optionAnswers(question: AskQuestionItem, optionIds: Set<string>): AskQuestionResponse["answers"] {
+  return question.options
+    .filter((option) => optionIds.has(option.id))
+    .map((option) => ({
+      answer: option.label,
+      kind: "option" as const,
+      optionId: option.id,
+      questionId: question.id,
+    }))
+}
+
 interface Expandable {
   setExpanded(expanded: boolean): void
 }
 
-function isExpandable(obj: unknown): obj is Expandable {
-  return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof (obj as Expandable).setExpanded === "function"
-}
-
-// Strips ANSI SGR codes and APC cursor-marker sequences so we can inspect raw
-// character content of a rendered line (used to detect the editor border line).
-const STRIP_ANSI_RE = /\x1b(?:\[[^m]*m|_[^\x07]*\x07)/g
-function stripAnsi(s: string): string {
-  return s.replace(STRIP_ANSI_RE, "")
-}
-
-/** Layout-aware composer frame that keeps the inner editor mounted for focus. */
-class LayoutEditorFrame extends Container {
-  private readonly inner: CustomEditor
-
-  constructor(
-    editor: CustomEditor,
-    private readonly readLayout: () => TerminalLayout,
-  ) {
-    super()
-    this.addChild(editor)
-    this.inner = editor
-  }
-
-  override render(width: number): string[] {
-    const layout = this.readLayout()
-    if (layout === "notebook") {
-      const lines = this.inner.render(Math.max(1, width))
-      const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
-      return [
-        theme.fg("border", "─".repeat(Math.max(1, width))),
-        ...content,
-      ]
-    }
-
-    const innerWidth = Math.max(1, width - 4)
-    const lines = this.inner.render(innerWidth)
-    const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
-
-    const frames: Record<Exclude<TerminalLayout, "notebook">, {
-      bottom: string
-      label: string
-      left: string
-      right: string
-      rightLabel: string
-      top: string
-    }> = {
-      classic:  { top: "╭", bottom: "╰", left: "│", right: "│", label: "", rightLabel: "" },
-      console:  { top: "╠", bottom: "╚", left: "║", right: "║", label: " >_ PROMPT ", rightLabel: " EXECUTE " },
-    }
-    const frame = frames[layout] ?? frames.classic
-    const topRight = frame.top === "╭" ? "╮" : frame.top === "╠" ? "╣" : "┐"
-    const leftLabel = width >= frame.label.length + 6 ? frame.label : ""
-    const rightLabel = width >= frame.label.length + frame.rightLabel.length + 8 ? frame.rightLabel : ""
-    const topDecoration = leftLabel || rightLabel
-      ? `─${leftLabel}${"─".repeat(Math.max(0, width - 4 - leftLabel.length - rightLabel.length))}${rightLabel}─`
-      : "─".repeat(Math.max(0, width - 2))
-    const top = frame.top + topDecoration + topRight
-    const bottomRight = frame.bottom === "╰" ? "╯" : frame.bottom === "╚" ? "╝" : "┘"
-    const bottom = frame.bottom + "─".repeat(Math.max(0, width - 2)) + bottomRight
-    return [
-      theme.fg("border", top),
-      ...content.map((line) => `${theme.fg("border", frame.left)} ${line} ${theme.fg("border", frame.right)}`),
-      theme.fg("border", bottom),
-    ]
-  }
+function isExpandable(value: unknown): value is Expandable {
+  return typeof value === "object"
+    && value !== null
+    && "setExpanded" in value
+    && typeof (value as Expandable).setExpanded === "function"
 }
 
 export type CreateFurnaceTerminalOptions = {
@@ -313,9 +194,20 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentModelSettings: ModelSettings = { ...options.modelSettings }
   let currentMode: AgentMode = "agent"
   let currentLayout = normalizeTerminalLayout(options.layout)
+  let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
+  let currentTypingIndicator = options.typingIndicator ?? "block"
+  let currentTypingIndicatorBlink = options.typingIndicatorBlink === true
   let lofiEnabled = false
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
+
+  const workingIndicatorOptions = (): WorkingIndicatorOptions => {
+    const glyph = currentTypingIndicator === "underscore" ? "_" : currentTypingIndicator === "bar" ? "▌" : "█"
+    return {
+      frames: currentTypingIndicatorBlink ? [glyph, " "] : [glyph],
+      intervalMs: 500,
+    }
+  }
 
   const parseModelRef = (ref: string): { provider: string; id: string } => {
     const slash = ref.indexOf("/")
@@ -407,6 +299,10 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     layout: currentLayout,
     mode: currentMode,
     model: currentModelDisplayName || currentModel,
+    fast: currentModelSettings.fast === true,
+    forkParentTitle: currentForkParentTitle,
+    reasoning: currentModelSettings.reasoningEffort ?? "none",
+    statusLine: currentStatusLine,
     themeName: currentThemeName,
     title: currentTitle,
     version: packageVersion,
@@ -625,7 +521,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const setThinking = (value: boolean, message?: string) => {
     thinking = value
     if (value) {
-      showStatusIndicator(new WorkingStatusIndicator(ui, `${message ?? "Thinking"}...`))
+      showStatusIndicator(new WorkingStatusIndicator(ui, `${message ?? "Thinking"}...`, workingIndicatorOptions()))
     } else {
       clearStatusIndicator()
     }
@@ -727,8 +623,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setTitle(meta.title)
   }
 
-  const setStatusLinePreferences = (_prefs: StatusLinePreferences) => {
-    footer.setStatusLinePreferences(_prefs)
+  const setStatusLinePreferences = (prefs: StatusLinePreferences) => {
+    currentStatusLine = { ...prefs }
+    footer.setStatusLinePreferences(currentStatusLine)
     footer.invalidate()
     ui.requestRender()
   }
@@ -930,9 +827,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     onSelect: (item: AutocompleteItem) => void,
     onCancel: (() => void) | null,
     extras?: Component[],
+    initialValue?: string,
   ) => {
     showSelectorPanel(title, (done) => {
       const list = new SelectList(items, MAX_VISIBLE_SELECT_LIST, getSelectListTheme())
+      const initialIndex = initialValue ? items.findIndex((item) => item.value === initialValue) : -1
+      if (initialIndex >= 0) list.setSelectedIndex(initialIndex)
       list.onSelect = (item) => {
         done()
         onSelect(item)
@@ -954,31 +854,89 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   }
 
   const showQuestionPrompt = (request: AskQuestionRequest, resolve: (response: AskQuestionResponse) => void) => {
-    const items: AutocompleteItem[] = request.questions.flatMap((question) =>
-      question.options.map((option) => ({
+    const answers: AskQuestionResponse["answers"] = []
+
+    const finishQuestion = (index: number, questionAnswers: AskQuestionResponse["answers"]): void => {
+      answers.push(...questionAnswers)
+      const nextIndex = index + 1
+      if (nextIndex >= request.questions.length) {
+        resolve({ answers })
+        return
+      }
+      showQuestion(nextIndex)
+    }
+
+    const showCustomInput = (index: number, selectedOptionIds: Set<string>): void => {
+      const question = request.questions[index]
+      showSelectorPanel(`${question.prompt} — custom answer`, (done) => {
+        const customInput = new Input()
+        customInput.onSubmit = (value) => {
+          const custom = value.trim()
+          if (!custom) return
+          done()
+          finishQuestion(index, [
+            ...optionAnswers(question, selectedOptionIds),
+            { answer: custom, kind: "custom", questionId: question.id },
+          ])
+        }
+        customInput.onEscape = () => {
+          done()
+          showQuestion(index, selectedOptionIds, "__custom")
+        }
+        return { component: customInput, focus: customInput }
+      })
+    }
+
+    const showQuestion = (index: number, selectedOptionIds = new Set<string>(), selectedValue?: string): void => {
+      const question = request.questions[index]
+      const items: AutocompleteItem[] = question.options.map((option) => ({
         value: option.id,
-        label: request.questions.length > 1 ? `${question.prompt}: ${option.label}` : option.label,
-      })),
-    )
-    const mustAnswer = request.questions.every((q) => q.allowRefuse === false)
-    selectListPanel(
-      request.questions[0]?.prompt || "Question",
-      items,
-      (item) => {
-        const question = request.questions.find((q) => q.options.some((o) => o.id === item.value))
-        resolve({
-          answers: [
-            {
-              answer: item.label,
-              kind: "option",
-              optionId: item.value,
-              questionId: question?.id || "",
-            },
-          ],
-        })
-      },
-      mustAnswer ? null : () => resolve({ rejected: true, answers: [] }),
-    )
+        label: question.allowMultiple
+          ? `${selectedOptionIds.has(option.id) ? "[x]" : "[ ]"} ${option.label}`
+          : option.label,
+        description: option.description,
+      }))
+      if (question.allowMultiple) {
+        items.push({ value: "__done", label: "Done", description: "Submit selected answers" })
+      }
+      if (question.allowCustom) items.push({ value: "__custom", label: "Write a custom answer" })
+      if (question.allowRefuse !== false) items.push({ value: "__refuse", label: "Refuse to answer" })
+
+      selectListPanel(
+        request.questions.length > 1 ? `${index + 1}/${request.questions.length} · ${question.prompt}` : question.prompt,
+        items,
+        (item) => {
+          if (item.value === "__custom") {
+            showCustomInput(index, selectedOptionIds)
+            return
+          }
+          if (item.value === "__refuse") {
+            finishQuestion(index, [{ answer: "refused", kind: "refuse", questionId: question.id }])
+            return
+          }
+          if (item.value === "__done") {
+            if (selectedOptionIds.size === 0) {
+              showQuestion(index, selectedOptionIds, item.value)
+              return
+            }
+            finishQuestion(index, optionAnswers(question, selectedOptionIds))
+            return
+          }
+          if (question.allowMultiple) {
+            if (selectedOptionIds.has(item.value)) selectedOptionIds.delete(item.value)
+            else selectedOptionIds.add(item.value)
+            showQuestion(index, selectedOptionIds, item.value)
+            return
+          }
+          finishQuestion(index, optionAnswers(question, new Set([item.value])))
+        },
+        question.allowRefuse === false ? null : () => resolve({ rejected: true, answers: [] }),
+        undefined,
+        selectedValue,
+      )
+    }
+
+    showQuestion(0)
   }
 
   const showApprovalPrompt = (request: PermissionRequest, resolve: (decision: PermissionDecision) => void) => {
@@ -1275,6 +1233,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
               break
           }
           currentPrefs = updated
+          currentStatusLine = statusLinePreferencesFrom(updated)
+          currentTypingIndicator = updated.typingIndicator ?? currentTypingIndicator
+          currentTypingIndicatorBlink = updated.typingIndicatorBlink === true
           onSave(updated)
         },
         () => done(),
@@ -1391,10 +1352,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     slashProvider.setItems(items)
   }
 
-  const setTasks = (_tasks: TaskRecord[]) => {}
-
-  const waitForInputFocus = (): Promise<void> => Promise.resolve()
-
   const run = (): Promise<void> => {
     return new Promise((resolve) => {
       runResolve = resolve
@@ -1427,7 +1384,6 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setStatusLinePreferences,
     setStatusNotice,
     setStreamingContent,
-    setTasks,
     setTheme,
     setThinking,
     setTitle,
@@ -1445,6 +1401,5 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showSettings,
     stop,
     suspendForEditor,
-    waitForInputFocus,
   }
 }

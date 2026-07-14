@@ -7,7 +7,6 @@ import { resolve } from "node:path"
 import { Command } from "commander"
 import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand, slashCommandDefinitions } from "./commands.js"
 import { loadConfig, type FurnaceConfig } from "./config.js"
-import { getStoredKey, resolveKeyValue } from "./keys.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
@@ -23,6 +22,7 @@ import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-comman
 import type { CustomCommand } from "./custom-commands/types.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { resolveProvider } from "./providers/registry.js"
+import { activateProvider, resolveProviderKey } from "./providers/resolution.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
@@ -87,24 +87,11 @@ program
         const customProviders = await loadCustomProviders()
         const providerDef = resolveProvider(providerId, customProviders)
         if (!providerDef) throw new Error(`Unknown provider: ${providerId}`)
-        const envKey = providerDef.envVar ? process.env[providerDef.envVar]?.trim() : undefined
-        const storedKey = envKey ? undefined : resolveKeyValue((await getStoredKey(providerId)) || "")
-        const customProvider = customProviders.find((provider) => provider.id === providerId)
-        const customKey = (!envKey && !storedKey && customProvider?.apiKey) ? resolveKeyValue(customProvider.apiKey) : undefined
-        const apiKey = envKey || storedKey || customKey || (config.provider === providerId ? config.apiKey : "")
-        config.provider = providerId
-        config.apiKey = apiKey
-        config.openRouterApiKey = apiKey
-        config.providerConfig = {
-          ...providerDef,
-          apiKey,
-          siteUrl: process.env.OPENROUTER_SITE_URL?.trim() || "http://localhost",
-          appName: process.env.OPENROUTER_APP_NAME?.trim() || "Furnace",
-        }
+        const { apiKey } = await resolveProviderKey(providerDef, customProviders, config.provider === providerId ? config.apiKey : "")
+        activateProvider(config, providerDef, apiKey)
       }
       if (options.apiKey?.trim()) {
         config.apiKey = options.apiKey.trim()
-        config.openRouterApiKey = options.apiKey.trim()
         config.providerConfig = { ...config.providerConfig, apiKey: options.apiKey.trim() }
       }
       if (options.model?.trim()) {

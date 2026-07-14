@@ -1,6 +1,6 @@
 # Contributing to Furnace
 
-Thanks for helping improve Furnace. Furnace is a terminal-first agentic coding harness with a local runtime, typed tools, permissions, SQLite sessions, compaction, skills, subagents, and an Ink TUI.
+Thanks for helping improve Furnace. Furnace is a terminal-first agentic coding harness with a local runtime, typed tools, permissions, SQLite sessions, compaction, skills, subagents, and a Pi TUI.
 
 ## Development Setup
 
@@ -8,17 +8,17 @@ Requirements:
 
 - Node.js 22.x. The repo is pinned with `.nvmrc` and `.node-version`.
 - npm.
-- An OpenRouter API key for manual agent runs.
+- A supported provider API key for manual agent runs.
 
 Setup:
 
 ```bash
 nvm use
-npm install
+npm ci
 cp .env.example .env
 ```
 
-Add your OpenRouter key to `.env` for local manual testing.
+Configure a provider key through `/login` or an environment variable for local manual testing.
 
 ## Common Commands
 
@@ -50,8 +50,7 @@ Before opening a PR:
 4. Run:
 
 ```bash
-npm run typecheck
-npm test
+npm run verify
 ```
 
 ## Architecture Guidelines

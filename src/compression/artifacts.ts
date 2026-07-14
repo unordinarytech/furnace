@@ -20,7 +20,7 @@ export type RetrievedArtifact = StoredArtifact & {
 const artifactDirectory = ".furnace/context-store"
 const artifactExtension = ".txt"
 
-export async function storeContextArtifact(input: { content: string; cwd: string; label?: string }): Promise<StoredArtifact> {
+export async function storeContextArtifact(input: { content: string; cwd: string }): Promise<StoredArtifact> {
   const hash = createHash("sha256").update(input.content).digest("hex").slice(0, 24)
   const id = `ctx_${hash}`
   const dir = resolve(input.cwd, artifactDirectory)
