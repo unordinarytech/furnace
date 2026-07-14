@@ -1,6 +1,7 @@
 import { Container } from "@earendil-works/pi-tui"
 import type { TerminalLayout } from "../../preferences.js"
 import { CustomEditor } from "./components/custom-editor.js"
+import { moonSurface } from "./layouts.js"
 import { theme } from "./theme.js"
 
 const STRIP_ANSI_RE = /\x1b(?:\[[^m]*m|_[^\x07]*\x07)/g
@@ -28,11 +29,22 @@ export class LayoutEditorFrame extends Container {
       ]
     }
 
+    if (layout === "asteroid") {
+      const innerWidth = Math.max(1, width - 4)
+      const lines = this.inner.render(innerWidth)
+      const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
+      return [
+        moonSurface(width),
+        ...content.map((line) => `${theme.fg("dim", "│")} ${line} ${theme.fg("dim", "│")}`),
+        moonSurface(width),
+      ]
+    }
+
     const innerWidth = Math.max(1, width - 4)
     const lines = this.inner.render(innerWidth)
     const content = lines.filter((line) => !/^─+$/.test(stripAnsi(line)))
 
-    const frames: Record<Exclude<TerminalLayout, "notebook">, {
+    const frames: Record<Exclude<TerminalLayout, "notebook" | "asteroid">, {
       bottom: string
       label: string
       left: string

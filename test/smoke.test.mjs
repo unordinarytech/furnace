@@ -30,11 +30,11 @@ test("termcn theme registry exposes all bundled themes", async () => {
   assert.equal(resolveTheme(undefined).name, "pi-dark")
 
   // Core hand-crafted themes must be present
-  const core = ["pi-dark", "synthwave-84", "flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
+  const core = ["pi-dark", "synthwave-84", "space", "flexoki", "default", "dracula", "catppuccin", "tokyo-night", "nord", "rosepine", "gruvbox"]
   for (const name of core) {
     assert.equal(resolveTheme(name).name, name)
   }
-  // Total should include all 33 hand-crafted themes
+  // Total should include all bundled hand-crafted themes
   assert.ok(themeChoices.length >= 30, `expected 30+ themes, got ${themeChoices.length}`)
   assert.equal(resolveTheme("tokyo night").name, "tokyo-night")
 })

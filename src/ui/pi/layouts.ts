@@ -12,7 +12,49 @@ export const LAYOUT_OPTIONS: readonly LayoutOption[] = [
   { value: "classic", label: "Classic", description: "The familiar banner → transcript → composer flow" },
   { value: "notebook", label: "Notebook", description: "An editorial, labelled conversation log" },
   { value: "console", label: "Console", description: "Operator console with top telemetry and a bottom command deck" },
+  { value: "asteroid", label: "Asteroid", description: "Asteroids drifting in the void · moon-surface chat input" },
 ] as const
+
+// ---------------------------------------------------------------------------
+// Asteroid layout helpers
+// ---------------------------------------------------------------------------
+
+/** Seeded pseudo-random — stable per-width asteroid fields without Math.random(). */
+function seededRand(seed: number): () => number {
+  let s = seed
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff
+    return (s >>> 0) / 0xffffffff
+  }
+}
+
+const ASTEROID_GLYPHS = ["◆", "◇", "▪", "●", "○", "◉", "·", "✦", "✧", "⬡", "⬢", "⬟", "◈", "*", "·", "·", "·"]
+
+/** Render one row of space with scattered asteroid glyphs at `density` (0–1). */
+function asteroidRow(width: number, density: number, seed: number): string {
+  const rand = seededRand(seed)
+  const chars: string[] = []
+  for (let i = 0; i < width; i++) {
+    const r = rand()
+    if (r < density) {
+      const glyph = ASTEROID_GLYPHS[Math.floor(rand() * ASTEROID_GLYPHS.length)]!
+      chars.push(theme.fg("dim", glyph))
+    } else {
+      chars.push(" ")
+    }
+  }
+  return chars.join("")
+}
+
+/** Moon surface horizon: a jagged cratered terrain using block elements. */
+export function moonSurface(width: number): string {
+  const TERRAIN = "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁▂▃▄▅▆▇█▇▆▅▄▃▂▁"
+  let result = ""
+  for (let i = 0; i < width; i++) {
+    result += TERRAIN[i % TERRAIN.length]
+  }
+  return theme.fg("muted", result)
+}
 
 export type LayoutLiveState = {
   context?: { tokens: number; window: number }
@@ -59,6 +101,17 @@ function asciiMark(width: number): string[] {
   return [theme.bold(theme.fg("accent", "FURNACE"))]
 }
 
+const EARLY_ACCESS_MESSAGE = "EARLY STAGES · OPEN AN ISSUE IF SOMETHING FEELS OFF"
+const ISSUE_URL = "https://github.com/amoreX/furnace/issues"
+
+function earlyAccessBanner(width: number): string {
+  const full = `${EARLY_ACCESS_MESSAGE} · ${ISSUE_URL}`
+  const compact = `EARLY STAGES · ${ISSUE_URL}`
+  const content = visibleWidth(full) <= width - 4 ? full : compact
+  const label = theme.bold(theme.fg("accent", ` ${content}`))
+  return truncateToWidth(label, width, "…")
+}
+
 export class LayoutHeaderComponent implements Component {
   private expanded = false
 
@@ -77,6 +130,7 @@ export class LayoutHeaderComponent implements Component {
         return [
           "",
           ...(showPart(state, "statusShowAppName") ? asciiMark(width) : []),
+          earlyAccessBanner(width),
           "",
           theme.fg("accent", horizontalRule(width, showPart(state, "statusShowAppName") ? "╔═[ OPERATOR CONSOLE ]" : "╔═", "═", "╗")),
           rightAligned(
@@ -85,10 +139,27 @@ export class LayoutHeaderComponent implements Component {
             width,
           ),
         ]
+      case "asteroid": {
+        const field1 = asteroidRow(width, 0.04, width * 7 + 1)
+        const field2 = asteroidRow(width, 0.03, width * 13 + 2)
+        const field3 = asteroidRow(width, 0.05, width * 19 + 3)
+        const mark = asciiMark(width)
+        return [
+          "",
+          field1,
+          ...mark,
+          earlyAccessBanner(width),
+          field2,
+          rightAligned(theme.fg("dim", `v${state.version}`), theme.fg("dim", state.title), width),
+          field3,
+          "",
+        ]
+      }
       case "notebook":
         return [
           "",
           ...(showPart(state, "statusShowAppName") ? asciiMark(width) : []),
+          earlyAccessBanner(width),
           rightAligned(
             theme.fg("dim", `v${state.version}`),
             showPart(state, "statusShowTitle") ? theme.fg("dim", `№ ${state.title}`) : "",
@@ -102,7 +173,7 @@ export class LayoutHeaderComponent implements Component {
         const hints = this.expanded
           ? ["ctrl+c interrupt / clear", "ctrl+d exit", "ctrl+o expand tools", "/ commands", "drop files to attach"]
           : ["ctrl+c interrupt · / commands · ctrl+o more"]
-        return ["", ...mark, "", ` ${theme.fg("dim", `v${state.version}`)}`, ...hints.map((hint) => ` ${theme.fg("muted", hint)}`), ""]
+        return ["", ...mark, earlyAccessBanner(width), "", ` ${theme.fg("dim", `v${state.version}`)}`, ...hints.map((hint) => ` ${theme.fg("muted", hint)}`), ""]
       }
     }
   }
@@ -127,6 +198,14 @@ export class LayoutTranscriptSurface extends Container {
           theme.fg("dim", "[00:00:00] BOOT  runtime initialized"),
           theme.fg("success", "[00:00:01] READY awaiting operator input"),
           theme.fg("dim", `[workspace] ${state.cwd}`),
+          "",
+        ]
+      case "asteroid":
+        return [
+          "",
+          asteroidRow(width, 0.04, width * 31 + 5),
+          theme.fg("dim", " The void awaits. Speak into the dark."),
+          asteroidRow(width, 0.03, width * 37 + 7),
           "",
         ]
       case "notebook":
@@ -166,10 +245,19 @@ export class LayoutTranscriptItem extends Container {
 
   override render(width: number): string[] {
     const layout = this.readLayout()
-    const inset = layout === "console" ? 2 : 0
+    const inset = layout === "console" || layout === "asteroid" ? 2 : 0
     const lines = this.content.render(Math.max(1, width - inset))
 
     if (layout === "classic") return lines
+
+    if (layout === "asteroid") {
+      const label = this.kind === "user" ? "✦ YOU" : this.kind === "assistant" ? "◉ FURNACE" : "◆ TOOL"
+      return [
+        theme.fg("dim", "· ".repeat(Math.floor(width / 2)).slice(0, width)),
+        theme.bold(theme.fg(this.kind === "user" ? "accent" : "muted", ` ${label}`)),
+        ...lines.map((line) => `  ${line}`),
+      ]
+    }
 
     if (layout === "notebook") {
       const label = this.kind === "user" ? "YOU" : this.kind === "assistant" ? "FURNACE" : "TOOL LOG"

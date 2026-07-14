@@ -3,10 +3,10 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 export type TypingIndicatorStyle = "block" | "underscore" | "bar"
-export type TerminalLayout = "classic" | "notebook" | "console"
+export type TerminalLayout = "classic" | "notebook" | "console" | "asteroid"
 export type RepoIndexPolicy = "agent-decides" | "every-git-push"
 
-const TERMINAL_LAYOUTS = new Set<TerminalLayout>(["classic", "notebook", "console"])
+const TERMINAL_LAYOUTS = new Set<TerminalLayout>(["classic", "notebook", "console", "asteroid"])
 const PROJECT_PREFERENCE_KEYS = new Set<keyof FurnacePreferences>(["model", "modelSettings", "theme"])
 const writeQueues = new Map<string, Promise<unknown>>()
 let temporaryFileCounter = 0

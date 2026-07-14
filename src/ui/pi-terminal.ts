@@ -338,6 +338,9 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       default:
         add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, widgetContainerBelow, footer)
         break
+      case "asteroid":
+        add(headerContainer, transcriptSurface, pendingMessagesContainer, statusContainer, widgetContainerAbove, editorContainer, footer)
+        break
     }
   }
   rebuildRootLayout()

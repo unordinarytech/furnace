@@ -140,6 +140,7 @@ test("all terminal layouts have distinct structural headers", () => {
     "classic",
     "notebook",
     "console",
+    "asteroid",
   ])
 
   let layout = "classic"
@@ -155,7 +156,10 @@ test("all terminal layouts have distinct structural headers", () => {
   const signatures = new Set()
   for (const option of LAYOUT_OPTIONS) {
     layout = option.value
-    signatures.add(header.render(120).map(stripAnsi).join("\n"))
+    const rendered = header.render(160).map(stripAnsi).join("\n")
+    assert.match(rendered, /EARLY STAGES · OPEN AN ISSUE IF SOMETHING FEELS OFF/)
+    assert.match(rendered, /https:\/\/github\.com\/amoreX\/furnace\/issues/)
+    signatures.add(rendered)
   }
   assert.equal(signatures.size, LAYOUT_OPTIONS.length)
 })
