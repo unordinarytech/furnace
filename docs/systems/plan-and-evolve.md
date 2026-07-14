@@ -40,6 +40,9 @@ Plan mode and evolve both use the normal session runtime, but add stricter contr
 | `src/permissions.ts` | Plan-mode mutation restrictions |
 | `src/evolve/root.ts` | Source-root detection and availability |
 | `src/evolve/orchestrator.ts` | Evolve ordering and rollback decisions |
+| `src/evolve/activation.ts` | Published-install evolved bundle activation |
+| `src/evolve/managed-source.ts` | Version-matched source provisioning |
+| `src/evolve/migration.ts` | Cross-version patch replay and pending conflict state |
 | `src/evolve/recovery.ts` | Recovery points, restore, and reset |
 | `src/evolve/verify.ts` | Temporary build, smoke test, and atomic swap |
 | `src/evolve/types.ts` | Evolve result contracts |
@@ -56,11 +59,18 @@ Plan mode and evolve both use the normal session runtime, but add stricter contr
 - Published installs provision a version-matched managed source checkout before
   evolving; approved managed builds are activated through the installed CLI on
   the next launch.
+- A package upgrade never silently discards evolved source changes. Furnace
+  captures the cumulative tracked and untracked diff, applies it three-way to
+  the new managed checkout, and verifies before activation.
+- Failed automatic migrations leave the new stock package active and preserve
+  migration state for `/evolve-merge`; unresolved files are never activated.
 
 ## Changing This Area
 
 - Preserve the evolve order: snapshot, edit, verify, consent, swap.
 - Test both rollback branches and created-file cleanup.
+- Test clean cross-version migration, conflict persistence, and manual
+  completion before changing migration state.
 - Keep build verification independent from the live `dist/`.
 - Test plan permissions separately from normal session grants.
 - Run all tests under `test/evolve/` plus plan-mode and permissions tests.

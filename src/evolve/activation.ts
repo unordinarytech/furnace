@@ -4,7 +4,7 @@ import { homedir } from "node:os"
 import { dirname, join, resolve } from "node:path"
 import { packageVersion } from "../version.js"
 
-type ActiveEvolveManifest = {
+export type ActiveEvolveManifest = {
   cliPath: string
   sourceRoot: string
   version: 1
@@ -38,22 +38,41 @@ export function resolveActiveEvolveCli(entry = process.argv[1]): string | undefi
   const resolvedEntry = safeRealpath(entry)
   // Development and managed-source bundles already live beside src/. Only a
   // source-less published installation should hand off to the active bundle.
-  const packageRoot = resolve(dirname(resolvedEntry), "..")
-  if (
-    existsSync(join(packageRoot, "src", "cli.ts"))
-    && existsSync(join(packageRoot, "src", "evolve", "orchestrator.ts"))
-  ) return undefined
+  if (!isPublishedFurnaceEntry(resolvedEntry)) return undefined
 
-  const path = activeEvolveManifestPath()
   try {
-    const manifest = JSON.parse(readFileSync(path, "utf8")) as Partial<ActiveEvolveManifest>
-    if (manifest.version !== 1 || manifest.packageVersion !== packageVersion || !manifest.cliPath) return undefined
+    const manifest = readActiveEvolveManifest()
+    if (!manifest || manifest.packageVersion !== packageVersion) return undefined
     const target = safeRealpath(manifest.cliPath)
     if (!existsSync(target) || target === resolvedEntry) return undefined
     return target
   } catch {
     return undefined
   }
+}
+
+export function readActiveEvolveManifest(): ActiveEvolveManifest | undefined {
+  try {
+    const manifest = JSON.parse(readFileSync(activeEvolveManifestPath(), "utf8")) as Partial<ActiveEvolveManifest>
+    if (
+      manifest.version !== 1
+      || typeof manifest.cliPath !== "string"
+      || typeof manifest.sourceRoot !== "string"
+      || typeof manifest.packageVersion !== "string"
+    ) return undefined
+    return manifest as ActiveEvolveManifest
+  } catch {
+    return undefined
+  }
+}
+
+export function isPublishedFurnaceEntry(entry = process.argv[1]): boolean {
+  if (!entry) return false
+  const packageRoot = resolve(dirname(safeRealpath(entry)), "..")
+  return !(
+    existsSync(join(packageRoot, "src", "cli.ts"))
+    && existsSync(join(packageRoot, "src", "evolve", "orchestrator.ts"))
+  )
 }
 
 export function relaunchActiveEvolveIfNeeded(): void {

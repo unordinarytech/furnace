@@ -41,6 +41,7 @@ import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, ToolActivity } from "./ui/terminal-types.js"
 import type { EvolveOutcome } from "./evolve/types.js"
+import type { EvolveMigrationState } from "./evolve/migration.js"
 import type { ImageAttachment } from "./utils/images.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
 import { findTheme, resolveTheme, themeChoices } from "./ui/themes/index.js"
@@ -257,8 +258,11 @@ export async function runInteractive(input: {
   syncPersistentStatusNotice()
   const initialModelSync = syncModelDisplayFromCache()
   void initialModelSync.finally(() => {
-    void maybeRunRepoIndexOnboarding().catch((error) => {
-      showTransientStatus(`Repo indexing failed: ${formatError(error)}`, 6000)
+    void (async () => {
+      await maybeRunEvolveMigration()
+      await maybeRunRepoIndexOnboarding()
+    })().catch((error) => {
+      showTransientStatus(`Startup task failed: ${formatError(error)}`, 6000)
     })
   })
 
@@ -306,6 +310,14 @@ export async function runInteractive(input: {
         return
       }
       await handleEvolveCommand(command.argument)
+      return
+    }
+    if (command.name === "/evolve-merge") {
+      if (isCurrentSessionRunning()) {
+        showTransientStatus("/evolve-merge is available after the current turn finishes.")
+        return
+      }
+      await handleEvolveMergeCommand()
       return
     }
     if (command.name === "/reset") {
@@ -565,9 +577,81 @@ export async function runInteractive(input: {
     transientStatusTimer.unref?.()
   }
 
+  async function promptForEvolveRestart(recoveryId?: string, message = "Furnace was updated and verified."): Promise<boolean> {
+    const recovery = recoveryId
+      ? `\nIf startup breaks, recover with:\n\nfurnace --recover ${recoveryId}`
+      : ""
+    const response = await terminal.requestQuestions({
+      questions: [
+        {
+          id: "restart",
+          allowCustom: false,
+          allowMultiple: false,
+          prompt: `${message}\n\nRestart now to load the change.${recovery}`,
+          options: [
+            { id: "restart", label: "Restart now" },
+            { id: "later", label: "Restart later" },
+          ],
+        },
+      ],
+    })
+    if (response.rejected || !response.answers.some((answer) => answer.optionId === "restart")) return false
+    const { scheduleFurnaceRestart } = await import("./evolve/restart.js")
+    scheduleFurnaceRestart()
+    terminal.stop()
+    return true
+  }
+
+  async function maybeRunEvolveMigration(): Promise<void> {
+    const { isPublishedFurnaceEntry } = await import("./evolve/activation.js")
+    if (!isPublishedFurnaceEntry()) return
+    const { attemptEvolveMigration } = await import("./evolve/migration.js")
+    terminal.setBusy(true)
+    terminal.setInputDisabled(true)
+    try {
+      const result = await attemptEvolveMigration({
+        currentVersion: packageVersion,
+        onStatus: (message) => showTransientStatus(message, 12000),
+      })
+      if (result.status === "migrated") {
+        await promptForEvolveRestart(
+          result.recoveryId,
+          `Your evolved changes were migrated to Furnace ${packageVersion} and verified.`,
+        )
+        return
+      }
+      if (result.status !== "pending") return
+      const response = await terminal.requestQuestions({
+        questions: [
+          {
+            id: "migration",
+            allowCustom: false,
+            allowMultiple: false,
+            prompt: `Furnace could not automatically migrate your evolved changes from ${result.state.fromVersion} to ${result.state.toVersion}.\n\nYour old changes are preserved. Run /evolve-merge to ask the agent to resolve the migration.\n\n${result.state.error}`,
+            options: [
+              { id: "prepare", label: "Prepare /evolve-merge" },
+              { id: "later", label: "Later" },
+            ],
+          },
+        ],
+      })
+      if (!response.rejected && response.answers.some((answer) => answer.optionId === "prepare")) {
+        terminal.setInputDraft("/evolve-merge")
+      }
+    } finally {
+      terminal.setBusy(false)
+      terminal.setInputDisabled(false)
+    }
+  }
+
   async function handleEvolveCommand(argument: string): Promise<void> {
     const request = argument.trim()
     let restartRequested = false
+    const { readEvolveMigrationState } = await import("./evolve/migration.js")
+    if (await readEvolveMigrationState()) {
+      showTransientStatus("Resolve the pending evolved-change migration with /evolve-merge before running /evolve.", 8000)
+      return
+    }
     if (!request) {
       terminal.setInputDraft("/evolve ")
       showTransientStatus("Describe what to change in furnace, e.g. /evolve add cost to the statusline.", 6000)
@@ -635,25 +719,8 @@ export async function runInteractive(input: {
         },
       })
       if (outcome.status === "applied") {
-        const response = await terminal.requestQuestions({
-          questions: [
-            {
-              id: "restart",
-              allowCustom: false,
-              allowMultiple: false,
-              prompt: `Furnace was updated and verified.\n\nRestart now to load the change.\nIf startup breaks, recover with:\n\nfurnace --recover ${outcome.recoveryId}`,
-              options: [
-                { id: "restart", label: "Restart now" },
-                { id: "later", label: "Restart later" },
-              ],
-            },
-          ],
-        })
-        if (!response.rejected && response.answers.some((answer) => answer.optionId === "restart")) {
-          const { scheduleFurnaceRestart } = await import("./evolve/restart.js")
-          scheduleFurnaceRestart()
+        if (await promptForEvolveRestart(outcome.recoveryId)) {
           restartRequested = true
-          terminal.stop()
           return
         }
       }
@@ -661,6 +728,95 @@ export async function runInteractive(input: {
       input.store.appendMessage(sessionId, "assistant", renderEvolveOutcomeMessage(request, outcome), input.config.model)
     } catch (error) {
       input.store.appendMessage(sessionId, "assistant", `Evolve failed: ${formatError(error)}`, input.config.model)
+    } finally {
+      if (!restartRequested) {
+        terminal.setThinking(false)
+        terminal.setBusy(false)
+        terminal.setInputDisabled(false)
+        refreshCurrentSession()
+      }
+    }
+  }
+
+  async function handleEvolveMergeCommand(): Promise<void> {
+    const { completePendingEvolveMigration, readEvolveMigrationState } = await import("./evolve/migration.js")
+    const state = await readEvolveMigrationState()
+    if (!state) {
+      showTransientStatus("No evolved-change migration needs manual resolution.")
+      return
+    }
+    if (!state.targetRoot || !existsSync(state.targetRoot)) {
+      showTransientStatus(`The migration checkout is unavailable. ${state.error}`, 10000)
+      return
+    }
+    if (isApiKeyMissing(input.config)) {
+      showTransientStatus("An API key is required for /evolve-merge. Use /login first.", 8000)
+      return
+    }
+
+    let restartRequested = false
+    const mergeSession = input.store.createSession({
+      cwd: state.targetRoot,
+      relationType: "subagent",
+      title: `evolve merge: ${state.fromVersion} → ${state.toVersion}`,
+    })
+    permissions.applyDecision(
+      { args: "", callId: "evolve-merge", cwd: state.targetRoot, description: "evolve merge", pattern: "*", permission: "*", sessionId: mergeSession.id, toolName: "*" },
+      "allow_all_session",
+    )
+
+    terminal.setBusy(true)
+    terminal.setInputDisabled(true)
+    terminal.setThinking(true, "Resolving evolve migration")
+    try {
+      await runSingleTurn({
+        config: input.config,
+        cwd: state.targetRoot,
+        prompt: renderEvolveMergePrompt(state),
+        sessionId: mergeSession.id,
+        store: input.store,
+        permissions,
+        terminal,
+        hiddenUserMessage: true,
+        hiddenUserMessageSource: "evolve",
+      })
+
+      const diff = spawnSync("git", ["--no-pager", "diff", "--stat", "HEAD"], {
+        cwd: state.targetRoot,
+        encoding: "utf8",
+      })
+      const response = await terminal.requestQuestions({
+        questions: [
+          {
+            id: "apply",
+            allowCustom: false,
+            allowMultiple: false,
+            prompt: `Apply the agent's evolved-change migration?\n\n${(diff.stdout || "").trim() || "No diff summary available."}`,
+            options: [
+              { id: "apply", label: "Verify and apply migration" },
+              { id: "later", label: "Keep unresolved for later" },
+            ],
+          },
+        ],
+      })
+      if (response.rejected || !response.answers.some((answer) => answer.optionId === "apply")) {
+        showTransientStatus("Evolve migration remains pending.", 5000)
+        return
+      }
+
+      const completed = await completePendingEvolveMigration({
+        onStatus: (message) => showTransientStatus(message, 12000),
+      })
+      if (!completed.ok) {
+        input.store.appendMessage(sessionId, "assistant", `Evolve migration is still unresolved: ${completed.message}`, input.config.model)
+        return
+      }
+      restartRequested = await promptForEvolveRestart(
+        completed.recoveryId,
+        `Your evolved changes were merged into Furnace ${state.toVersion} and verified.`,
+      )
+    } catch (error) {
+      input.store.appendMessage(sessionId, "assistant", `Evolve merge failed: ${formatError(error)}`, input.config.model)
     } finally {
       if (!restartRequested) {
         terminal.setThinking(false)
@@ -1870,8 +2026,8 @@ export async function runPiped(input: {
       process.stdout.write("Lofi mode is only available in the interactive TUI.\n")
       continue
     }
-    if (command.name === "/evolve") {
-      process.stdout.write("/evolve is only available in the interactive TUI (it needs the diff-review consent step).\n")
+    if (command.name === "/evolve" || command.name === "/evolve-merge") {
+      process.stdout.write(`${command.name} is only available in the interactive TUI (it needs agent and review prompts).\n`)
       continue
     }
     if (command.name === "/reset") {
@@ -2564,6 +2720,25 @@ function renderEvolveEditPrompt(request: string, root: string): string {
     "- Do NOT run `npm run build`, `npm test`, or scripts/clean-dist.mjs — the evolve orchestrator owns verification and building.",
     "- Ensure the change is type-correct; the orchestrator will run typecheck, tests, and an atomic build after you finish.",
     "- When done, briefly summarize what you changed.",
+  ].join("\n")
+}
+
+function renderEvolveMergePrompt(state: EvolveMigrationState): string {
+  return [
+    "You are resolving an automatic Furnace evolve migration that could not be applied cleanly.",
+    `Old evolved source: ${state.oldRoot}`,
+    `New Furnace source to repair: ${state.targetRoot}`,
+    `Version migration: ${state.fromVersion} -> ${state.toVersion}`,
+    ...(state.patchPath ? [`Saved cumulative evolve patch: ${state.patchPath}`] : []),
+    `Automatic migration error: ${state.error}`,
+    "",
+    "Resolve the migration in the new source root:",
+    "- Inspect Git conflict markers, the saved patch, and the old evolved source to understand the intended customizations.",
+    "- Preserve the new Furnace version's upstream behavior while carrying forward the user's evolved changes wherever compatible.",
+    "- Resolve every Git conflict and stage resolved files with `git add`.",
+    "- Do not commit, build, or run the full test suite; the migration orchestrator verifies and builds after review.",
+    "- If an old customization is no longer compatible, implement the closest safe equivalent and explain it.",
+    "- When complete, summarize the merge decisions.",
   ].join("\n")
 }
 

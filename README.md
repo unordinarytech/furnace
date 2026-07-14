@@ -239,6 +239,12 @@ Notes and current limits:
   download the matching tagged source into `~/.furnace/evolve/sources/`, install
   its build dependencies, and activate an approved evolved bundle for the next
   normal `furnace` launch.
+- After a published Furnace upgrade, cumulative evolved source changes are
+  replayed onto the new version and verified automatically. If Git or
+  verification cannot reconcile them, Furnace runs the new stock version,
+  preserves the old customization and migration checkout, and prompts you to
+  run `/evolve-merge`. That command delegates conflict resolution to the agent,
+  reviews and verifies the result, then offers to restart into it.
 - The evolve edit turn runs with broad session permissions over the Furnace
   root; the diff-review step is your control. It can read `~/.furnace/auth.json`,
   so review the diff before approving.
