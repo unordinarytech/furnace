@@ -19,7 +19,7 @@
   "scripts": {
     "check-node": "./scripts/with-node22.sh node scripts/ensure-node-version.mjs",
     "dev": "./scripts/with-node22.sh tsx src/cli.ts",
-    "build": "./scripts/with-node22.sh sh -c 'node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --external:@earendil-works/pi-tui'",
+    "build": "./scripts/with-node22.sh sh -c 'node scripts/clean-dist.mjs && tsc -p tsconfig.json && node scripts/copy-prompts.mjs && esbuild src/cli.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/cli.js --banner:js=\"import { createRequire } from \\\"node:module\\\";const require = createRequire(import.meta.url);\" --external:better-sqlite3 --external:@earendil-works/pi-tui && chmod +x dist/cli.js'",
     "start": "./scripts/with-node22.sh node dist/cli.js",
     "typecheck": "./scripts/with-node22.sh tsc -p tsconfig.json --noEmit",
     "test": "npm run build && ./scripts/with-node22.sh node --test",

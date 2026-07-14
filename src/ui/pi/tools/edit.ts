@@ -11,6 +11,7 @@ import type { Theme } from "../theme.js";
 import type { ToolDefinition } from "./types.js";
 import { computeEditsDiff, type Edit, type EditDiffError, type EditDiffResult } from "./edit-diff.js";
 import { renderToolPath, str } from "../render-utils.js";
+import { parsePatchEnvelope } from "../../../tools/patch.js";
 
 type EditPreview = EditDiffResult | EditDiffError;
 
@@ -65,6 +66,7 @@ type RenderableEditArgs = {
 	edits?: Edit[];
 	oldText?: string;
 	newText?: string;
+	patch?: string;
 };
 
 type EditToolResultLike = {
@@ -127,7 +129,46 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 	return null;
 }
 
+function furnacePatchPreview(patch: string): EditPreview {
+	try {
+		const parsed = parsePatchEnvelope(patch);
+		const lines = parsed.operations.flatMap((operation) => {
+			if (operation.operation === "add") {
+				return [
+					`File: ${operation.path} (new)`,
+					...operation.contentLines.map((line) => `+  ${line}`),
+				];
+			}
+			if (operation.operation === "delete") {
+				return [`File: ${operation.path} (deleted)`];
+			}
+			return [
+				`File: ${operation.path}`,
+				...operation.hunks.flatMap((hunk) => [
+					...hunk.oldLines.map((line) => `-  ${line}`),
+					...hunk.newLines.map((line) => `+  ${line}`),
+				]),
+			];
+		});
+		const maxLines = 60;
+		const previewLines = lines.length > maxLines
+			? [...lines.slice(0, maxLines), `… ${lines.length - maxLines} more changed lines`]
+			: lines;
+		return { diff: previewLines.join("\n"), firstChangedLine: undefined };
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
 function formatEditCall(args: RenderableEditArgs | undefined, theme: Theme, cwd: string): string {
+	if (typeof args?.patch === "string") {
+		try {
+			const targets = parsePatchEnvelope(args.patch).targets.map((target) => target.path).join(", ");
+			return `${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("toolOutput", targets || "patch")}`;
+		} catch {
+			return `${theme.fg("toolTitle", theme.bold("edit"))} ${theme.fg("toolOutput", "patch")}`;
+		}
+	}
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
 	return `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
 }
@@ -229,10 +270,11 @@ export function createEditToolDefinition(
 		prepareArguments: prepareEditArguments,
 		renderCall(args, theme, context) {
 			const component = getEditCallRenderComponent(context.state, context.lastComponent);
+			const furnacePatch = typeof args?.patch === "string" ? args.patch : undefined;
 			const previewInput = getRenderablePreviewInput(args as RenderableEditArgs | undefined);
-			const argsKey = previewInput
+			const argsKey = furnacePatch ?? (previewInput
 				? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-				: undefined;
+				: undefined);
 
 			if (component.previewArgsKey !== argsKey) {
 				component.preview = undefined;
@@ -241,7 +283,9 @@ export function createEditToolDefinition(
 				component.settledError = false;
 			}
 
-			if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
+			if (context.argsComplete && furnacePatch && !component.preview) {
+				setEditPreview(component, furnacePatchPreview(furnacePatch), argsKey);
+			} else if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
 				component.previewPending = true;
 				const requestKey = argsKey;
 				void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd).then((preview) => {

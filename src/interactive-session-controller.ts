@@ -129,7 +129,7 @@ export async function runInteractive(input: {
       removeQueuedPrompt(id)
     },
     onInterrupt: () => {
-      currentAbortController()?.abort()
+      interruptCurrentTurn()
     },
     onTaskBackground: () => {
       const promoted = taskManager.promoteActiveGroup(sessionId)
@@ -1752,7 +1752,15 @@ export async function runInteractive(input: {
     const prompt = promptQueues.promote(sessionId, id)
     if (!prompt) return
     syncQueuedPrompts()
-    currentAbortController()?.abort()
+    interruptCurrentTurn()
+  }
+
+  function interruptCurrentTurn(): void {
+    const controller = currentAbortController()
+    if (!controller || controller.signal.aborted) return
+    controller.abort()
+    terminal.setThinking(false)
+    terminal.setBusy(false)
   }
 
   function syncQueuedPrompts(): void {

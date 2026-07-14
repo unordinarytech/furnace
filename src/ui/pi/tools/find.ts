@@ -12,18 +12,18 @@ import type { ToolDefinition, ToolRenderResultOptions } from "./types.js";
 import { getTextOutput, invalidArgText, shortenPath, str } from "../render-utils.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult } from "../truncate.js";
 
-export type FindToolInput = { pattern: string; path?: string; limit?: number };
+export type FindToolInput = { pattern?: string; query?: string; path?: string; limit?: number; maxResults?: number };
 
 export interface FindToolDetails {
 	truncation?: TruncationResult;
 	resultLimitReached?: number;
 }
 
-function formatFindCall(args: { pattern: string; path?: string; limit?: number } | undefined, theme: Theme): string {
-	const pattern = str(args?.pattern);
+function formatFindCall(args: FindToolInput | undefined, theme: Theme): string {
+	const pattern = str(args?.query ?? args?.pattern);
 	const rawPath = str(args?.path);
 	const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
-	const limit = args?.limit;
+	const limit = args?.maxResults ?? args?.limit;
 	const invalidArg = invalidArgText(theme);
 	let text =
 		theme.fg("toolTitle", theme.bold("find")) +
