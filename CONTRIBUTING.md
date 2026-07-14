@@ -81,6 +81,8 @@ Do not add behavior that reads secrets, modifies `.git/`, or performs destructiv
 
 ## Source Map
 
+Read [DOCS.md](DOCS.md) before changing a subsystem. It links the architecture, runtime invariants, and area-specific verification guidance.
+
 - `src/agent/` owns the reusable turn loop.
 - `src/providers/` owns provider adapters and credentials.
 - `src/session/` owns persisted conversation state and compaction.
@@ -88,4 +90,4 @@ Do not add behavior that reads secrets, modifies `.git/`, or performs destructiv
 - `src/ui/` owns interactive and plain terminal output.
 - `test/` mirrors the runtime areas it verifies.
 
-Keep public guidance concise and user-facing in `README.md` and contributor-facing in this file.
+Keep `README.md` user-facing, this file contributor-facing, and detailed current architecture under `docs/`.

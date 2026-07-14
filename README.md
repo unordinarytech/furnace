@@ -174,11 +174,9 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
 
 - Interface layout:
   - `Classic`: the original banner, transcript, composer, and footer stack
-  - `Focus`: minimal chrome and a compact single-line rail
-  - `Forge`: a wide two-column command center with a live session sidecar
   - `Console`: an operator layout with top telemetry and a bottom command deck
   - `Notebook`: an editorial conversation log with labelled entries
-  - `Signal`: a broadcast-style transmission desk
+  - `Asteroid`: a space-themed layout with asteroid-field framing
 - Input cursor: block, underscore, or bar.
 - Input cursor blink: off/on, applied to the cursor in the prompt area.
 - Notifications on/off.
@@ -318,7 +316,7 @@ Furnace is organized around a reusable agent runtime with the TUI as one surface
 flowchart TD
   CLI[CLI Entrypoint] --> Controller[Session/Mode Controller]
   Controller --> Runtime[Agent Turn Loop]
-  Runtime --> Provider[OpenRouter Provider]
+  Runtime --> Provider[Provider Adapter]
   Runtime --> Tools[Tool Registry]
   Runtime --> Permissions[Permission Engine]
   Controller --> Sessions[SQLite Session Store]
@@ -329,4 +327,6 @@ flowchart TD
   Controller --> Skills[Skills and Custom Commands]
   Controller --> Subagents[Task/Subagent Manager]
 ```
+
+Start with [DOCS.md](DOCS.md) for the complete architecture and contributor guide.
 
