@@ -16,7 +16,7 @@ test("restart invocation preserves the current launcher and arguments", async ()
   )
 })
 
-test("scheduled restart launches only after the current process exits", async () => {
+test("scheduled restart launches synchronously during clean shutdown", async () => {
   const { scheduleFurnaceRestart } = await import("../../dist/evolve/restart.js")
   let exitListener
   const launches = []
