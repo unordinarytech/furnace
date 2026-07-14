@@ -9,6 +9,7 @@
   "files": [
     "dist/cli.js",
     "dist/prompts/",
+    "src/ui/pi/LICENSE",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",

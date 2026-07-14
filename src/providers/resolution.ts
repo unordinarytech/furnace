@@ -1,4 +1,4 @@
-import { getStoredKey, resolveKeyValue } from "../keys.js"
+import { getStoredKey, resolveKeyValue } from "./keys.js"
 import type { FurnaceConfig } from "../config.js"
 import type { CustomProvider, ProviderDefinition, ResolvedProvider } from "./types.js"
 
