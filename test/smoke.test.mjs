@@ -22,7 +22,7 @@ test("local secrets are ignored", async () => {
 })
 
 test("termcn theme registry exposes all bundled themes", async () => {
-  const { resolveTheme, themeChoices } = await import("../dist/ui/terminal-themes/index.js")
+  const { resolveTheme, themeChoices } = await import("../dist/ui/themes/index.js")
   const names = themeChoices.map((theme) => theme.name)
 
   // pi-dark is the default (first entry) to match Pi's exact palette

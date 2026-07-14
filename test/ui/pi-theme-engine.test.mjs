@@ -13,7 +13,7 @@ const {
   getSettingsListTheme,
 } = await import("../../dist/ui/pi/theme.js")
 
-const { themeChoices } = await import("../../dist/ui/terminal-themes/index.js")
+const { themeChoices } = await import("../../dist/ui/themes/index.js")
 
 test("every shipped furnace theme maps into the pi theme engine", () => {
   for (const choice of themeChoices) {

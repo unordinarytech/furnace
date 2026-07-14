@@ -59,8 +59,8 @@ import {
   LayoutTranscriptSurface,
   LayoutTranscriptItem,
 } from "./pi/layouts.js"
-import { SlashCommandAutocompleteProvider } from "./pi-components/slash-autocomplete.js"
-import { resolveTheme } from "./terminal-themes/index.js"
+import { SlashCommandAutocompleteProvider } from "./pi/slash-autocomplete.js"
+import { resolveTheme } from "./themes/index.js"
 import { packageVersion } from "../version.js"
 import type {
   FurnaceTerminal,

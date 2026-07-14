@@ -4,7 +4,7 @@
  * Copyright (c) 2025 Mario Zechner.
  *
  * Furnace adaptation: themes are built from furnace's terminal theme
- * palettes (src/ui/terminal-themes) instead of pi's JSON theme files, so
+ * palettes (src/ui/themes) instead of pi's JSON theme files, so
  * the rendering pipeline is identical to pi while the colors stay
  * furnace's own.
  */
@@ -16,7 +16,7 @@ import {
 	type SettingsListTheme,
 } from "@earendil-works/pi-tui"
 import chalk from "chalk"
-import { themeChoices, resolveTheme } from "../terminal-themes/index.js"
+import { themeChoices, resolveTheme } from "../themes/index.js"
 import type { Theme as FurnaceTheme } from "../themes/types.js"
 import { highlight, supportsLanguage } from "./syntax-highlight.js"
 

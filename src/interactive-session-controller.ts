@@ -5,12 +5,12 @@ import { resolve } from "node:path"
 import readline from "node:readline"
 import { runAgentTurn } from "./agent/loop.js"
 import { applyHeadroomLiteRequestTransforms } from "./compression/request-transform.js"
-import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand } from "./commands.js"
+import { argumentScopeFor, isHistoryCommand, isKnownSlashCommand, parseSlashCommand } from "./commands/builtins.js"
 import { isApiKeyMissing, loadConfig } from "./config.js"
-import { calculateUsageCostUsd, summarizeUsageCosts } from "./usage/cost.js"
+import { calculateUsageCostUsd, summarizeUsageCosts } from "./session/usage-cost.js"
 import { LofiPlayer } from "./lofi.js"
 import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, type OpenRouterToolDefinition } from "./openrouter.js"
-import { setStoredKey, removeStoredKey } from "./keys.js"
+import { setStoredKey, removeStoredKey } from "./providers/keys.js"
 import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
 import { loadCustomProviders } from "./providers/custom.js"
 import { createModelListCache, type ProviderModel } from "./providers/catalog.js"
@@ -26,29 +26,29 @@ import { resolveForkEntryId } from "./session/navigation.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
 import type { MessageEntryData, SessionRecord } from "./session/types.js"
-import { loadCustomCommands, renderCustomCommandTemplate } from "./custom-commands/loader.js"
-import type { CustomCommand } from "./custom-commands/types.js"
+import { loadCustomCommands, renderCustomCommandTemplate } from "./commands/custom/loader.js"
+import type { CustomCommand } from "./commands/custom/types.js"
 import { PromptQueueStore, type PromptQueueInput } from "./prompt-queue.js"
-import { recordRepoIndexOnboardingDecision, shouldOfferRepoIndex } from "./repo-index.js"
-import { createRepoIndexService, type RepoIndexService } from "./repo-index-service.js"
+import { recordRepoIndexOnboardingDecision, shouldOfferRepoIndex } from "./repo-index/core.js"
+import { createRepoIndexService, type RepoIndexService } from "./repo-index/service.js"
 import { appendSkillGuidance, renderSkillInvocationMessage } from "./skills/context.js"
 import { loadSkillByName, loadSkills } from "./skills/loader.js"
 import type { Skill } from "./skills/types.js"
-import { isSkillCommand, slashAutocompleteItems } from "./slash-command-router.js"
+import { isSkillCommand, slashAutocompleteItems } from "./commands/autocomplete.js"
 import { TaskManager, makeTaskId, type TaskManagerOptions } from "./tasks/manager.js"
 import type { TaskRecord } from "./tasks/types.js"
-import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./task-ui-bridge.js"
+import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./ui/session-terminal-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
 import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, ToolActivity } from "./ui/terminal-types.js"
 import type { EvolveOutcome } from "./evolve/types.js"
 import type { ImageAttachment } from "./utils/images.js"
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
-import { findTheme, resolveTheme, themeChoices } from "./ui/terminal-themes/index.js"
+import { findTheme, resolveTheme, themeChoices } from "./ui/themes/index.js"
 import {
   renderAssistantStart,
   renderConversation,
   renderDone,
-} from "./ui/terminal.js"
+} from "./ui/plain-output.js"
 import { packageName, packageVersion } from "./version.js"
 
 export async function runInteractive(input: {
@@ -2525,7 +2525,7 @@ function renderEvolveEditPrompt(request: string, root: string): string {
     "",
     "Guidelines:",
     "- Edit the furnace source under this root to implement the requested change.",
-    "- Follow existing patterns (themes in src/ui/terminal-themes/, thinking text via setThinking in src/ui/pi-terminal.ts, status line in the footer, etc.).",
+    "- Follow existing patterns (themes in src/ui/themes/, thinking text via setThinking in src/ui/pi-terminal.ts, status line in the footer, etc.).",
     "- Keep the change minimal and focused on the request.",
     "- Do NOT run `npm run build`, `npm test`, or scripts/clean-dist.mjs — the evolve orchestrator owns verification and building.",
     "- Ensure the change is type-correct; the orchestrator will run typecheck, tests, and an atomic build after you finish.",
@@ -2537,7 +2537,7 @@ function renderEvolveOutcomeMessage(request: string, outcome: EvolveOutcome): st
   if (outcome.status === "unavailable") {
     return `Evolve unavailable: ${outcome.message}`
   }
-  const themeFiles = outcome.createdFiles.filter((path) => /terminal-themes\/.+\.ts$/.test(path) && !path.endsWith("index.ts"))
+  const themeFiles = outcome.createdFiles.filter((path) => /ui\/themes\/.+\.ts$/.test(path) && !path.endsWith("index.ts") && !path.endsWith("types.ts"))
   if (outcome.status === "applied") {
     const lines = [
       `Evolved furnace: "${request}".`,

@@ -253,7 +253,7 @@ Interactive sessions can attach one or more images before sending a prompt:
 > Compare [Image #1] and [Image #2]
 ```
 
-Furnace supports local JPEG, PNG, GIF, and WebP files, plus remote image URLs. Local images are validated, stored with the session, and sent as multimodal message content when the selected model supports image input. See [docs/image-support.md](docs/image-support.md).
+Furnace supports local JPEG, PNG, GIF, and WebP files, plus remote image URLs. Local images are validated, stored with the session, and sent as multimodal message content when the selected model supports image input.
 
 ## Tools
 
@@ -269,7 +269,7 @@ The built-in model tools are:
 - `websearch`, `webfetch`
 - `context_retrieve`
 
-Each tool has a schema, permission metadata, execution logic, and bounded model-facing output. See [docs/tools.md](docs/tools.md).
+Each tool has a schema, permission metadata, execution logic, and bounded model-facing output.
 
 ## Repository Index
 
@@ -287,8 +287,6 @@ Current session behavior:
 - `/fork` opens a picker of valid fork points.
 - `/fork current` and `/clone` fork through the current active leaf.
 - Subagent sessions are related to their parent but hidden from normal history.
-
-See [docs/session-management.md](docs/session-management.md) and [docs/forking-and-branching.md](docs/forking-and-branching.md).
 
 ## Safety Model
 
@@ -331,21 +329,4 @@ flowchart TD
   Controller --> Skills[Skills and Custom Commands]
   Controller --> Subagents[Task/Subagent Manager]
 ```
-
-## Documentation
-
-Useful docs:
-
-- [Tools](docs/tools.md)
-- [Skills](docs/skills.md)
-- [Session management](docs/session-management.md)
-- [Forking and branching](docs/forking-and-branching.md)
-- [Compaction](docs/compaction.md)
-- [Headroom-lite](docs/headroom-lite.md)
-- [Image support](docs/image-support.md)
-- [Clipboard image paste](docs/clipboard-paste-images.md)
-- [Delegation and subagents](docs/delegation-subagents.md)
-- [Interaction model](docs/interaction-model.md)
-- [Plan mode](docs/plan.md)
-- [Design choices](docs/design-choices.md)
 

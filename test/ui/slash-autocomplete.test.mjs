@@ -1,6 +1,6 @@
 import { describe, it } from "node:test"
 import assert from "node:assert"
-import { SlashCommandAutocompleteProvider } from "../../dist/ui/pi-components/slash-autocomplete.js"
+import { SlashCommandAutocompleteProvider } from "../../dist/ui/pi/slash-autocomplete.js"
 
 describe("SlashCommandAutocompleteProvider", () => {
   it("returns null when line does not start with /", async () => {

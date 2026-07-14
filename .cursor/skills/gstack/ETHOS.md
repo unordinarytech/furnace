@@ -1,1 +1,0 @@
-/Users/ronish/gstack/ETHOS.md

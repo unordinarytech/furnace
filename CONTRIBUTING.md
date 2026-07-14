@@ -46,7 +46,7 @@ Before opening a PR:
 
 1. Keep changes small and focused.
 2. Add or update tests for runtime, tool, session, permission, compaction, skill, plan mode, or UI-adjacent behavior changes.
-3. Update docs when user-visible behavior changes.
+3. Update `README.md` or `CHANGELOG.md` when user-visible behavior changes.
 4. Run:
 
 ```bash
@@ -79,20 +79,13 @@ Furnace operates on real local files and can run shell commands after approval. 
 
 Do not add behavior that reads secrets, modifies `.git/`, or performs destructive filesystem/git actions without explicit user intent and permission gating.
 
-## Documentation
+## Source Map
 
-Important docs live under `docs/`, especially:
+- `src/agent/` owns the reusable turn loop.
+- `src/providers/` owns provider adapters and credentials.
+- `src/session/` owns persisted conversation state and compaction.
+- `src/tools/` owns tool schemas, permissions metadata, and execution.
+- `src/ui/` owns interactive and plain terminal output.
+- `test/` mirrors the runtime areas it verifies.
 
-- `docs/tools.md`
-- `docs/skills.md`
-- `docs/session-management.md`
-- `docs/forking-and-branching.md`
-- `docs/compaction.md`
-- `docs/headroom-lite.md`
-- `docs/image-support.md`
-- `docs/delegation-subagents.md`
-- `docs/interaction-model.md`
-- `docs/plan.md`
-- `docs/design-choices.md`
-
-Keep `README.md` user-facing and `AGENTS.md` agent-facing.
+Keep public guidance concise and user-facing in `README.md` and contributor-facing in this file.
