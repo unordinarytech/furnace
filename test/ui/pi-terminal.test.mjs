@@ -140,6 +140,26 @@ test("disabled prompt input ignores edits until it is enabled again", () => {
   assert.equal(editor.getText(), "allowed")
 })
 
+test("escape interrupts a disabled prompt input", () => {
+  initTheme("default")
+  const keybindings = KeybindingsManager.create()
+  setKeybindings(keybindings)
+  const editor = new CustomEditor(
+    new TUI(createMockTerminal(), true),
+    getEditorTheme(),
+    keybindings,
+  )
+  let interrupted = false
+  editor.onEscape = () => {
+    interrupted = true
+  }
+
+  editor.setInputDisabled(true)
+  editor.handleInput("\x1b")
+
+  assert.equal(interrupted, true)
+})
+
 test("backspace on a large paste offers expansion or whole-paste deletion", () => {
   initTheme("default")
   const keybindings = KeybindingsManager.create()
@@ -197,6 +217,77 @@ test("answered question cards keep the selected choices visible", () => {
   assert.match(rendered, /Which colors\?/)
   assert.match(rendered, /\[x\] Red/)
   assert.match(rendered, /\[ \] Blue/)
+})
+
+test("edit tool calls render a diff from Furnace patch arguments", () => {
+  initTheme("default")
+  const component = new ToolExecutionComponent(
+    "edit",
+    "call_edit",
+    {
+      patch: `*** Begin Patch
+*** Update File: src/example.ts
+@@
+-const status = "old"
++const status = "new"
+*** Add File: src/new-file.ts
++export const ready = true
+*** End Patch`,
+    },
+    {},
+    undefined,
+    { requestRender: () => {} },
+    "/tmp",
+  )
+
+  component.setArgsComplete()
+  component.markExecutionStarted()
+  component.updateResult({
+    content: [{ type: "text", text: "Updated src/example.ts (1 hunks)\nAdded src/new-file.ts" }],
+    isError: false,
+  })
+
+  const rendered = stripAnsi(component.render(100).join("\n"))
+  assert.match(rendered, /edit src\/example\.ts, src\/new-file\.ts/)
+  assert.match(rendered, /-  const status = "old"/)
+  assert.match(rendered, /\+  const status = "new"/)
+  assert.match(rendered, /\+  export const ready = true/)
+})
+
+test("tool call summaries use Furnace argument names", () => {
+  initTheme("default")
+  const ui = { requestRender: () => {} }
+  const find = new ToolExecutionComponent(
+    "find",
+    "call_find",
+    { query: "session", path: "src", maxResults: 25 },
+    {},
+    undefined,
+    ui,
+    "/tmp",
+  )
+  const grep = new ToolExecutionComponent(
+    "grep",
+    "call_grep",
+    { pattern: "TODO", path: "src", regex: false, maxResults: 10 },
+    {},
+    undefined,
+    ui,
+    "/tmp",
+  )
+  const bash = new ToolExecutionComponent(
+    "bash",
+    "call_bash",
+    { command: "npm test", timeoutMs: 1500 },
+    {},
+    undefined,
+    ui,
+    "/tmp",
+  )
+
+  assert.match(stripAnsi(find.render(100).join("\n")), /find session in src \(limit 25\)/)
+  assert.match(stripAnsi(grep.render(100).join("\n")), /grep TODO in src limit 10/)
+  assert.match(stripAnsi(bash.render(100).join("\n")), /\$ npm test \(timeout 1\.5s\)/)
 })
 
 test("all terminal layouts have distinct structural headers", () => {

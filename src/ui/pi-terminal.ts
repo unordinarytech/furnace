@@ -207,6 +207,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentLayout = normalizeTerminalLayout(options.layout)
   let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
   let lofiEnabled = false
+  let currentPet: string | undefined = "=^..^="
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
 
@@ -543,7 +544,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const setThinking = (value: boolean, message?: string) => {
     thinking = value
     if (value) {
-      showStatusIndicator(new WorkingStatusIndicator(ui, `${message ?? "Thinking"}...`))
+      showStatusIndicator(new WorkingStatusIndicator(ui, interruptHint(message ?? "Thinking")))
     } else {
       clearStatusIndicator()
     }
@@ -552,12 +553,14 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setBusy = (value: boolean) => {
     if (value && !thinking) {
-      showStatusIndicator(new WorkingStatusIndicator(ui, "Working..."))
+      showStatusIndicator(new WorkingStatusIndicator(ui, interruptHint("Working")))
     } else if (!value && !thinking) {
       clearStatusIndicator()
     }
     ui.requestRender()
   }
+
+  const interruptHint = (message: string): string => `${message} [Esc to interrupt]`
 
   const setStatusNotice = (content?: string, tone?: StatusNoticeTone) => {
     statusNotice = content ? { content, tone: tone ?? "default" } : undefined
@@ -604,6 +607,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const updateFooterStatuses = () => {
     footerDataProvider.setExtensionStatus("mode", undefined)
     footerDataProvider.setExtensionStatus("lofi", lofiEnabled ? "lofi" : undefined)
+    footerDataProvider.setExtensionStatus("pet", currentPet)
     footer.invalidate()
     ui.requestRender()
   }
@@ -645,6 +649,11 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     lofiEnabled = enabled
     updateFooterStatuses()
   }
+  const setPet = (pet?: string) => {
+    currentPet = pet
+    updateFooterStatuses()
+  }
+
 
   const setSessionMeta = (meta: { forkParentTitle?: string; title: string }) => {
     currentForkParentTitle = meta.forkParentTitle
@@ -1430,6 +1439,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     setInputDraft,
     setLayout,
     setLofi,
+    setPet,
     setMode,
     setModel,
     setQueuedPrompts,

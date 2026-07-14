@@ -41,6 +41,8 @@ export type FurnacePreferences = {
   statusShowTheme?: boolean
   statusShowTitle?: boolean
   statusShowWindow?: boolean
+  statusShowPet?: boolean
+  pet?: string
   theme?: string
   typingIndicatorBlink?: boolean
   typingIndicator?: TypingIndicatorStyle
@@ -61,6 +63,7 @@ export type StatusLinePreferences = Pick<FurnacePreferences,
   | "statusShowTheme"
   | "statusShowTitle"
   | "statusShowWindow"
+  | "statusShowPet"
 >
 
 export function statusLinePreferencesFrom(preferences: FurnacePreferences): StatusLinePreferences {
@@ -79,6 +82,7 @@ export function statusLinePreferencesFrom(preferences: FurnacePreferences): Stat
     statusShowTheme: preferences.statusShowTheme,
     statusShowTitle: preferences.statusShowTitle,
     statusShowWindow: preferences.statusShowWindow,
+    statusShowPet: preferences.statusShowPet,
   }
 }
 

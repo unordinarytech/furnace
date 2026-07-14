@@ -13,7 +13,7 @@ import type { ToolDefinition, ToolRenderResultOptions } from "./types.js";
 import { getTextOutput, invalidArgText, str } from "../render-utils.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult } from "../truncate.js";
 
-export type BashToolInput = { command: string; timeout?: number };
+export type BashToolInput = { command: string; timeout?: number; timeoutMs?: number };
 
 export interface BashToolDetails {
 	truncation?: TruncationResult;
@@ -46,10 +46,10 @@ function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
+function formatBashCall(args: { command?: string; timeout?: number; timeoutMs?: number } | undefined): string {
 	const command = str(args?.command);
-	const timeout = args?.timeout as number | undefined;
-	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
+	const timeoutMs = args?.timeoutMs ?? (typeof args?.timeout === "number" ? args.timeout * 1000 : undefined);
+	const timeoutSuffix = timeoutMs ? theme.fg("muted", ` (timeout ${(timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 1)}s)`) : "";
 	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
 	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
 }

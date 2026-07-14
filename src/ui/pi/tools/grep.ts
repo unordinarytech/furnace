@@ -20,6 +20,8 @@ export type GrepToolInput = {
 	literal?: boolean;
 	context?: number;
 	limit?: number;
+	maxResults?: number;
+	regex?: boolean;
 };
 
 export interface GrepToolDetails {
@@ -29,19 +31,19 @@ export interface GrepToolDetails {
 }
 
 function formatGrepCall(
-	args: { pattern: string; path?: string; glob?: string; limit?: number } | undefined,
+	args: { pattern: string; path?: string; glob?: string; limit?: number; maxResults?: number; regex?: boolean } | undefined,
 	theme: Theme,
 ): string {
 	const pattern = str(args?.pattern);
 	const rawPath = str(args?.path);
 	const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 	const glob = str(args?.glob);
-	const limit = args?.limit;
+	const limit = args?.maxResults ?? args?.limit;
 	const invalidArg = invalidArgText(theme);
 	let text =
 		theme.fg("toolTitle", theme.bold("grep")) +
 		" " +
-		(pattern === null ? invalidArg : theme.fg("accent", `/${pattern || ""}/`)) +
+		(pattern === null ? invalidArg : theme.fg("accent", args?.regex === false ? pattern || "" : `/${pattern || ""}/`)) +
 		theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
 	if (glob) text += theme.fg("toolOutput", ` (${glob})`);
 	if (limit !== undefined) text += theme.fg("toolOutput", ` limit ${limit}`);

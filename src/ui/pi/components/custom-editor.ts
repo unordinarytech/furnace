@@ -5,6 +5,8 @@
 import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
 
+const CHAT_INPUT_MIN_CONTENT_LINES = 5;
+
 /**
  * Custom editor that handles app-level keybindings for coding-agent.
  */
@@ -27,6 +29,40 @@ export class CustomEditor extends Editor {
 	constructor(tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager, options?: EditorOptions) {
 		super(tui, theme, options);
 		this.keybindings = keybindings;
+	}
+
+	/**
+	 * Override render to ensure the chat input always shows at least
+	 * CHAT_INPUT_MIN_CONTENT_LINES content lines, expanding the editor
+	 * area so there's visible breathing room even when the input is empty.
+	 *
+	 * The base Editor render output has this shape:
+	 *   [0]      top border  (─────…)
+	 *   [1..N]   content lines  (N ≥ 1)
+	 *   [N+1]    bottom border (─────…)
+	 *
+	 * We splice blank padding lines before the bottom border so the total
+	 * content-line count reaches the minimum.  LayoutEditorFrame strips the
+	 * border lines by pattern-matching /^─+$/, so only the extra blanks flow
+	 * through into the framed area — exactly what we want.
+	 */
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		// The base render guarantees at least 3 lines (top border, 1 content, bottom border).
+		if (lines.length < 3) return lines;
+
+		const topBorder = lines[0]!;
+		const bottomBorder = lines[lines.length - 1]!;
+		const contentLines = lines.slice(1, lines.length - 1);
+
+		const deficit = CHAT_INPUT_MIN_CONTENT_LINES - contentLines.length;
+		if (deficit <= 0) return lines;
+
+		// Build a blank line that matches the width of the content lines.
+		const blankLine = " ".repeat(width);
+		const padding = Array.from({ length: deficit }, () => blankLine);
+
+		return [topBorder, ...contentLines, ...padding, bottomBorder];
 	}
 
 	/**

@@ -38,6 +38,7 @@ export type FurnaceTerminal = {
   setStatusLinePreferences(preferences: StatusLinePreferences): void
   setSessionMeta(meta: { forkParentTitle?: string; title: string }): void
   setLofi(enabled: boolean): void
+  setPet(pet?: string): void
   setLayout(layout: TerminalLayout): void
   setMode(mode: AgentMode, planPath?: string): void
   setThinking(thinking: boolean, message?: string): void
