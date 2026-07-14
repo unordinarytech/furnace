@@ -6,6 +6,7 @@ const { FooterComponent, formatContextDisplay } = await import("../../dist/ui/pi
 const { CustomEditor } = await import("../../dist/ui/pi/components/custom-editor.js")
 const { KeybindingsManager } = await import("../../dist/ui/pi/keybindings.js")
 const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
+const { StfuToolGroup, compactToolSummary } = await import("../../dist/ui/pi/components/stfu-tool-group.js")
 const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
 const { getEditorTheme, initTheme } = await import("../../dist/ui/pi/theme.js")
 const { TUI, setKeybindings } = await import("@earendil-works/pi-tui")
@@ -289,6 +290,22 @@ test("tool call summaries use Furnace argument names", () => {
   assert.match(stripAnsi(find.render(100).join("\n")), /find session in src \(limit 25\)/)
   assert.match(stripAnsi(grep.render(100).join("\n")), /grep TODO in src limit 10/)
   assert.match(stripAnsi(bash.render(100).join("\n")), /\$ npm test \(timeout 1\.5s\)/)
+})
+
+test("stfu tool groups collapse adjacent matching calls", () => {
+  initTheme("default")
+  const group = new StfuToolGroup()
+  group.add("call_1", "ls", { path: "src" })
+  group.add("call_2", "ls", { path: "src" })
+  group.add("call_3", "read", { path: "src/cli.ts" })
+  group.update("call_1", "done")
+  group.update("call_2", "done")
+  group.update("call_3", "done")
+
+  const rendered = stripAnsi(group.render(100).join("\n"))
+  assert.match(rendered, /ls src x2/)
+  assert.match(rendered, /read src\/cli\.ts/)
+  assert.equal(compactToolSummary("edit", { patch: "*** Begin Patch\n*** Update File: a.ts\n@@\n-old\n+new\n*** End Patch" }), "edit 1 file")
 })
 
 test("all terminal layouts have distinct structural headers", () => {

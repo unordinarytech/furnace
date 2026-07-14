@@ -52,6 +52,7 @@ import { ModelSelectorComponent, type Model as PiSelectorModel } from "./pi/comp
 import { UserMessageComponent } from "./pi/components/user-message.js"
 import { AssistantMessageComponent, type AssistantMessage } from "./pi/components/assistant-message.js"
 import { ToolExecutionComponent } from "./pi/components/tool-execution.js"
+import { StfuToolGroup } from "./pi/components/stfu-tool-group.js"
 import {
   LAYOUT_OPTIONS,
   LayoutHeaderComponent,
@@ -412,11 +413,14 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let toolOutputExpanded = false
   let streamingComponent: AssistantMessageComponent | undefined
   const pendingTools = new Map<string, ToolExecutionComponent>()
+  const pendingStfuTools = new Map<string, StfuToolGroup>()
+  let stfuToolGroup: StfuToolGroup | undefined
   let imageAttachments: ImageAttachment[] = []
   let inputDisabled = false
   let thinking = false
 
   const toolOptions = () => ({ showImages: true, imageWidthCells: 60 })
+  const stfuEnabled = () => responseModes.includes("stfu")
 
   const parseToolArgs = (args: string): unknown => {
     try {
@@ -450,6 +454,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     return component
   }
 
+  const addStfuTool = (id: string, name: string, args: string): StfuToolGroup => {
+    if (!stfuToolGroup) {
+      stfuToolGroup = new StfuToolGroup()
+      chatContainer.addChild(new LayoutTranscriptItem(stfuToolGroup, "tool", () => currentLayout))
+    }
+    stfuToolGroup.add(id, name, parseToolArgs(args))
+    pendingStfuTools.set(id, stfuToolGroup)
+    return stfuToolGroup
+  }
+
   const resultFromText = (text: string, isError: boolean) => ({
     content: [{ type: "text", text }],
     isError,
@@ -459,17 +473,25 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     chatContainer.clear()
     streamingComponent = undefined
     pendingTools.clear()
+    pendingStfuTools.clear()
+    stfuToolGroup = undefined
     for (const message of transcript) {
       if (message.toolCall) {
         const call = message.toolCall
-        const component = addToolComponent(call.toolCallId, call.name, call.args)
-        component.setArgsComplete()
-        component.markExecutionStarted()
-        if (call.result !== undefined) {
-          component.updateResult(resultFromText(call.result, call.isError ?? false))
+        if (stfuEnabled()) {
+          const group = addStfuTool(call.toolCallId, call.name, call.args)
+          group.update(call.toolCallId, call.result === undefined ? "running" : call.isError ? "failed" : "done")
+        } else {
+          const component = addToolComponent(call.toolCallId, call.name, call.args)
+          component.setArgsComplete()
+          component.markExecutionStarted()
+          if (call.result !== undefined) {
+            component.updateResult(resultFromText(call.result, call.isError ?? false))
+          }
         }
         continue
       }
+      stfuToolGroup = undefined
       if (message.role === "user") {
         const suffix = ""
         addUserMessage(message.content + suffix)
@@ -491,6 +513,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       streamingComponent = undefined
       return
     }
+    stfuToolGroup = undefined
     if (!streamingComponent) {
       streamingComponent = new AssistantMessageComponent(undefined, false, getMarkdownTheme(), "Thinking...", 1)
       chatContainer.addChild(new LayoutTranscriptItem(streamingComponent, "assistant", () => currentLayout))
@@ -501,6 +524,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setToolActivities = (activities: ToolActivity[]) => {
     for (const activity of activities) {
+      if (stfuEnabled()) {
+        let group = pendingStfuTools.get(activity.id)
+        if (!group) group = addStfuTool(activity.id, activity.name, activity.args)
+        if (activity.status === "running") {
+          group.update(activity.id, "running")
+        } else if (activity.result !== undefined || activity.status === "failed") {
+          group.update(activity.id, activity.status === "failed" ? "failed" : "done")
+        }
+        continue
+      }
       let component = pendingTools.get(activity.id)
       if (!component) {
         component = addToolComponent(activity.id, activity.name, activity.args)
@@ -518,12 +551,16 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const clearToolActivities = () => {
     pendingTools.clear()
+    pendingStfuTools.clear()
+    stfuToolGroup = undefined
   }
 
   const clearTranscriptDisplay = () => {
     chatContainer.clear()
     streamingComponent = undefined
     pendingTools.clear()
+    pendingStfuTools.clear()
+    stfuToolGroup = undefined
     ui.requestRender()
   }
 
@@ -653,6 +690,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
 
   const setResponseModes = (modes: ResponseMode[]) => {
     responseModes = [...modes]
+    stfuToolGroup = undefined
     updateFooterStatuses()
   }
 
