@@ -16,6 +16,10 @@ export class CustomEditor extends Editor {
 	public onEscape?: () => void;
 	public onCtrlD?: () => void;
 	public onPasteImage?: () => void;
+	public onPasteMarkerBackspace?: (actions: {
+		deletePaste: () => void;
+		editPaste: () => void;
+	}) => void;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
@@ -34,6 +38,18 @@ export class CustomEditor extends Editor {
 	handleInput(data: string): void {
 		// Check extension-registered shortcuts first
 		if (this.onExtensionShortcut?.(data)) {
+			return;
+		}
+
+		if (
+			(this.keybindings.matches(data, "tui.editor.deleteCharBackward") || data === "\x7f")
+			&& this.hasPasteMarkerBeforeCursor()
+			&& this.onPasteMarkerBackspace
+		) {
+			this.onPasteMarkerBackspace({
+				deletePaste: () => super.handleInput(data),
+				editPaste: () => this.setText(this.getExpandedText()),
+			});
 			return;
 		}
 
@@ -80,5 +96,11 @@ export class CustomEditor extends Editor {
 
 		// Pass to parent for editor handling
 		super.handleInput(data);
+	}
+
+	private hasPasteMarkerBeforeCursor(): boolean {
+		const { line, col } = this.getCursor();
+		const currentLine = this.getLines()[line] ?? "";
+		return /\[paste #\d+(?: (?:\+\d+ lines|\d+ chars))?\]$/.test(currentLine.slice(0, col));
 	}
 }

@@ -179,8 +179,8 @@ Custom slash commands can live under `.furnace/commands` in the project or `~/.f
   - `Console`: an operator layout with top telemetry and a bottom command deck
   - `Notebook`: an editorial conversation log with labelled entries
   - `Signal`: a broadcast-style transmission desk
-- Typing indicator: block, underscore, or bar.
-- Typing blink: off/on, applied to any indicator style.
+- Input cursor: block, underscore, or bar.
+- Input cursor blink: off/on, applied to the cursor in the prompt area.
 - Notifications on/off.
 - Status line fields:
   - app name

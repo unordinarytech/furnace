@@ -1,11 +1,14 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 
-const { createFurnaceTerminal } = await import("../../dist/ui/pi-terminal.js")
+const { createFurnaceTerminal, inputCursorStyleSequence } = await import("../../dist/ui/pi-terminal.js")
 const { FooterComponent, formatContextDisplay } = await import("../../dist/ui/pi/components/footer.js")
+const { CustomEditor } = await import("../../dist/ui/pi/components/custom-editor.js")
+const { KeybindingsManager } = await import("../../dist/ui/pi/keybindings.js")
 const { ToolExecutionComponent } = await import("../../dist/ui/pi/components/tool-execution.js")
 const { LAYOUT_OPTIONS, LayoutHeaderComponent, LayoutTranscriptSurface } = await import("../../dist/ui/pi/layouts.js")
-const { initTheme } = await import("../../dist/ui/pi/theme.js")
+const { getEditorTheme, initTheme } = await import("../../dist/ui/pi/theme.js")
+const { TUI, setKeybindings } = await import("@earendil-works/pi-tui")
 
 function stripAnsi(value) {
   return value.replace(/\x1b\[[0-9;]*m/g, "")
@@ -107,6 +110,49 @@ test("setTranscript and setStreamingContent do not throw", () => {
     ])
     terminal.setStreamingContent("streaming...")
   })
+})
+
+test("typing indicator preferences map to the user input cursor", () => {
+  assert.equal(inputCursorStyleSequence("block", true), "\x1b[1 q")
+  assert.equal(inputCursorStyleSequence("block", false), "\x1b[2 q")
+  assert.equal(inputCursorStyleSequence("underscore", true), "\x1b[3 q")
+  assert.equal(inputCursorStyleSequence("underscore", false), "\x1b[4 q")
+  assert.equal(inputCursorStyleSequence("bar", true), "\x1b[5 q")
+  assert.equal(inputCursorStyleSequence("bar", false), "\x1b[6 q")
+})
+
+test("backspace on a large paste offers expansion or whole-paste deletion", () => {
+  initTheme("default")
+  const keybindings = KeybindingsManager.create()
+  setKeybindings(keybindings)
+  const createEditor = () => new CustomEditor(
+    new TUI(createMockTerminal(), true),
+    getEditorTheme(),
+    keybindings,
+  )
+  const pastedText = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join("\n")
+
+  const editEditor = createEditor()
+  let editActions
+  editEditor.onPasteMarkerBackspace = (actions) => {
+    editActions = actions
+  }
+  editEditor.handleInput(`\x1b[200~${pastedText}\x1b[201~`)
+  assert.match(editEditor.getText(), /^\[paste #1 \+12 lines\]$/)
+  editEditor.handleInput("\x7f")
+  assert.match(editEditor.getText(), /^\[paste #1 \+12 lines\]$/)
+  editActions.editPaste()
+  assert.equal(editEditor.getText(), pastedText)
+
+  const deleteEditor = createEditor()
+  let deleteActions
+  deleteEditor.onPasteMarkerBackspace = (actions) => {
+    deleteActions = actions
+  }
+  deleteEditor.handleInput(`\x1b[200~${pastedText}\x1b[201~`)
+  deleteEditor.handleInput("\x7f")
+  deleteActions.deletePaste()
+  assert.equal(deleteEditor.getText(), "")
 })
 
 test("answered question cards keep the selected choices visible", () => {

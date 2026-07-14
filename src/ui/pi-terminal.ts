@@ -47,7 +47,6 @@ import {
   IdleStatus,
   WorkingStatusIndicator,
   type StatusIndicator,
-  type WorkingIndicatorOptions,
 } from "./pi/components/status-indicator.js"
 import { ModelSelectorComponent, type Model as PiSelectorModel } from "./pi/components/model-selector.js"
 import { UserMessageComponent } from "./pi/components/user-message.js"
@@ -87,6 +86,18 @@ import { LayoutEditorFrame } from "./pi/editor-frame.js"
 
 const MAX_VISIBLE_SELECT_LIST = 10
 const MAX_VISIBLE_SETTINGS_LIST = 10
+
+export function inputCursorStyleSequence(
+  style: "block" | "underscore" | "bar",
+  blink: boolean,
+): string {
+  const code = style === "underscore"
+    ? (blink ? 3 : 4)
+    : style === "bar"
+      ? (blink ? 5 : 6)
+      : (blink ? 1 : 2)
+  return `\x1b[${code} q`
+}
 
 function compactTokenLabel(tokens: number): string {
   if (tokens % 1_000_000 === 0) return `${tokens / 1_000_000}M`
@@ -195,18 +206,15 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   let currentMode: AgentMode = "agent"
   let currentLayout = normalizeTerminalLayout(options.layout)
   let currentStatusLine: StatusLinePreferences = { ...options.statusLine }
-  let currentTypingIndicator = options.typingIndicator ?? "block"
-  let currentTypingIndicatorBlink = options.typingIndicatorBlink === true
   let lofiEnabled = false
   let contextUsage: { tokens: number; window: number } | undefined
   let costUsd: number | undefined
 
-  const workingIndicatorOptions = (): WorkingIndicatorOptions => {
-    const glyph = currentTypingIndicator === "underscore" ? "_" : currentTypingIndicator === "bar" ? "▌" : "█"
-    return {
-      frames: currentTypingIndicatorBlink ? [glyph, " "] : [glyph],
-      intervalMs: 500,
-    }
+  const setInputCursorStyle = (
+    style = options.typingIndicator ?? "block",
+    blink = options.typingIndicatorBlink === true,
+  ): void => {
+    terminal.write(inputCursorStyleSequence(style, blink))
   }
 
   const parseModelRef = (ref: string): { provider: string; id: string } => {
@@ -535,7 +543,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
   const setThinking = (value: boolean, message?: string) => {
     thinking = value
     if (value) {
-      showStatusIndicator(new WorkingStatusIndicator(ui, `${message ?? "Thinking"}...`, workingIndicatorOptions()))
+      showStatusIndicator(new WorkingStatusIndicator(ui, `${message ?? "Thinking"}...`))
     } else {
       clearStatusIndicator()
     }
@@ -699,6 +707,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     if (exitWarningTimer) clearTimeout(exitWarningTimer)
     footerDataProvider.dispose()
     footer.dispose()
+    terminal.write("\x1b[0 q")
     ui.stop()
     runResolve?.()
   }
@@ -871,6 +880,19 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
       wrapper.addChild(list)
       return { component: wrapper, focus: list }
     })
+  }
+
+  editor.onPasteMarkerBackspace = ({ deletePaste, editPaste }) => {
+    const items: AutocompleteItem[] = [
+      { value: "edit", label: "Edit pasted text", description: "Expand the full paste in the input area" },
+      { value: "delete", label: "Delete entire paste", description: "Remove the collapsed paste in one step" },
+      { value: "cancel", label: "Cancel" },
+    ]
+    selectListPanel("Pasted text", items, (item) => {
+      if (item.value === "edit") editPaste()
+      if (item.value === "delete") deletePaste()
+      ui.requestRender()
+    }, () => {})
   }
 
   const showQuestionPrompt = (request: AskQuestionRequest, resolve: (response: AskQuestionResponse) => void) => {
@@ -1204,8 +1226,8 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
         currentValue: currentLayoutOption?.label ?? "Classic",
         values: LAYOUT_OPTIONS.map((option) => option.label),
       },
-      { id: "typingIndicator", label: "Typing indicator", currentValue: currentPrefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
-      { id: "typingIndicatorBlink", label: "Typing blink", currentValue: currentPrefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
+      { id: "typingIndicator", label: "Input cursor", currentValue: currentPrefs.typingIndicator ?? "block", values: ["block", "underscore", "bar"] },
+      { id: "typingIndicatorBlink", label: "Input cursor blink", currentValue: currentPrefs.typingIndicatorBlink === true ? "on" : "off", values: ["off", "on"] },
       { id: "notifications", label: "Notifications", currentValue: currentPrefs.notifications === true ? "on" : "off", values: ["off", "on"] },
       {
         id: "repoIndexPolicy",
@@ -1264,8 +1286,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
           }
           currentPrefs = updated
           currentStatusLine = statusLinePreferencesFrom(updated)
-          currentTypingIndicator = updated.typingIndicator ?? currentTypingIndicator
-          currentTypingIndicatorBlink = updated.typingIndicatorBlink === true
+          setInputCursorStyle(updated.typingIndicator, updated.typingIndicatorBlink === true)
           onSave(updated)
         },
         () => done(),
@@ -1386,6 +1407,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     return new Promise((resolve) => {
       runResolve = resolve
       ui.start()
+      setInputCursorStyle()
       ui.requestRender()
     })
   }
