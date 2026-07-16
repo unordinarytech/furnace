@@ -35,6 +35,43 @@ test("/evolve-merge is registered as a built-in command", async () => {
   assert.deepEqual(parseSlashCommand("/evolve-merge"), { name: "/evolve-merge", argument: "" })
 })
 
+test("Later suppresses migration for the current version and retries on the next version", async () => {
+  const {
+    attemptEvolveMigration,
+    dismissEvolveMigrationForVersion,
+    evolveMigrationFailurePrompt,
+    readEvolveMigrationDismissal,
+    readEvolveMigrationState,
+  } = await import("../../dist/evolve/migration.js")
+  await withTemporaryHomeWorkspace("furnace-evolve-migrate-later-", async (workspace) => {
+    const manifest = {
+      version: 1,
+      packageVersion: "1.0.0",
+      sourceRoot: join(workspace, "missing-old-source"),
+      cliPath: join(workspace, "missing-old-source", "dist", "cli.js"),
+    }
+    const first = await attemptEvolveMigration({ currentVersion: "2.0.0", manifest })
+    assert.equal(first.status, "pending")
+    assert.match(first.state.error, /missing-old-source/)
+    const prompt = evolveMigrationFailurePrompt(first.state)
+    assert.match(prompt, /^Evolve merge failed/)
+    assert.doesNotMatch(prompt, /missing-old-source|git apply|patch failed/i)
+
+    await dismissEvolveMigrationForVersion("2.0.0")
+    assert.equal(await readEvolveMigrationDismissal(), "2.0.0")
+    assert.equal(await readEvolveMigrationState(), undefined)
+
+    const sameVersion = await attemptEvolveMigration({ currentVersion: "2.0.0", manifest })
+    assert.deepEqual(sameVersion, { status: "none" })
+    assert.equal(await readEvolveMigrationState(), undefined)
+
+    const nextVersion = await attemptEvolveMigration({ currentVersion: "2.1.0", manifest })
+    assert.equal(nextVersion.status, "pending")
+    assert.equal(nextVersion.state.toVersion, "2.1.0")
+    assert.equal(await readEvolveMigrationDismissal(), undefined)
+  })
+})
+
 test("automatic migration rebases evolved tracked and untracked files onto a new version", async () => {
   const { attemptEvolveMigration, readEvolveMigrationState } = await import("../../dist/evolve/migration.js")
   await withTemporaryHomeWorkspace("furnace-evolve-migrate-clean-", async (workspace) => {

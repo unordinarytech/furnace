@@ -37,6 +37,10 @@ export type EvolveMigrationResult =
   | { status: "migrated"; recoveryId: string; root: string }
   | { status: "pending"; state: EvolveMigrationState }
 
+export function evolveMigrationFailurePrompt(state: EvolveMigrationState): string {
+  return `Evolve merge failed from ${state.fromVersion} to ${state.toVersion}.\n\nYour previous evolve changes are preserved. Reapply them now, or choose Later to skip them until the next Furnace version.`
+}
+
 type MigrationDeps = {
   activate: (root: string) => void
   applyPatch: (root: string, patchPath: string) => Promise<{ log: string; ok: boolean }>
@@ -52,6 +56,31 @@ type MigrationDeps = {
 
 export function evolveMigrationStatePath(): string {
   return join(homedir(), ".furnace", "evolve", "migration.json")
+}
+
+export function evolveMigrationDismissalPath(): string {
+  return join(homedir(), ".furnace", "evolve", "migration-dismissed.json")
+}
+
+export async function readEvolveMigrationDismissal(): Promise<string | undefined> {
+  try {
+    const value = JSON.parse(await readFile(evolveMigrationDismissalPath(), "utf8")) as {
+      toVersion?: unknown
+      version?: unknown
+    }
+    return value.version === 1 && typeof value.toVersion === "string" ? value.toVersion : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export async function dismissEvolveMigrationForVersion(toVersion: string): Promise<void> {
+  const path = evolveMigrationDismissalPath()
+  const temp = `${path}.${process.pid}.tmp`
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(temp, `${JSON.stringify({ dismissedAt: new Date().toISOString(), toVersion, version: 1 }, null, 2)}\n`, "utf8")
+  await rename(temp, path)
+  await clearEvolveMigrationState()
 }
 
 export async function readEvolveMigrationState(): Promise<EvolveMigrationState | undefined> {
@@ -82,6 +111,9 @@ export async function attemptEvolveMigration(input: {
 }): Promise<EvolveMigrationResult> {
   const manifest = input.manifest ?? readActiveEvolveManifest()
   if (!manifest || manifest.packageVersion === input.currentVersion) return { status: "none" }
+  const dismissedVersion = await readEvolveMigrationDismissal()
+  if (dismissedVersion === input.currentVersion) return { status: "none" }
+  if (dismissedVersion) await rm(evolveMigrationDismissalPath(), { force: true })
 
   const existing = await readEvolveMigrationState()
   if (existing?.toVersion === input.currentVersion) return { status: "pending", state: existing }

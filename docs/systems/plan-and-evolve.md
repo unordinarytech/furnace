@@ -53,15 +53,18 @@ finishes; choosing restart leaves it locked through shutdown.
 5. A Git conflict or verification failure writes
    `~/.furnace/evolve/migration.json` and preserves the old source, patch, new
    checkout, error, and recovery point. New stock Furnace remains active.
-6. Startup keeps showing a popup offering **Reapply previous evolve changes**
-   until the migration is resolved.
+6. Startup shows a concise popup offering **Reapply previous evolve changes**.
+   It does not include raw Git or verification logs.
 7. `/evolve-merge` runs a permission-scoped hidden agent turn in the new
    checkout. The agent inspects the old source and saved patch, resolves and
    stages conflicts, then Furnace asks for review, verifies, activates, and
    offers restart.
 
-New `/evolve` requests are blocked while migration state is pending. Rejecting
-or postponing `/evolve-merge` keeps all migration artifacts for a later run.
+New `/evolve` requests are blocked while migration state is pending. Choosing
+**Later** records the current target version, clears the pending prompt state,
+and skips further migration attempts for that version. The old source and patch
+artifacts remain preserved; installing a later Furnace version clears the
+dismissal and permits one new automatic migration attempt.
 
 `/reset` restores the earliest evolve baseline and clears later recovery history.
 

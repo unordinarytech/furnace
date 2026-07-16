@@ -266,7 +266,9 @@ Notes and current limits:
   customization, patch, and migration checkout, and shows a popup offering
   **Reapply previous evolve changes** via `/evolve-merge`. That command delegates
   conflict resolution to the agent, reviews and verifies the result, then
-  offers to restart into it.
+  offers to restart into it. Choosing **Later** dismisses the migration for that
+  Furnace version; startup does not retry or prompt again until another version
+  is installed.
 - The evolve edit turn runs with broad session permissions over the Furnace
   root; the diff-review step is your control. It can read `~/.furnace/auth.json`,
   so review the diff before approving.

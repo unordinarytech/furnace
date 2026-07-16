@@ -655,7 +655,11 @@ export async function runInteractive(input: {
   async function maybeRunEvolveMigration(): Promise<void> {
     const { isPublishedFurnaceEntry } = await import("./evolve/activation.js")
     if (!isPublishedFurnaceEntry()) return
-    const { attemptEvolveMigration } = await import("./evolve/migration.js")
+    const {
+      attemptEvolveMigration,
+      dismissEvolveMigrationForVersion,
+      evolveMigrationFailurePrompt,
+    } = await import("./evolve/migration.js")
     let restartRequested = false
     terminal.setBusy(true)
     terminal.setInputDisabled(true)
@@ -678,7 +682,8 @@ export async function runInteractive(input: {
             id: "migration",
             allowCustom: false,
             allowMultiple: false,
-            prompt: `Furnace found previous evolve changes but could not reapply them automatically from ${result.state.fromVersion} to ${result.state.toVersion}.\n\nYour previous evolve changes are preserved. Run /evolve-merge to ask the agent to reapply them to the new version.\n\n${result.state.error}`,
+            allowRefuse: false,
+            prompt: evolveMigrationFailurePrompt(result.state),
             options: [
               { id: "prepare", label: "Reapply previous evolve changes" },
               { id: "later", label: "Later" },
@@ -688,6 +693,8 @@ export async function runInteractive(input: {
       })
       if (!response.rejected && response.answers.some((answer) => answer.optionId === "prepare")) {
         terminal.setInputDraft("/evolve-merge")
+      } else if (!response.rejected && response.answers.some((answer) => answer.optionId === "later")) {
+        await dismissEvolveMigrationForVersion(result.state.toVersion)
       }
     } finally {
       if (!restartRequested) {
