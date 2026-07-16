@@ -44,7 +44,10 @@ export class SlashCommandAutocompleteProvider implements AutocompleteProvider {
     if (candidates.length === 0) return null
 
     const filtered = argumentPrefix
-      ? fuzzyFilter(candidates, argumentPrefix, (item) => `${item.label} ${item.description ?? ""} ${item.value}`)
+      ? fuzzyFilter(candidates, argumentPrefix, (item) => {
+          const promptItem = item as AutocompleteItem & Partial<PromptAutocompleteItem>
+          return `${item.label} ${item.description ?? ""} ${item.value} ${promptItem.searchText ?? ""}`
+        })
       : candidates
     if (filtered.length === 0) return null
     return { items: filtered, prefix: beforeCursor }

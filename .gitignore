@@ -23,6 +23,7 @@ pnpm-debug.log*
 
 # Personal notes
 todo.txt
+/FEATURE_AUDIT.md
 
 # Local development tooling
 /.cursor/skills/

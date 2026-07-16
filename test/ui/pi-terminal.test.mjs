@@ -80,6 +80,7 @@ test("createFurnaceTerminal returns all required FurnaceTerminal methods", () =>
     "showSettings",
     "showApiKeySetup",
     "showProviderSelector",
+    "showResumeSearch",
     "setModel",
     "setTheme",
     "setTitle",

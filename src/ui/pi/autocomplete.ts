@@ -11,7 +11,7 @@ function isPromptAutocompleteItem(item: AutocompleteItem): item is AutocompleteI
   return "relatedValue" in item
 }
 
-export const RESUME_AUTOCOMPLETE_HINT = "Tab pin/unpin · Enter open · Esc close"
+export const RESUME_AUTOCOMPLETE_HINT = "Type to search titles, messages, and tools · Tab pin/unpin · Enter open · Esc close"
 
 export class RelatedAutocompleteSelectList extends SelectList {
   constructor(

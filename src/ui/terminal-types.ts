@@ -13,6 +13,7 @@ export type PromptAutocompleteItem = {
   insertText?: string
   label: string
   relatedValue?: string
+  searchText?: string
   value: string
 }
 
@@ -77,6 +78,7 @@ export type FurnaceTerminal = {
     onCancel: () => void,
     onDelete?: (providerId: string) => void,
   ): void
+  showResumeSearch(): void
   setModel(model: string, settings: ModelSettings, displayName?: string): void
   setTheme(theme: string): void
   setTitle(title: string): void

@@ -56,6 +56,30 @@ describe("SlashCommandAutocompleteProvider", () => {
     assert.strictEqual(none, null)
   })
 
+  it("fuzzy-searches hidden conversation content without displaying it", async () => {
+    const provider = new SlashCommandAutocompleteProvider([
+      {
+        value: "/resume 1",
+        label: "Fix checkout",
+        description: "2 minutes ago",
+        searchText: "user investigate the intermittent websocket reconnect failure",
+      },
+      {
+        value: "/resume 2",
+        label: "Update docs",
+        description: "1 hour ago",
+        searchText: "user document the release process",
+      },
+    ])
+
+    const line = "/resume wbskt"
+    const result = await provider.getSuggestions([line], 0, line.length)
+    assert.ok(result)
+    assert.strictEqual(result.items.length, 1)
+    assert.strictEqual(result.items[0].value, "/resume 1")
+    assert.strictEqual(result.items[0].searchText.includes("websocket"), true)
+  })
+
   it("applies argument completion by replacing the whole command line", () => {
     const provider = new SlashCommandAutocompleteProvider([
       { value: "/model openai/gpt-5.5", label: "GPT-5.5" },

@@ -25,7 +25,7 @@ import { entriesToModelMessages, entriesToTranscript } from "./session/context.j
 import { resolveForkEntryId } from "./session/navigation.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
-import type { MessageEntryData, SessionRecord } from "./session/types.js"
+import type { CompactionEntryData, MessageEntryData, SessionRecord, ToolCallEntryData, ToolResultEntryData } from "./session/types.js"
 import { loadCustomCommands, renderCustomCommandTemplate } from "./commands/custom/loader.js"
 import type { CustomCommand } from "./commands/custom/types.js"
 import { PromptQueueStore, type PromptQueueInput } from "./prompt-queue.js"
@@ -68,6 +68,7 @@ export async function runInteractive(input: {
   if (input.shouldClear) clearTerminalViewportAndScrollback()
   let sessionId = input.sessionId
   let pinnedChatIds = normalizePinnedChatIds(input.config.pinnedChatIds)
+  const resumeSearchCache = new Map<string, { searchText: string; updatedAt: number }>()
   const permissions = new SessionPermissionStore()
   const lofi = new LofiPlayer()
   const activeResponseModes = new Set<ResponseMode>()
@@ -186,7 +187,8 @@ export async function runInteractive(input: {
       if (scope === "theme") {
         terminal.setSlashCommandItems(themeAutocompleteItems())
       } else if (scope === "history") {
-        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listHistorySessions(input.cwd)))
+        const commandName = value.toLowerCase().startsWith("/history") ? "/history" : "/resume"
+        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listHistorySessions(input.cwd), commandName))
       } else if (scope === "fork") {
         terminal.setSlashCommandItems(forkAutocompleteItems())
       } else {
@@ -196,9 +198,10 @@ export async function runInteractive(input: {
       }
     },
     onAutocompleteTab: (match) => {
-      if (match.value.startsWith("/resume ")) {
+      if (match.value.startsWith("/resume ") || match.value.startsWith("/history ")) {
         togglePinnedChatFromResumeValue(match.value)
-        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listHistorySessions(input.cwd)))
+        const commandName = match.value.startsWith("/history ") ? "/history" : "/resume"
+        terminal.setSlashCommandItems(resumeAutocompleteItems(input.store.listHistorySessions(input.cwd), commandName))
         return true
       }
       if (!match.value.startsWith("/model ") || !modelListCache.settled) return false
@@ -490,7 +493,7 @@ export async function runInteractive(input: {
         resumeSessionByToken(command.argument)
         return
       }
-      showHistoryHint()
+      openResumeSearch()
       return
     }
     if (command.name === "/tasks") {
@@ -1206,7 +1209,10 @@ export async function runInteractive(input: {
     }))
   }
 
-  function resumeAutocompleteItems(sessions: ReturnType<SessionStore["listSessions"]>): PromptAutocompleteItem[] {
+  function resumeAutocompleteItems(
+    sessions: ReturnType<SessionStore["listSessions"]>,
+    commandName: "/history" | "/resume" = "/resume",
+  ): PromptAutocompleteItem[] {
     return sessions.map((session, index) => {
       const parentIndex = session.parentSessionId ? sessions.findIndex((candidate) => candidate.id === session.parentSessionId) : -1
       const pinnedIndex = pinnedChatIds.indexOf(session.id)
@@ -1218,10 +1224,19 @@ export async function runInteractive(input: {
             : formatRelativeTime(session.updatedAt)
         }`,
         label: `${pinnedIndex >= 0 ? `#${pinnedIndex + 1} ` : ""}${session.title}`,
-        relatedValue: parentIndex >= 0 ? `/resume ${parentIndex + 1}` : undefined,
-        value: `/resume ${index + 1}`,
+        relatedValue: parentIndex >= 0 ? `${commandName} ${parentIndex + 1}` : undefined,
+        searchText: cachedResumeConversationSearchText(session),
+        value: `${commandName} ${index + 1}`,
       }
     })
+  }
+
+  function cachedResumeConversationSearchText(session: SessionRecord): string {
+    const cached = resumeSearchCache.get(session.id)
+    if (cached?.updatedAt === session.updatedAt) return cached.searchText
+    const searchText = resumeConversationSearchText(input.store, session)
+    resumeSearchCache.set(session.id, { searchText, updatedAt: session.updatedAt })
+    return searchText
   }
 
   function forkAutocompleteItems(): PromptAutocompleteItem[] {
@@ -1250,13 +1265,14 @@ export async function runInteractive(input: {
     return items
   }
 
-  function showHistoryHint(): void {
+  function openResumeSearch(): void {
     const sessions = input.store.listHistorySessions(input.cwd)
     if (sessions.length === 0) {
       showTransientStatus("No saved conversations yet.")
       return
     }
-    showTransientStatus(`Type /resume <number> to switch, or type /resume and browse with the arrow keys.\n${formatHistoryOverview(input.store, input.cwd, sessions).join("\n")}`)
+    terminal.setSlashCommandItems(resumeAutocompleteItems(sessions))
+    terminal.showResumeSearch()
   }
 
   function resumeSessionByToken(argument: string): void {
@@ -1295,7 +1311,7 @@ export async function runInteractive(input: {
   }
 
   function togglePinnedChatFromResumeValue(value: string): void {
-    const match = value.match(/^\/resume\s+(\d+)$/)
+    const match = value.match(/^\/(?:resume|history)\s+(\d+)$/)
     if (!match) return
     const target = input.store.listHistorySessions(input.cwd)[Number.parseInt(match[1] || "", 10) - 1]
     if (target) toggleChatPin(target.id)
@@ -2054,6 +2070,36 @@ export async function runInteractive(input: {
       syncQueuedPrompts()
     }
   }
+}
+
+function resumeConversationSearchText(store: SessionStore, session: SessionRecord): string {
+  const entryText = store.getActivePath(session.id).map((entry) => {
+    if (entry.type === "message") {
+      const data = entry.data as MessageEntryData
+      return `${entry.role ?? "message"} ${data.content}`
+    }
+    if (entry.type === "tool_call") {
+      const data = entry.data as ToolCallEntryData
+      return `tool ${data.name} ${data.arguments} ${data.content ?? ""}`
+    }
+    if (entry.type === "tool_result") {
+      const data = entry.data as ToolResultEntryData
+      return `tool result ${data.name} ${data.content}`
+    }
+    if (entry.type === "compaction") {
+      const data = entry.data as CompactionEntryData
+      return `compaction ${data.focus ?? ""} ${data.summary}`
+    }
+    try {
+      return JSON.stringify(entry.data, (key, value) => {
+        if (key === "images" || key === "previousContent" || key === "data") return undefined
+        return value
+      })
+    } catch {
+      return ""
+    }
+  })
+  return [session.id, session.title, ...entryText].join("\n")
 }
 
 function clearTerminalViewportAndScrollback(): void {

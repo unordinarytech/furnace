@@ -1591,6 +1591,12 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     ui.requestRender()
   }
 
+  const showResumeSearch = () => {
+    editor.setText("/resume ")
+    editor.reopenAutocomplete(0)
+    ui.requestRender()
+  }
+
   const setInputDisabled = (disabled: boolean) => {
     inputDisabled = disabled
     editor.setInputDisabled(disabled)
@@ -1651,6 +1657,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     showPlanActions,
     showProviderSelector,
     showQuestionPrompt,
+    showResumeSearch,
     showSelectList,
     showSettings,
     stop,
