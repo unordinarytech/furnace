@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "releases": [
     {
-      "version": "0.2.4",
-      "date": "2026-07-17",
-      "status": "upcoming",
-      "commit": null,
+      "version": "0.2.5",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": "5139ad49821c0b5ad9398724039df75cdbb3640d",
       "summary": "Release notes are now visible wherever you use Furnace.",
       "changes": [
         { "kind": "added", "text": "Added a first-launch What’s New panel for each installed version." },

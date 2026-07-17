@@ -20,13 +20,13 @@ test("release manifest is complete, unique, and newest-first", () => {
 test("current package version always has local release notes", () => {
   const release = furnaceRelease(packageVersion)
   assert.ok(release)
-  assert.equal(release.version, "0.2.4")
+  assert.equal(release.version, "0.2.5")
   assert.ok(release.summary.length > 0)
   assert.ok(release.changes.length > 0)
 })
 
 test("What’s New is selected only for an unacknowledged installed version", () => {
-  assert.equal(unacknowledgedFurnaceRelease("0.2.4", [])?.version, "0.2.4")
-  assert.equal(unacknowledgedFurnaceRelease("0.2.4", ["0.2.4"]), undefined)
+  assert.equal(unacknowledgedFurnaceRelease("0.2.5", [])?.version, "0.2.5")
+  assert.equal(unacknowledgedFurnaceRelease("0.2.5", ["0.2.5"]), undefined)
   assert.equal(unacknowledgedFurnaceRelease("9.9.9", []), undefined)
 })
