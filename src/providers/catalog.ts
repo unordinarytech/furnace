@@ -18,6 +18,10 @@ export type ModelListCache = {
   settled: boolean
 }
 
+export function modelsForProvider(models: readonly ProviderModel[], providerId: string): ProviderModel[] {
+  return models.filter((model) => model.providerId === providerId)
+}
+
 export function createModelListCache(config: FurnaceConfig): ModelListCache {
   const promise = fetchAllProviderModels(config)
   const cache: ModelListCache = { promise, settled: false }

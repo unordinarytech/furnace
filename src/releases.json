@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.12",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "Model selection now stays focused on the active provider.",
+      "changes": [
+        { "kind": "changed", "text": "`/model`, its autocomplete, and direct model arguments now list only models from the active provider." },
+        { "kind": "changed", "text": "`/models` remains available for explicitly browsing models across configured providers." }
+      ]
+    },
+    {
       "version": "0.2.11",
       "date": "2026-07-18",
       "status": "published",

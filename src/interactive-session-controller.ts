@@ -13,7 +13,7 @@ import { listOpenRouterModels, type OpenRouterMessage, type OpenRouterModel, typ
 import { setStoredKey, removeStoredKey } from "./providers/keys.js"
 import { BUILTIN_PROVIDERS, resolveProvider } from "./providers/registry.js"
 import { loadCustomProviders } from "./providers/custom.js"
-import { createModelListCache, type ProviderModel } from "./providers/catalog.js"
+import { createModelListCache, modelsForProvider, type ProviderModel } from "./providers/catalog.js"
 import { activateProvider, resolveProviderKey } from "./providers/resolution.js"
 import type { CustomProvider, ProviderDefinition } from "./providers/types.js"
 import { SessionPermissionStore, type PermissionGrantSummary } from "./permissions.js"
@@ -209,8 +209,7 @@ export async function runInteractive(input: {
       if (!match.value.startsWith("/model ") || !modelListCache.settled) return false
       const modelId = match.value.slice("/model ".length).trim()
       void modelListCache.promise.then((models) => {
-        const candidates = models.filter((entry) => entry.id === modelId)
-        const choice = candidates.find((entry) => entry.providerId === input.config.provider) || candidates[0]
+        const choice = models.find((entry) => entry.providerId === input.config.provider && entry.id === modelId)
         if (!choice) return
         terminal.showModelEditor(
           choice,
@@ -536,9 +535,11 @@ export async function runInteractive(input: {
         await setModelByArgument(command.argument)
         return
       }
-      const models = await modelListCache.promise.catch(() => [] as ProviderModel[])
+      const models = await modelListCache.promise
+        .then((available) => modelsForProvider(available, input.config.provider))
+        .catch(() => [] as ProviderModel[])
       if (models.length === 0) {
-        showTransientStatus("No models available. Use /login to add a provider key.")
+        showTransientStatus("No models available for the active provider. Use /login to choose a configured provider.")
         return
       }
       openModelPicker(models, () => {})
@@ -1252,7 +1253,7 @@ export async function runInteractive(input: {
   }
 
   function modelAutocompleteItems(models: ProviderModel[]): PromptAutocompleteItem[] {
-    return models.map((model) => ({
+    return modelsForProvider(models, input.config.provider).map((model) => ({
       browsable: true,
       description: [model.providerLabel, model.contextLength ? `${formatTokenCount(model.contextLength)} context` : undefined]
         .filter(Boolean)
@@ -1512,14 +1513,13 @@ export async function runInteractive(input: {
   async function setModelByArgument(argument: string): Promise<void> {
     const isGlobal = argument.trimStart().startsWith("--global ")
     const trimmed = (isGlobal ? argument.trimStart().slice("--global ".length) : argument).trim()
-    const models = await modelListCache.promise
+    const models = modelsForProvider(await modelListCache.promise, input.config.provider)
     const lowered = trimmed.toLowerCase()
     const candidates = [
       ...models.filter((model) => model.id.toLowerCase() === lowered),
       ...models.filter((model) => model.name.toLowerCase() === lowered),
     ]
-    // Prefer the active provider when the same id exists in several catalogs.
-    const match = candidates.find((model) => model.providerId === input.config.provider) || candidates[0]
+    const match = candidates[0]
     if (!match) {
       showTransientStatus(`Unknown model: ${trimmed}`)
       return
