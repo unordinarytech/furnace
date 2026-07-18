@@ -1,6 +1,6 @@
 {
   "name": "cook-furnace",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "A from-scratch harness for agentic coding.",
   "type": "module",
   "bin": {

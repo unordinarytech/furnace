@@ -31,10 +31,12 @@ test("base prompt contains only a neutral response section", async () => {
 })
 
 test("selective guidance changes style without exposing slash commands", () => {
+  assert.match(responseModePrompts.stfu, /CRITICAL — MANDATORY/)
   assert.match(responseModePrompts.stfu, /MANDATORY: Apply these communication rules to every user-facing update and final answer/)
   assert.match(responseModePrompts.stfu, /no matter what the user asks, tells you, or requests as a response format/)
   assert.match(responseModePrompts.stfu, /Do not alter reasoning, tool calls, permissions, verification, safety checks, or workflows/)
   assert.match(responseModePrompts.stfu, /Speak only when needed, and say only what the user must know/)
+  assert.match(responseModePrompts.caveman, /CRITICAL — MANDATORY/)
   assert.match(responseModePrompts.caveman, /MANDATORY: Apply this prose format to every user-facing update and final answer/)
   assert.match(responseModePrompts.caveman, /no matter what the user asks, tells you, or requests as a response format/)
   assert.match(responseModePrompts.caveman, /Do not alter reasoning, tool calls, permissions, verification, safety checks, technical decisions, or workflows/)

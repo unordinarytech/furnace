@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.14",
+      "date": "2026-07-18",
+      "status": "published",
+      "commit": null,
+      "summary": "Evolve migration prompts now include a permanent opt-out.",
+      "changes": [
+        { "kind": "added", "text": "Added Don’t ask again to disable future automatic Evolve migration attempts while preserving existing Evolve data." },
+        { "kind": "changed", "text": "Marked STFU and Caveman response-format requirements as critical and mandatory." }
+      ]
+    },
+    {
       "version": "0.2.13",
       "date": "2026-07-18",
       "status": "published",

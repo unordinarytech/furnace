@@ -680,6 +680,7 @@ export async function runInteractive(input: {
     if (!isPublishedFurnaceEntry()) return
     const {
       attemptEvolveMigration,
+      disableAutomaticEvolveMigrations,
       dismissEvolveMigrationForVersion,
       evolveMigrationFailurePrompt,
     } = await import("./evolve/migration.js")
@@ -710,6 +711,7 @@ export async function runInteractive(input: {
             options: [
               { id: "prepare", label: "Reapply previous evolve changes" },
               { id: "later", label: "Later" },
+              { id: "never", label: "Don’t ask again" },
             ],
           },
         ],
@@ -718,6 +720,8 @@ export async function runInteractive(input: {
         await handleEvolveMergeCommand()
       } else if (!response.rejected && response.answers.some((answer) => answer.optionId === "later")) {
         await dismissEvolveMigrationForVersion(result.state.toVersion)
+      } else if (!response.rejected && response.answers.some((answer) => answer.optionId === "never")) {
+        await disableAutomaticEvolveMigrations()
       }
     } finally {
       if (!restartRequested) {

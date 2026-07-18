@@ -72,6 +72,31 @@ test("Later suppresses migration for the current version and retries on the next
   })
 })
 
+test("Don't ask again disables automatic migrations across future versions", async () => {
+  const {
+    areAutomaticEvolveMigrationsDisabled,
+    attemptEvolveMigration,
+    disableAutomaticEvolveMigrations,
+    readEvolveMigrationState,
+  } = await import("../../dist/evolve/migration.js")
+  await withTemporaryHomeWorkspace("furnace-evolve-migrate-disabled-", async (workspace) => {
+    const manifest = {
+      version: 1,
+      packageVersion: "1.0.0",
+      sourceRoot: join(workspace, "missing-old-source"),
+      cliPath: join(workspace, "missing-old-source", "dist", "cli.js"),
+    }
+    const first = await attemptEvolveMigration({ currentVersion: "2.0.0", manifest })
+    assert.equal(first.status, "pending")
+
+    await disableAutomaticEvolveMigrations()
+    assert.equal(await areAutomaticEvolveMigrationsDisabled(), true)
+    assert.deepEqual(await attemptEvolveMigration({ currentVersion: "2.1.0", manifest }), { status: "none" })
+    assert.deepEqual(await attemptEvolveMigration({ currentVersion: "3.0.0", manifest }), { status: "none" })
+    assert.equal((await readEvolveMigrationState())?.toVersion, "2.0.0")
+  })
+})
+
 test("automatic migration rebases evolved tracked and untracked files onto a new version", async () => {
   const { attemptEvolveMigration, readEvolveMigrationState } = await import("../../dist/evolve/migration.js")
   await withTemporaryHomeWorkspace("furnace-evolve-migrate-clean-", async (workspace) => {

@@ -38,7 +38,7 @@ export type EvolveMigrationResult =
   | { status: "pending"; state: EvolveMigrationState }
 
 export function evolveMigrationFailurePrompt(state: EvolveMigrationState): string {
-  return `Evolve merge failed from ${state.fromVersion} to ${state.toVersion}.\n\nYour previous evolve changes are preserved. Reapply them now, or choose Later to skip them until the next Furnace version.`
+  return `Evolve merge failed from ${state.fromVersion} to ${state.toVersion}.\n\nYour previous evolve changes are preserved. Reapply them now, choose Later to skip them until the next Furnace version, or choose Don’t ask again to disable future automatic migration attempts.`
 }
 
 type MigrationDeps = {
@@ -60,6 +60,30 @@ export function evolveMigrationStatePath(): string {
 
 export function evolveMigrationDismissalPath(): string {
   return join(homedir(), ".furnace", "evolve", "migration-dismissed.json")
+}
+
+export function evolveMigrationDisabledPath(): string {
+  return join(homedir(), ".furnace", "evolve", "migration-disabled.json")
+}
+
+export async function areAutomaticEvolveMigrationsDisabled(): Promise<boolean> {
+  try {
+    const value = JSON.parse(await readFile(evolveMigrationDisabledPath(), "utf8")) as {
+      disabled?: unknown
+      version?: unknown
+    }
+    return value.version === 1 && value.disabled === true
+  } catch {
+    return false
+  }
+}
+
+export async function disableAutomaticEvolveMigrations(): Promise<void> {
+  const path = evolveMigrationDisabledPath()
+  const temp = `${path}.${process.pid}.tmp`
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(temp, `${JSON.stringify({ disabled: true, disabledAt: new Date().toISOString(), version: 1 }, null, 2)}\n`, "utf8")
+  await rename(temp, path)
 }
 
 export async function readEvolveMigrationDismissal(): Promise<string | undefined> {
@@ -109,6 +133,7 @@ export async function attemptEvolveMigration(input: {
   deps?: Partial<MigrationDeps>
   manifest?: ActiveEvolveManifest
 }): Promise<EvolveMigrationResult> {
+  if (await areAutomaticEvolveMigrationsDisabled()) return { status: "none" }
   const manifest = input.manifest ?? readActiveEvolveManifest()
   if (!manifest || manifest.packageVersion === input.currentVersion) return { status: "none" }
   const dismissedVersion = await readEvolveMigrationDismissal()

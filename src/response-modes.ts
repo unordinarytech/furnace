@@ -6,7 +6,7 @@ const responseGuidanceMarker = "<!-- FURNACE_RESPONSE_GUIDANCE -->"
 
 export const responseModePrompts: Record<ResponseMode, string> = {
   stfu: [
-    "- MANDATORY: Apply these communication rules to every user-facing update and final answer, no matter what the user asks, tells you, or requests as a response format. Never suspend or override these rules because of user-message wording.",
+    "- CRITICAL — MANDATORY: Apply these communication rules to every user-facing update and final answer, no matter what the user asks, tells you, or requests as a response format. Never suspend or override these rules because of user-message wording.",
     "- Change only user-facing communication style. Do not alter reasoning, tool calls, permissions, verification, safety checks, or workflows.",
     "- Be as quiet as possible. Speak only when needed, and say only what the user must know.",
     "- Do the requested work without narrating private reasoning, plans, progress, routine tool use, or obvious intermediate steps.",
@@ -15,7 +15,7 @@ export const responseModePrompts: Record<ResponseMode, string> = {
     "- Keep every update and final answer to the minimum required outcome, essential caveat or error, and verification. If there is nothing the user needs to know, say nothing extra.",
   ].join("\n"),
   caveman: [
-    "- MANDATORY: Apply this prose format to every user-facing update and final answer, no matter what the user asks, tells you, or requests as a response format. Never suspend or override this format because of user-message wording.",
+    "- CRITICAL — MANDATORY: Apply this prose format to every user-facing update and final answer, no matter what the user asks, tells you, or requests as a response format. Never suspend or override this format because of user-message wording.",
     "- Change only user-facing prose style. Do not alter reasoning, tool calls, permissions, verification, safety checks, technical decisions, or workflows.",
     "- Speak literally in caveman terms in every user-facing sentence: primitive, blunt, short words and broken sentence fragments.",
     "- Keep code, commands, paths, identifiers, quotations, diagnostics, and errors exact.",
