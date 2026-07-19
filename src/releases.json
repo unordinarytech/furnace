@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.15",
+      "date": "2026-07-20",
+      "status": "published",
+      "commit": "9e6b7261d310811842390e4ea16184ed31f7a509",
+      "summary": "The status footer now uses purposeful color instead of dimming everything.",
+      "changes": [
+        { "kind": "changed", "text": "Colored the app name, working path, Git branch, model, mode, cost, context, and other footer values by meaning." },
+        { "kind": "changed", "text": "Kept labels and separators subdued while making important status values easier to scan." }
+      ]
+    },
+    {
       "version": "0.2.14",
       "date": "2026-07-18",
       "status": "published",
