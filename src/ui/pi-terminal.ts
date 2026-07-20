@@ -341,12 +341,14 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     autocompleteMaxVisible: 10,
   })
   wireSlashAutocompletePreview(editor, options.onAutocompleteHover)
-  const slashProvider = new SlashCommandAutocompleteProvider([], (match) => {
+  const slashProvider = new SlashCommandAutocompleteProvider([])
+  editor.onAutocompleteTab = (item) => {
+    const match = { ...item, selected: true }
     const handled = options.onAutocompleteTab?.(match) ?? false
-    const resumeMatch = handled ? match.value.match(/^\/resume\s+(\d+)$/) : undefined
+    const resumeMatch = handled ? item.value.match(/^\/resume\s+(\d+)$/) : undefined
     if (resumeMatch) editor.reopenAutocomplete(Math.max(0, Number.parseInt(resumeMatch[1] || "1", 10) - 1))
     return handled
-  })
+  }
   editor.setAutocompleteProvider(slashProvider)
   const editorFrame = new LayoutEditorFrame(editor, () => currentLayout)
   editorContainer.addChild(editorFrame)

@@ -102,21 +102,4 @@ describe("SlashCommandAutocompleteProvider", () => {
     assert.strictEqual(applied.cursorLine, 0)
     assert.strictEqual(applied.cursorCol, 6)
   })
-
-  it("calls onTab and skips default apply when handler returns true", () => {
-    let called = false
-    const provider = new SlashCommandAutocompleteProvider(
-      [{ value: "/history", label: "History" }],
-      (match) => {
-        called = true
-        assert.strictEqual(match.value, "/history")
-        assert.strictEqual(match.selected, true)
-        return true
-      },
-    )
-    const applied = provider.applyCompletion(["/hi"], 0, 3, { value: "/history", label: "History" }, "/hi")
-    assert.strictEqual(called, true)
-    assert.strictEqual(applied.lines[0], "/hi")
-    assert.strictEqual(applied.cursorCol, 3)
-  })
 })

@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.18",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Conversation selection and thinking status are clearer.",
+      "changes": [
+        { "kind": "fixed", "text": "Pressing Enter in `/resume` now opens the selected conversation; only Tab pins or unpins it." },
+        { "kind": "changed", "text": "Highlighted the thinking status text in the same accent color as its animated indicator." }
+      ]
+    },
+    {
       "version": "0.2.17",
       "date": "2026-07-21",
       "status": "published",

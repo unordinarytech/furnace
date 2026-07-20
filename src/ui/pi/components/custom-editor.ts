@@ -2,7 +2,7 @@
  * Ported from pi (https://github.com/earendil-works/pi).
  * MIT License, Copyright (c) 2025 Mario Zechner.
  */
-import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { Editor, type AutocompleteItem, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
 
 /**
@@ -21,6 +21,7 @@ export class CustomEditor extends Editor {
 		deletePaste: () => void;
 		editPaste: () => void;
 	}) => void;
+	public onAutocompleteTab?: (item: AutocompleteItem) => boolean;
 	/** Handler for extension-registered shortcuts. Returns true if handled. */
 	public onExtensionShortcut?: (data: string) => boolean;
 
@@ -63,6 +64,21 @@ export class CustomEditor extends Editor {
 				this.actionHandlers.get("app.clear")?.();
 			}
 			return;
+		}
+
+		if (this.keybindings.matches(data, "tui.input.tab")) {
+			const autocomplete = this as unknown as {
+				autocompleteState?: unknown;
+				autocompleteList?: { getSelectedItem(): AutocompleteItem | null };
+				cancelAutocomplete(): void;
+			};
+			const selected = autocomplete.autocompleteState
+				? autocomplete.autocompleteList?.getSelectedItem()
+				: undefined;
+			if (selected && this.onAutocompleteTab?.(selected)) {
+				autocomplete.cancelAutocomplete();
+				return;
+			}
 		}
 
 		// Check extension-registered shortcuts first

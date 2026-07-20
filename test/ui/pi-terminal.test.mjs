@@ -323,6 +323,42 @@ test("resume pinning can reopen autocomplete at the same selection", async () =>
   assert.equal(selectedIndex, 3)
 })
 
+test("resume pin actions run on Tab but never on Enter", () => {
+  initTheme("default")
+  const keybindings = KeybindingsManager.create()
+  setKeybindings(keybindings)
+  const editor = new CustomEditor(
+    new TUI(createMockTerminal(), true),
+    getEditorTheme(),
+    keybindings,
+  )
+  const selected = { value: "/resume 1", label: "Pinned chat" }
+  let pinToggles = 0
+  editor.onAutocompleteTab = () => {
+    pinToggles += 1
+    return true
+  }
+  editor.autocompleteState = "auto"
+  editor.autocompleteList = { getSelectedItem: () => selected }
+  editor.cancelAutocomplete = () => {
+    editor.autocompleteState = null
+  }
+  editor.handleInput("\t")
+  assert.equal(pinToggles, 1)
+
+  editor.autocompleteState = "auto"
+  editor.autocompleteList = {
+    getSelectedItem: () => selected,
+    handleInput: () => {},
+  }
+  editor.autocompleteProvider = {
+    applyCompletion: (lines, cursorLine, cursorCol) => ({ lines, cursorLine, cursorCol }),
+  }
+  editor.autocompletePrefix = "/resume "
+  editor.handleInput("\r")
+  assert.equal(pinToggles, 1)
+})
+
 test("resume autocomplete shows one pin hint at the bottom", () => {
   initTheme("default")
   const list = new RelatedAutocompleteSelectList("/resume ", [
