@@ -490,6 +490,54 @@ test("tool call summaries use Furnace argument names", () => {
   assert.match(stripAnsi(bash.render(100).join("\n")), /\$ npm test \(timeout 1\.5s\)/)
 })
 
+test("todo tools render a structured checklist instead of raw JSON", () => {
+  initTheme("default")
+  const todos = [
+    { id: "one", content: "Locate the mods folder", status: "in_progress" },
+    { id: "two", content: "Install Fabric", status: "pending" },
+    { id: "three", content: "Verify the game launches", status: "completed" },
+  ]
+  const component = new ToolExecutionComponent(
+    "todowrite",
+    "call_todo",
+    { todos },
+    {},
+    undefined,
+    { requestRender: () => {} },
+    "/tmp",
+  )
+  component.setArgsComplete()
+  component.markExecutionStarted()
+  component.updateResult({
+    content: [{ type: "text", text: JSON.stringify({ todos, summary: { total: 3 } }) }],
+    isError: false,
+  })
+
+  const rendered = stripAnsi(component.render(100).join("\n"))
+  assert.match(rendered, /Updated todos · 1 active · 1 done/)
+  assert.match(rendered, /◐ Locate the mods folder/)
+  assert.match(rendered, /○ Install Fabric/)
+  assert.match(rendered, /✓ Verify the game launches/)
+  assert.doesNotMatch(rendered, /"todos"|"status"|├─ input|└─ output/)
+
+  const readComponent = new ToolExecutionComponent(
+    "todoread",
+    "call_todo_read",
+    {},
+    {},
+    undefined,
+    { requestRender: () => {} },
+    "/tmp",
+  )
+  readComponent.setArgsComplete()
+  readComponent.markExecutionStarted()
+  readComponent.updateResult({
+    content: [{ type: "text", text: JSON.stringify({ todos, summary: { total: 3 } }) }],
+    isError: false,
+  })
+  assert.match(stripAnsi(readComponent.render(100).join("\n")), /Read todos · 1 active · 1 done/)
+})
+
 test("stfu tool groups collapse adjacent matching calls", () => {
   initTheme("default")
   const group = new StfuToolGroup()

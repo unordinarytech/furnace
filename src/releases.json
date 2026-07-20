@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.17",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Todo tool activity is readable as a checklist again.",
+      "changes": [
+        { "kind": "fixed", "text": "Restored dedicated `todowrite` and `todoread` rendering instead of showing raw input and output JSON." },
+        { "kind": "changed", "text": "Todo activity now shows active and completed counts with distinct symbols and styling for every status." }
+      ]
+    },
+    {
       "version": "0.2.16",
       "date": "2026-07-20",
       "status": "published",

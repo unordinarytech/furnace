@@ -14,6 +14,7 @@ import { createGrepToolDefinition } from "./grep.js";
 import { createLsToolDefinition } from "./ls.js";
 import { createReadToolDefinition } from "./read.js";
 import { createWriteToolDefinition } from "./write.js";
+import { createTodoToolDefinition } from "./todo.js";
 
 export type { ToolDefinition, ToolRenderContext, ToolRenderResultOptions, AgentToolResult } from "./types.js";
 export { type BashToolDetails, type BashToolInput, createBashToolDefinition } from "./bash.js";
@@ -24,10 +25,11 @@ export { createLsToolDefinition, type LsToolDetails, type LsToolInput } from "./
 export { createReadToolDefinition, type ReadToolDetails, type ReadToolInput } from "./read.js";
 export { createWriteToolDefinition, type WriteToolInput } from "./write.js";
 export { createAskQuestionToolDefinition } from "./ask-question.js";
+export { createTodoToolDefinition } from "./todo.js";
 
 export type ToolDef = ToolDefinition<any, any>;
-export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls" | "ask_question";
-export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "ask_question"]);
+export type ToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls" | "ask_question" | "todoread" | "todowrite";
+export const allToolNames: Set<ToolName> = new Set(["read", "bash", "edit", "write", "grep", "find", "ls", "ask_question", "todoread", "todowrite"]);
 
 export function createToolDefinition(toolName: ToolName, cwd: string): ToolDef {
 	switch (toolName) {
@@ -47,6 +49,9 @@ export function createToolDefinition(toolName: ToolName, cwd: string): ToolDef {
 			return createLsToolDefinition(cwd);
 		case "ask_question":
 			return createAskQuestionToolDefinition();
+		case "todoread":
+		case "todowrite":
+			return createTodoToolDefinition(toolName);
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
@@ -62,5 +67,7 @@ export function createAllToolDefinitions(cwd: string): Record<ToolName, ToolDef>
 		find: createFindToolDefinition(cwd),
 		ls: createLsToolDefinition(cwd),
 		ask_question: createAskQuestionToolDefinition(),
+		todoread: createTodoToolDefinition("todoread"),
+		todowrite: createTodoToolDefinition("todowrite"),
 	};
 }
