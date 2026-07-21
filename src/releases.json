@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.24",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Missing API key guidance is now persistent and actionable.",
+      "changes": [
+        { "kind": "changed", "text": "Show a persistent `/login` warning on startup and after switching conversations when no API key is configured." },
+        { "kind": "changed", "text": "Repeat the highlighted API key warning whenever a message is attempted without configured credentials." }
+      ]
+    },
+    {
       "version": "0.2.23",
       "date": "2026-07-21",
       "status": "published",

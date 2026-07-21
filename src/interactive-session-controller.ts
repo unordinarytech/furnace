@@ -40,7 +40,7 @@ import { TaskManager, makeTaskId, type TaskManagerOptions } from "./tasks/manage
 import type { TaskRecord } from "./tasks/types.js"
 import { createSessionTerminalBridge, runtimeUiFor, type SessionRuntimeUi } from "./ui/session-terminal-bridge.js"
 import { childToolDefinitions, toolDefinitions } from "./tools/registry.js"
-import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, SnowIntensity, ToolActivity } from "./ui/terminal-types.js"
+import type { FurnaceTerminal, PromptAutocompleteItem, PromptAutocompleteMatch, QueuedPrompt, SnowIntensity, StatusNoticeTone, ToolActivity } from "./ui/terminal-types.js"
 import type { EvolveOutcome } from "./evolve/types.js"
 import type { EvolveMigrationState } from "./evolve/migration.js"
 import type { ImageAttachment } from "./utils/images.js"
@@ -64,6 +64,8 @@ import { furnaceReleases, unacknowledgedFurnaceRelease } from "./release-notes.j
 export function isWorkingSessionNavigationCommand(name: string): boolean {
   return name === "/new" || isHistoryCommand(name)
 }
+
+export const MISSING_API_KEY_NOTICE = "No API key configured. Use /login to configure API keys."
 
 export async function runInteractive(input: {
   config: Awaited<ReturnType<typeof loadConfig>>
@@ -387,7 +389,7 @@ export async function runInteractive(input: {
 
     // Bare messages (non-slash) need an API key. Slash commands always pass through.
     if (!command.name.startsWith("/") && isApiKeyMissing(input.config)) {
-      showTransientStatus("No API key configured. Use /login to set one.")
+      showTransientStatus(MISSING_API_KEY_NOTICE, 6000, "warning")
       return
     }
     if (command.name === "/exit" || command.name === "/quit") {
@@ -720,10 +722,10 @@ export async function runInteractive(input: {
     await runPromptQueue(prompt, images)
   }
 
-  function showTransientStatus(content: string, ttlMs = 3000): void {
+  function showTransientStatus(content: string, ttlMs = 3000, tone?: StatusNoticeTone): void {
     clearTransientStatus()
     const token = ++transientStatusToken
-    terminal.setStatusNotice(content)
+    terminal.setStatusNotice(content, tone)
     transientStatusTimer = setTimeout(() => {
       if (token !== transientStatusToken) return
       transientStatusTimer = undefined
@@ -1125,7 +1127,7 @@ export async function runInteractive(input: {
 
   function missingApiKeyNotice(): string | undefined {
     if (!isApiKeyMissing(input.config)) return undefined
-    return `No API key configured for ${input.config.providerConfig.displayName}. Type /login to save one to ~/.furnace/auth.json.`
+    return MISSING_API_KEY_NOTICE
   }
 
   async function maybeRunRepoIndexOnboarding(): Promise<void> {
@@ -1470,6 +1472,7 @@ export async function runInteractive(input: {
     restoreSessionInteractionState(targetSessionId)
     flushPendingBackgroundPrompts()
     syncPinnedChats()
+    syncPersistentStatusNotice()
   }
 
   function toggleCurrentChatPin(): void {

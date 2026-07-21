@@ -13,11 +13,12 @@ test("usage view consumes only the first dismiss action", async () => {
 })
 
 test("interrupt and startup copy stay concise and accurate", async () => {
-  const [{ INTERRUPTED_MESSAGE, isWorkingSessionNavigationCommand }, { COMPACT_STARTUP_HINT }] = await Promise.all([
+  const [{ INTERRUPTED_MESSAGE, MISSING_API_KEY_NOTICE, isWorkingSessionNavigationCommand }, { COMPACT_STARTUP_HINT }] = await Promise.all([
     import("../dist/interactive-session-controller.js"),
     import("../dist/ui/pi/layouts.js"),
   ])
   assert.equal(INTERRUPTED_MESSAGE, "Interrupted.")
+  assert.equal(MISSING_API_KEY_NOTICE, "No API key configured. Use /login to configure API keys.")
   assert.equal(COMPACT_STARTUP_HINT, "ctrl+c interrupt/close · / commands")
   assert.doesNotMatch(INTERRUPTED_MESSAGE, /queued prompt/i)
   assert.doesNotMatch(COMPACT_STARTUP_HINT, /ctrl\+d|ctrl\+o|drop files/i)
