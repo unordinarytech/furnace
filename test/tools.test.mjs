@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { SessionStore } from "../dist/session/store.js"
-import { executeToolCall, toolDefinitions } from "../dist/tools/registry.js"
+import { childToolDefinitions, executeToolCall, toolDefinitions } from "../dist/tools/registry.js"
 import { withTemporaryWorkspace } from "./helpers/workspace.mjs"
 
 const withWorkspace = (fn) => withTemporaryWorkspace("furnace-tools-", fn)
@@ -18,6 +18,9 @@ test("tool registry exposes the core primitives", () => {
     toolDefinitions.map((tool) => tool.function.name),
     ["read", "context_retrieve", "ls", "find", "glob", "grep", "write", "edit", "bash", "ask_question", "skill", "skill_manage", "task", "task_status", "todoread", "todowrite", "websearch", "webfetch"],
   )
+  assert.equal(toolDefinitions.some((tool) => tool.function.name === "task"), true)
+  assert.equal(childToolDefinitions.some((tool) => tool.function.name === "task"), false)
+  assert.equal(childToolDefinitions.some((tool) => tool.function.name === "task_status"), true)
 })
 
 test("todo tools persist session-scoped todo state through the provided todo store", async () => {
@@ -134,6 +137,27 @@ test("task_status returns current task runner status", async () => {
                   startedAt: Date.now(),
                   status: "backgrounded",
                 },
+                {
+                  background: false,
+                  childSessionId: "child_2",
+                  description: "Failed old task",
+                  error: "failed",
+                  id: "task_2",
+                  parentSessionId: "parent",
+                  prompt: "Fail",
+                  startedAt: Date.now(),
+                  status: "failed",
+                },
+                {
+                  background: false,
+                  childSessionId: "child_3",
+                  description: "Cancelled old task",
+                  id: "task_3",
+                  parentSessionId: "parent",
+                  prompt: "Cancel",
+                  startedAt: Date.now(),
+                  status: "cancelled",
+                },
               ],
             }
           },
@@ -142,6 +166,7 @@ test("task_status returns current task runner status", async () => {
     )
 
     assert.match(result.content, /backgrounded: Background research/)
+    assert.doesNotMatch(result.content, /Failed old task|Cancelled old task/)
     assert.doesNotMatch(result.content, /child_session/)
   })
 })

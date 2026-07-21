@@ -48,6 +48,7 @@ import { acceptedLinesForTool, renderUsageReport } from "./usage/summary.js"
 import { readKeyUsage, recordAcceptedLines, recordTurnUsage, removeAcceptedLines } from "./usage/store.js"
 import { UsageViewState } from "./ui/usage-view-state.js"
 import { TipScheduler } from "./ui/tips.js"
+import { TaskDetailsViewState } from "./ui/task-details-view-state.js"
 
 export const INTERRUPTED_MESSAGE = "Interrupted."
 import type { AskQuestionRequest, AskQuestionResponse } from "./questions.js"
@@ -97,6 +98,7 @@ export async function runInteractive(input: {
   const pendingQuestions = new Map<string, { request: AskQuestionRequest; resolve: (response: AskQuestionResponse) => void }>()
   const pendingPlanActions = new Map<string, { onSelect: (action: "execute" | "refine" | "stay") => void; planPath: string }>()
   const sessionRuntimeUi = new Map<string, SessionRuntimeUi>()
+  const taskDetailsView = new TaskDetailsViewState()
   let transientStatusTimer: ReturnType<typeof setTimeout> | undefined
   let transientStatusToken = 0
   let persistentUpgradeNotice: string | undefined
@@ -134,6 +136,9 @@ export async function runInteractive(input: {
     },
     onUpdate: (snapshot) => {
       terminalForSession(snapshot.parentSessionId).setTaskStatus(snapshot)
+      if (snapshot.parentSessionId === activeDisplaySessionId && taskDetailsView.isVisible(snapshot.parentSessionId)) {
+        renderTaskDetails(snapshot.tasks)
+      }
       syncPinnedChats()
     },
     permissions,
@@ -175,7 +180,7 @@ export async function runInteractive(input: {
       const promoted = taskManager.promoteActiveGroup(sessionId)
       showTransientStatus(promoted ? "Subagents moved to background. You can keep chatting; results will return here when ready." : "No active foreground subagents to background.")
     },
-    onTaskStatus: showTaskStatus,
+    onTaskStatus: () => showTaskStatus(true),
     onPinnedSelect: switchToPinnedChat,
     onPinnedToggleCurrent: toggleCurrentChatPin,
     onPinnedUnpin: unpinPinnedChat,
@@ -480,7 +485,7 @@ export async function runInteractive(input: {
     }
     if (isCurrentSessionRunning() && prompt.startsWith("/")) {
       if (command.name === "/tasks") {
-        showTaskStatus()
+        showTaskStatus(false)
         return
       }
       if (command.name === "/skills") {
@@ -582,7 +587,7 @@ export async function runInteractive(input: {
       return
     }
     if (command.name === "/tasks") {
-      showTaskStatus()
+      showTaskStatus(false)
       return
     }
     if (command.name === "/skills") {
@@ -1329,9 +1334,18 @@ export async function runInteractive(input: {
     terminal.showPermissions(permissions.listSessionGrants(sessionId), onRemove, onClearAll, onClose)
   }
 
-  function showTaskStatus(): void {
-    const status = formatTaskStatusForUser(taskManager.status(sessionId).tasks)
+  function renderTaskDetails(records: TaskRecord[]): void {
+    const status = formatTaskStatusForUser(records)
     terminal.setTranscript([...entriesToTranscript(input.store.getActivePath(sessionId)), { role: "assistant", content: status }])
+  }
+
+  function showTaskStatus(toggle: boolean): void {
+    if (toggle && !taskDetailsView.toggle(sessionId)) {
+      refreshCurrentSession()
+      return
+    }
+    if (!toggle) taskDetailsView.show(sessionId)
+    renderTaskDetails(taskManager.status(sessionId).tasks)
   }
 
   function applyBaseAutocompleteItems(items: PromptAutocompleteItem[]): void {
@@ -1444,6 +1458,7 @@ export async function runInteractive(input: {
     usageViewState.dismiss()
     unreadCompletedSessionIds.delete(targetSessionId)
     terminal.cancelQueuedPromptEdit()
+    taskDetailsView.switchTo(targetSessionId)
     sessionId = targetSessionId
     activeDisplaySessionId = targetSessionId
     if (options.clearScreen) process.stdout.write("\x1b[2J\x1b[H")

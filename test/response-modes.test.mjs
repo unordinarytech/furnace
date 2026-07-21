@@ -27,6 +27,9 @@ test("base prompt contains only a neutral response section", async () => {
   const prompt = await readFile(new URL("../src/prompts/base-system.md", import.meta.url), "utf8")
   assert.match(prompt, /CRITICAL — response guidance/)
   assert.match(prompt, /<!-- FURNACE_RESPONSE_GUIDANCE -->/)
+  assert.match(prompt, /keep answering the user's next queries normally/)
+  assert.match(prompt, /unless the user explicitly asks you to poll/)
+  assert.match(prompt, /Furnace will automatically notify and re-enter the parent conversation/)
   assert.doesNotMatch(prompt, /\/stfu|\/caveman|caveman|response mode/i)
 })
 

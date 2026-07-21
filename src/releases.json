@@ -2,6 +2,20 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.22",
+      "date": "2026-07-21",
+      "status": "published",
+      "commit": null,
+      "summary": "Subagent status and background-task guidance are clearer and more accurate.",
+      "changes": [
+        { "kind": "added", "text": "Added live `Ctrl+K` toggling for subagent task details." },
+        { "kind": "changed", "text": "Instructed the agent to keep answering normally after backgrounding subagents because Furnace automatically returns completion results." },
+        { "kind": "changed", "text": "Explicitly prohibited polling background subagents unless the user asks for it." },
+        { "kind": "fixed", "text": "Stopped completed failures and cancellations from appearing as active tasks in `task_status`." },
+        { "kind": "fixed", "text": "Added coverage confirming parent agents receive delegation tools while child agents cannot recursively delegate." }
+      ]
+    },
+    {
       "version": "0.2.21",
       "date": "2026-07-21",
       "status": "published",

@@ -156,7 +156,7 @@ Built-in slash commands include:
 | `/reset` | Reset the Furnace harness to its default state (undo all evolve changes). |
 | `/plan [prompt]` | Switch to plan mode. |
 | `/agent` or `/mode agent` | Switch back to normal agent mode. |
-| `/tasks` | Show active subagents. |
+| `/tasks` | Show active subagents. `Ctrl+K` toggles live task details. |
 | `/pin` | Pin or unpin the current chat (up to five). |
 | `/pins [slot]` | List pinned chats or switch to a slot. `Ctrl+P` focuses the panel; `Ctrl+G` shows or hides it. |
 | `/compact [focus]` | Manually summarize old context. |

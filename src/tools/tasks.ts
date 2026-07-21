@@ -31,7 +31,7 @@ export async function taskTool(args: unknown, context: ToolContext): Promise<Too
 export async function taskStatusTool(_args: unknown, context: ToolContext): Promise<string> {
   if (!context.taskRunner || !context.sessionId) return "Task status is unavailable in this mode."
   const snapshot = context.taskRunner.status(context.sessionId)
-  const visible = snapshot.tasks.filter((task) => task.status !== "completed")
+  const visible = snapshot.tasks.filter((task) => task.status === "running" || task.status === "backgrounded")
   if (visible.length === 0) return "No active subagent tasks for this conversation."
   return visible
     .map((task) => {
