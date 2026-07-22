@@ -290,5 +290,29 @@ test("providers", async (t) => {
     }
   })
 
+  await t.test("saveCustomProviders uses atomic write and leaves no temp files", async () => {
+    const { readdir } = await import("node:fs/promises")
+    const { saveCustomProviders } = await import("../dist/providers/custom.js")
+    await saveCustomProviders([
+      { id: "atomic-test", displayName: "Atomic", baseUrl: "http://localhost:9999", protocol: "openai-compatible" },
+    ])
+    const dir = join(tmpHome, ".furnace")
+    const files = await readdir(dir)
+    assert.ok(files.includes("providers.json"))
+    assert.equal(files.filter((f) => f.endsWith(".tmp")).length, 0)
+  })
+
+  await t.test("concurrent saveCustomProviders calls do not lose data", async () => {
+    const { saveCustomProviders, loadCustomProviders } = await import("../dist/providers/custom.js")
+    await Promise.all([
+      saveCustomProviders([{ id: "concurrent-a", displayName: "A", baseUrl: "http://a", protocol: "openai-compatible" }]),
+      saveCustomProviders([{ id: "concurrent-b", displayName: "B", baseUrl: "http://b", protocol: "openai-compatible" }]),
+      saveCustomProviders([{ id: "concurrent-c", displayName: "C", baseUrl: "http://c", protocol: "openai-compatible" }]),
+    ])
+    const result = await loadCustomProviders()
+    assert.equal(result.length, 1)
+    assert.ok(["concurrent-a", "concurrent-b", "concurrent-c"].includes(result[0].id))
+  })
+
   await rm(tmpHome, { recursive: true, force: true })
 })
