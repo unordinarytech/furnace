@@ -2,6 +2,17 @@
   "schemaVersion": 1,
   "releases": [
     {
+      "version": "0.2.26",
+      "date": "2026-07-22",
+      "status": "published",
+      "commit": null,
+      "summary": "Idle effects no longer disturb the terminal layout or scrollback.",
+      "changes": [
+        { "kind": "fixed", "text": "Limited animated snowfall to the visible terminal viewport so redraws preserve conversation scrollback." },
+        { "kind": "fixed", "text": "Reserved a stable slot for idle tips so appearing and disappearing tips no longer shift the input layout." }
+      ]
+    },
+    {
       "version": "0.2.25",
       "date": "2026-07-22",
       "status": "published",
