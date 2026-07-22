@@ -30,6 +30,14 @@ test("published installs resolve an activated managed evolve bundle", async () =
     assert.equal(resolveActiveEvolveCli(installedCli), await realpath(managedCli))
     assert.equal(resolveActiveEvolveCli(managedCli), undefined)
 
+    const originalArgv = process.argv
+    process.argv = ["node", installedCli, "update"]
+    assert.equal(resolveActiveEvolveCli(installedCli), undefined)
+    process.argv = ["node", installedCli, "--update"]
+    assert.equal(resolveActiveEvolveCli(installedCli), undefined)
+    process.argv = originalArgv
+    assert.equal(resolveActiveEvolveCli(installedCli), await realpath(managedCli))
+
     const childEnv = { ...process.env }
     delete childEnv.FURNACE_DISABLE_EVOLVE_RELAUNCH
     const launched = spawnSync(process.execPath, [installedCli, "--version"], {

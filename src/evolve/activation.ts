@@ -32,8 +32,15 @@ export function activateManagedFurnaceRoot(root: string): void {
   renameSync(temp, path)
 }
 
+export function isSelfUpdateInvocation(argv: string[] = process.argv): boolean {
+  const args = argv.slice(2)
+  if (args[0] === "update") return true
+  return args.includes("--update")
+}
+
 export function resolveActiveEvolveCli(entry = process.argv[1]): string | undefined {
   if (!entry || process.env.FURNACE_DISABLE_EVOLVE_RELAUNCH === "1") return undefined
+  if (isSelfUpdateInvocation()) return undefined
 
   const resolvedEntry = safeRealpath(entry)
   // Development and managed-source bundles already live beside src/. Only a
