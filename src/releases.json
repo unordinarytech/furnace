@@ -9,7 +9,8 @@
       "summary": "Idle effects no longer disturb the terminal layout or scrollback.",
       "changes": [
         { "kind": "fixed", "text": "Limited animated snowfall to the visible terminal viewport so redraws preserve conversation scrollback." },
-        { "kind": "fixed", "text": "Reserved a stable slot for idle tips so appearing and disappearing tips no longer shift the input layout." }
+        { "kind": "fixed", "text": "Reserved a stable slot for idle tips so appearing and disappearing tips no longer shift the input layout." },
+        { "kind": "changed", "text": "Made first-time npx setup wait for Enter, highlight its completion guidance, and clear installation logs before opening Furnace." }
       ]
     },
     {

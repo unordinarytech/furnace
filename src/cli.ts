@@ -39,6 +39,7 @@ import { packageVersion } from "./version.js"
 import { relaunchActiveEvolveIfNeeded } from "./evolve/activation.js"
 import { furnacePackageRoot, runSelfUpdate } from "./self-update.js"
 import { bootstrapFromNpx, cleanupStaleManagedVersions, type ManagedInstallResult } from "./managed-install.js"
+import { renderInstallCompletion, waitForInstallContinue } from "./install-onboarding.js"
 
 let bootstrapResult: ManagedInstallResult | undefined
 try {
@@ -47,9 +48,8 @@ try {
     version: packageVersion,
   })
   if (bootstrapResult) {
-    process.stdout.write(`Furnace ${bootstrapResult.version} installed. The persistent command is now: furnace\n`)
-    process.stdout.write("Tip: Idle tips can be turned off in /settings or with /tips.\n")
-    if (bootstrapResult.pathChanged) process.stdout.write("Reopen your terminal before using `furnace` in a new session.\n")
+    process.stdout.write(`${renderInstallCompletion(bootstrapResult)}\n`)
+    await waitForInstallContinue()
   }
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error)
@@ -161,7 +161,7 @@ program
           return
         }
 
-        await runInteractive({ config, cwd, sessionId: session.id, store, shouldClear: options.clear && !bootstrapResult })
+        await runInteractive({ config, cwd, sessionId: session.id, store, shouldClear: options.clear })
       } finally {
         store.deleteEmptySessions(cwd)
         store.close()
