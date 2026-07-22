@@ -22,7 +22,7 @@ import type { PermissionDecision, PermissionRequest } from "./permissions.js"
 import { appendPlanModeGuidance, currentPlanModeState, renderPlanExecutionPrompt, renderVisiblePlanArtifact, transitionPlanMode, type AgentMode, type PlanModeEntryData } from "./plan-mode.js"
 import { acknowledgeReleaseVersion, saveGlobalPreferences, saveModelPreferences, saveThemePreference, statusLinePreferencesFrom, type FurnacePreferences, type ModelSettings } from "./preferences.js"
 import { compactSessionIfNeeded, estimateRequestTokens, resolveCompactionSettings, type CompactionReason } from "./session/compaction.js"
-import { entriesToModelMessages, entriesToTranscript } from "./session/context.js"
+import { entriesToModelMessages, entriesToTranscript, pendingToolCalls } from "./session/context.js"
 import { resolveForkEntryId } from "./session/navigation.js"
 import { fallbackTitle, generateSessionTitle } from "./session/title.js"
 import type { SessionStore } from "./session/store.js"
@@ -2270,6 +2270,7 @@ export async function runInteractive(input: {
           completed = true
         } catch (error) {
           if (!isAbortError(error)) throw error
+          closeInterruptedToolCalls(input.store, turnSessionId)
           input.store.appendMessage(turnSessionId, "assistant", INTERRUPTED_MESSAGE, input.config.model)
           if (activeDisplaySessionId === turnSessionId) {
             terminal.setThinking(false)
@@ -2749,12 +2750,15 @@ export async function runSingleTurn(input: {
     },
   })
   } catch (error) {
-    if (isAbortError(error) && streamingText.trim()) {
-      input.store.appendMessage(input.sessionId, "assistant", streamingText, { model: input.config.model })
-      if (terminal) {
-        terminal.setThinking(false)
-        terminal.setStreamingContent("")
-        terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+    if (isAbortError(error)) {
+      closeInterruptedToolCalls(input.store, input.sessionId)
+      if (streamingText.trim()) {
+        input.store.appendMessage(input.sessionId, "assistant", streamingText, { model: input.config.model })
+        if (terminal) {
+          terminal.setThinking(false)
+          terminal.setStreamingContent("")
+          terminal.setTranscript(entriesToTranscript(input.store.getActivePath(input.sessionId)))
+        }
       }
     }
     throw error
@@ -3388,6 +3392,17 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException
     ? error.name === "AbortError"
     : error instanceof Error && (error.name === "AbortError" || /aborted|interrupted/i.test(error.message))
+}
+
+function closeInterruptedToolCalls(store: SessionStore, sessionId: string): void {
+  for (const call of pendingToolCalls(store.getActivePath(sessionId))) {
+    store.appendToolResult(sessionId, {
+      content: "Tool call interrupted.",
+      name: call.name,
+      status: "error",
+      toolCallId: call.toolCallId,
+    })
+  }
 }
 
 function formatRelativeTime(timestamp: number): string {

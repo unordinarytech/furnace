@@ -49,14 +49,67 @@ function legacyToolResultIsError(content: string): boolean {
 
 export function entriesToModelMessages(systemPrompt: string, entries: EntryRecord[], runtimeContext?: RuntimeContextInput): OpenRouterMessage[] {
   const projectedMessages = projectEntriesForModel(entries).flatMap((entry) => (isProjectedMessage(entry) ? [entry] : entryToModelMessage(entry)))
-  const messages: OpenRouterMessage[] = [{ role: "system", content: systemPrompt, cacheControl: "ephemeral" }, ...projectedMessages]
+  const repaired = ensureToolCallResults(projectedMessages)
+  const messages: OpenRouterMessage[] = [{ role: "system", content: systemPrompt, cacheControl: "ephemeral" }, ...repaired]
   if (!runtimeContext) return messages
 
   const runtimeMessage: OpenRouterMessage = { role: "user", content: buildRuntimeContext(runtimeContext) }
-  const latestUserIndex = latestUserMessageIndex(projectedMessages)
+  const latestUserIndex = latestUserMessageIndex(repaired)
   if (latestUserIndex < 0) return [...messages, runtimeMessage]
   const insertionIndex = 1 + latestUserIndex
   return [...messages.slice(0, insertionIndex), runtimeMessage, ...messages.slice(insertionIndex)]
+}
+
+/**
+ * Providers reject histories where an assistant `tool_calls` message is not
+ * followed by a tool result for every call id (e.g. interrupted mid-tool).
+ * Insert stub tool results so the next turn can continue.
+ */
+export function ensureToolCallResults(
+  messages: OpenRouterMessage[],
+  stubContent = "Tool call interrupted or result was not recorded.",
+): OpenRouterMessage[] {
+  const output: OpenRouterMessage[] = []
+  let pending: Array<{ id: string; name: string }> = []
+
+  const flushPending = () => {
+    if (pending.length === 0) return
+    for (const call of pending) {
+      output.push({
+        role: "tool",
+        name: call.name,
+        tool_call_id: call.id,
+        content: stubContent,
+      })
+    }
+    pending = []
+  }
+
+  for (const message of messages) {
+    if (message.role === "assistant" && message.tool_calls && message.tool_calls.length > 0) {
+      flushPending()
+      output.push(message)
+      pending = message.tool_calls.map((call) => ({
+        id: call.id,
+        name: call.function.name || "unknown",
+      }))
+      continue
+    }
+
+    if (message.role === "tool") {
+      output.push(message)
+      if (message.tool_call_id) {
+        pending = pending.filter((call) => call.id !== message.tool_call_id)
+      }
+      continue
+    }
+
+    flushPending()
+    output.push(message)
+  }
+
+  flushPending()
+  return output
 }
 
 export function projectEntriesForModel(entries: EntryRecord[]): Array<EntryRecord | OpenRouterMessage> {
@@ -178,6 +231,21 @@ function entryToModelMessage(entry: EntryRecord): OpenRouterMessage[] {
     ]
   }
   return []
+}
+
+export function pendingToolCalls(entries: EntryRecord[]): ToolCallEntryData[] {
+  const open = new Map<string, ToolCallEntryData>()
+  for (const entry of entries) {
+    if (entry.type === "tool_call") {
+      const data = entry.data as ToolCallEntryData
+      open.set(data.toolCallId, data)
+      continue
+    }
+    if (entry.type === "tool_result") {
+      open.delete((entry.data as ToolResultEntryData).toolCallId)
+    }
+  }
+  return [...open.values()]
 }
 
 function latestCompactionEntryIndex(entries: EntryRecord[]): number {

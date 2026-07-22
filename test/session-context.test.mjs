@@ -71,6 +71,54 @@ test("hidden messages are replayed to the model but omitted from transcript", ()
   ])
 })
 
+test("model messages insert stub tool results for interrupted tool calls", () => {
+  const messages = entriesToModelMessages("base system", [
+    {
+      id: "entry-1",
+      parentEntryId: null,
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "run something" },
+      createdAt: 0,
+    },
+    {
+      id: "entry-2",
+      parentEntryId: "entry-1",
+      sessionId: "session-1",
+      type: "tool_call",
+      role: "assistant",
+      data: { arguments: "{\"command\":\"sleep 30\"}", name: "bash", toolCallId: "call_orphan" },
+      createdAt: 1,
+    },
+    {
+      id: "entry-3",
+      parentEntryId: "entry-2",
+      sessionId: "session-1",
+      type: "message",
+      role: "user",
+      data: { content: "hello" },
+      createdAt: 2,
+    },
+  ])
+
+  assert.deepEqual(messages.slice(1), [
+    { role: "user", content: "run something" },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "call_orphan", type: "function", function: { name: "bash", arguments: "{\"command\":\"sleep 30\"}" } }],
+    },
+    {
+      role: "tool",
+      name: "bash",
+      tool_call_id: "call_orphan",
+      content: "Tool call interrupted or result was not recorded.",
+    },
+    { role: "user", content: "hello" },
+  ])
+})
+
 test("model messages replay persisted tool calls and results", () => {
   const messages = entriesToModelMessages("base system", [
     {
