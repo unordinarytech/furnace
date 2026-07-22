@@ -3,6 +3,7 @@ import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
 import Database from "better-sqlite3"
 import { ensureFurnaceStateExcluded } from "../git-exclude.js"
+import { ensureProjectStateDir } from "../workspace-state.js"
 import type { ImageAttachment } from "../utils/images.js"
 import type {
   EntryRecord,
@@ -85,6 +86,7 @@ export class SessionStore {
 
   static open(cwd: string, dbPath = defaultDatabasePath(cwd)): SessionStore {
     ensureFurnaceStateExcluded(cwd)
+    ensureProjectStateDir(cwd)
     mkdirSync(dirname(dbPath), { recursive: true })
     const db = new Database(dbPath)
     const store = new SessionStore(db)
