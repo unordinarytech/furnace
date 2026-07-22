@@ -2,6 +2,7 @@ import type { FurnaceConfig } from "../config.js"
 import { completeOpenRouterToolResponse, isContextOverflowError, type OpenRouterMessage, type OpenRouterToolChoice, type OpenRouterUsage } from "../openrouter.js"
 import { createToolPermissionRequest, type PermissionPrompt, type SessionPermissionStore } from "../permissions.js"
 import { defaultMaxOutputTokens } from "../preferences.js"
+import { supportsForcedToolChoice } from "../providers/model-capabilities.js"
 import type { AskQuestionPrompt } from "../questions.js"
 import type { TaskRunner } from "../tasks/types.js"
 import { executeToolCall, toolDefinitions, type ToolExecution, type ToolFileReadStore, type ToolTodoStore } from "../tools/registry.js"
@@ -47,7 +48,11 @@ export async function runAgentTurn(input: RunAgentTurnInput): Promise<RunAgentTu
 
   while (true) {
     messages = input.onBeforeModelRequest ? await input.onBeforeModelRequest(messages, tools) : messages
-    const toolChoice: OpenRouterToolChoice = iteration === 0 && shouldForceWebSearch(messages) ? { type: "function", function: { name: "websearch" } } : "auto"
+    const toolChoice: OpenRouterToolChoice = iteration === 0
+      && shouldForceWebSearch(messages)
+      && supportsForcedToolChoice(input.config.model, input.config.modelSettings)
+      ? { type: "function", function: { name: "websearch" } }
+      : "auto"
     iteration += 1
     if (input.signal?.aborted) throw abortError()
     let response

@@ -201,6 +201,77 @@ test("agent turn lets environment override configured max output tokens", async 
   }
 })
 
+test("agent turn disables DeepSeek V4 thinking so tool_choice can work", async () => {
+  const originalFetch = globalThis.fetch
+  let body
+
+  try {
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return textResponse("done")
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig({
+        model: "deepseek-v4-flash",
+        provider: "deepseek",
+        providerConfig: {
+          id: "deepseek",
+          displayName: "DeepSeek",
+          baseUrl: "https://api.deepseek.com/v1",
+          protocol: "openai-compatible",
+          apiKey: "test-key",
+        },
+      }),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "latest FIFA news" }],
+      tools: [{ type: "function", function: { name: "websearch", description: "search", parameters: { type: "object", properties: {} } } }],
+    })
+
+    assert.equal(result.content, "done")
+    assert.deepEqual(body.thinking, { type: "disabled" })
+    assert.deepEqual(body.tool_choice, { type: "function", function: { name: "websearch" } })
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("agent turn omits tool_choice when DeepSeek V4 reasoning stays enabled", async () => {
+  const originalFetch = globalThis.fetch
+  let body
+
+  try {
+    globalThis.fetch = async (_url, init) => {
+      body = JSON.parse(init.body)
+      return textResponse("done")
+    }
+
+    const result = await runAgentTurn({
+      config: fakeConfig({
+        model: "deepseek-v4-flash",
+        modelSettings: { reasoningEffort: "high" },
+        provider: "deepseek",
+        providerConfig: {
+          id: "deepseek",
+          displayName: "DeepSeek",
+          baseUrl: "https://api.deepseek.com/v1",
+          protocol: "openai-compatible",
+          apiKey: "test-key",
+        },
+      }),
+      cwd: "/tmp/furnace",
+      messages: [{ role: "user", content: "latest FIFA news" }],
+      tools: [{ type: "function", function: { name: "websearch", description: "search", parameters: { type: "object", properties: {} } } }],
+    })
+
+    assert.equal(result.content, "done")
+    assert.equal("tool_choice" in body, false)
+    assert.equal(body.thinking.type, "enabled")
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 function textResponse(content) {
   const sseData = `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\ndata: [DONE]\n`
   let consumed = false

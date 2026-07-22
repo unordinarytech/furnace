@@ -10,6 +10,11 @@ import type {
 } from "./types.js"
 import type { ModelSettings } from "../preferences.js"
 import { normalizeTokenPricing, parseUsageCostUsd } from "../session/model-pricing.js"
+import {
+  shouldDisableThinkingForTools,
+  shouldOmitToolChoice,
+  wantsReasoningEffort,
+} from "./model-capabilities.js"
 
 type ChatCompletionChunk = {
   choices?: Array<{
@@ -56,13 +61,26 @@ function buildHeaders(provider: ResolvedProvider): Record<string, string> {
   return headers
 }
 
-function buildRequestOptions(provider: ResolvedProvider, settings: ModelSettings): Record<string, unknown> {
+function buildRequestOptions(
+  provider: ResolvedProvider,
+  model: string,
+  settings: ModelSettings,
+  forTools = false,
+): Record<string, unknown> {
   const options: Record<string, unknown> = {}
-  if (settings.reasoningEffort && settings.reasoningEffort !== "none") {
+  if (forTools && shouldDisableThinkingForTools(model, settings)) {
+    // DeepSeek V4 thinks by default; disable it for tool turns unless the user
+    // opted into reasoning, so tool_choice works and flash stays snappy.
+    options.thinking = { type: "disabled" }
+  } else if (wantsReasoningEffort(settings)) {
     if (provider.id === "openrouter") {
       options.reasoning = { effort: settings.reasoningEffort }
     } else if (provider.id === "openai") {
       options.reasoning_effort = settings.reasoningEffort
+    } else if (provider.id === "deepseek") {
+      options.thinking = { type: "enabled" }
+      const effort = settings.reasoningEffort === "xhigh" ? "max" : settings.reasoningEffort
+      if (effort === "high" || effort === "max") options.reasoning_effort = effort
     }
   }
   if (settings.fast && provider.id === "openrouter") {
@@ -202,7 +220,7 @@ export function createOpenAICompatibleProvider(): Provider {
     ): AsyncGenerator<string> {
       const response = await postChatCompletion(provider, messages, {
         model,
-        ...buildRequestOptions(provider, settings),
+        ...buildRequestOptions(provider, model, settings),
         stream: true,
       }, signal)
       if (!response.body) {
@@ -245,7 +263,7 @@ export function createOpenAICompatibleProvider(): Provider {
       const response = await postChatCompletion(provider, messages, {
         model,
         max_tokens: options.maxTokens,
-        ...buildRequestOptions(provider, settings),
+        ...buildRequestOptions(provider, model, settings),
         stream: false,
       })
 
@@ -263,15 +281,19 @@ export function createOpenAICompatibleProvider(): Provider {
       options: { maxTokens?: number; toolChoice?: ToolChoice; onTextDelta?: (delta: string) => void } = {},
       signal?: AbortSignal,
     ): Promise<AssistantResponse> {
-      const response = await postChatCompletion(provider, messages, {
+      const payload: Record<string, unknown> = {
         model,
         tools,
-        tool_choice: options.toolChoice || "auto",
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
-        ...buildRequestOptions(provider, settings),
+        ...buildRequestOptions(provider, model, settings, true),
         stream: true,
         usage: { include: true },
-      }, signal)
+      }
+      // DeepSeek V4 thinking mode rejects tool_choice; omit it when thinking stays on.
+      if (!shouldOmitToolChoice(model, settings)) {
+        payload.tool_choice = options.toolChoice || "auto"
+      }
+      const response = await postChatCompletion(provider, messages, payload, signal)
       if (!response.body) {
         throw new Error("Request failed: provider returned an empty response body")
       }
