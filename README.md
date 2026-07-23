@@ -24,29 +24,56 @@ The model still does the coding. Furnace provides the runtime around it: provide
 
 ## Features
 
-### Headroom for long tool-heavy sessions
-
-Furnace includes Headroom request compression for large tool results. Big reads, searches, and command outputs are shortened before they hit the model, while the full omitted content remains locally retrievable when the agent actually needs it.
-
-### Graph-based conversations and forks
-
-Sessions are stored as a graph, not a flat transcript. You can resume old work, fork from the current point, fork from an earlier prompt, clone a conversation tip, and keep alternate attempts without losing the path that got you there.
-
-### Built-in workflows for real repositories
-
-Furnace ships the daily agent ergonomics people keep rebuilding in every harness: slash commands, `/stfu` for minimal responses, `/caveman` for blunt doc-less interaction, `/init` to index an existing repository, plan mode, image input, usage tracking, undo, model controls, and permission management.
-
-### Local evolve that survives updates
-
-`/evolve` lets Furnace modify its own harness locally, verify the change, and keep that evolved behavior in place. When Furnace updates, `/evolve-merge` can reapply those local changes onto the new version instead of throwing them away.
-
-### Pinned chats for multitasking
-
-Pinned chats keep multiple active threads close at hand. You can pin work, switch between sessions, watch active subagents continue thinking, and multitask inside one terminal instead of juggling separate harness windows.
-
-### The good parts without the baggage
-
-Furnace is intentionally stripped down around what actually helps coding agents work: a real TUI, local state, typed tools, permissions, context management, forks, skills, subagents, and headless mode. It keeps the useful parts of modern agent harnesses and removes the ceremony that slows them down.
+<table>
+  <tr>
+    <td width="34%">
+      <h3>Headroom for long tool-heavy sessions</h3>
+    </td>
+    <td width="66%">
+      Furnace includes Headroom request compression for large tool results. Big reads, searches, and command outputs are shortened before they hit the model, while the full omitted content remains locally retrievable when the agent actually needs it.
+    </td>
+  </tr>
+  <tr>
+    <td width="34%">
+      <h3>Graph-based conversations and forks</h3>
+    </td>
+    <td width="66%">
+      Sessions are stored as a graph, not a flat transcript. You can resume old work, fork from the current point, fork from an earlier prompt, clone a conversation tip, and keep alternate attempts without losing the path that got you there.
+    </td>
+  </tr>
+  <tr>
+    <td width="34%">
+      <h3>Built-in workflows for real repositories</h3>
+    </td>
+    <td width="66%">
+      Furnace ships the daily agent ergonomics people keep rebuilding in every harness: slash commands, <code>/stfu</code> for minimal responses, <code>/caveman</code> for blunt doc-less interaction, <code>/init</code> to index an existing repository, plan mode, image input, usage tracking, undo, model controls, and permission management.
+    </td>
+  </tr>
+  <tr>
+    <td width="34%">
+      <h3>Local evolve that survives updates</h3>
+    </td>
+    <td width="66%">
+      <code>/evolve</code> lets Furnace modify its own harness locally, verify the change, and keep that evolved behavior in place. When Furnace updates, <code>/evolve-merge</code> can reapply those local changes onto the new version instead of throwing them away.
+    </td>
+  </tr>
+  <tr>
+    <td width="34%">
+      <h3>Pinned chats for multitasking</h3>
+    </td>
+    <td width="66%">
+      Pinned chats keep multiple active threads close at hand. You can pin work, switch between sessions, watch active subagents continue thinking, and multitask inside one terminal instead of juggling separate harness windows.
+    </td>
+  </tr>
+  <tr>
+    <td width="34%">
+      <h3>The good parts without the baggage</h3>
+    </td>
+    <td width="66%">
+      Furnace is intentionally stripped down around what actually helps coding agents work: a real TUI, local state, typed tools, permissions, context management, forks, skills, subagents, and headless mode. It keeps the useful parts of modern agent harnesses and removes the ceremony that slows them down.
+    </td>
+  </tr>
+</table>
 
 ## Install
 
