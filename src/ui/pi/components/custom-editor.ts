@@ -4,6 +4,7 @@
  */
 import { Editor, type AutocompleteItem, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
+import { getKeybindings } from "../keybindings.js";
 
 /**
  * Custom editor that handles app-level keybindings for coding-agent.
@@ -57,6 +58,32 @@ export class CustomEditor extends Editor {
 	}
 
 	handleInput(data: string): void {
+		// Fix: When Enter is pressed while autocomplete is showing, the base pi-tui
+		// Editor applies the completion for slash commands and then falls through
+		// to the newline/submit checks. If Enter arrives as \n, the hardcoded
+		// newline check catches it before the submit check, inserting a newline
+		// instead of submitting the completed command.
+		//
+		// We intercept here: if autocomplete is showing and Enter is pressed, let
+		// the base Editor apply the completion, then submit immediately instead of
+		// falling through.
+		if (this.isShowingAutocomplete()) {
+			const kb = getKeybindings();
+			if (kb.matches(data, "tui.select.confirm") || kb.matches(data, "tui.input.submit")) {
+				// Let base Editor apply the completion (it handles this for slash commands)
+				super.handleInput(data);
+				// If autocomplete is now gone (the completion was applied), the text
+				// should be a completed slash command — submit the value
+				if (!this.isShowingAutocomplete()) {
+					const text = this.getText().trim();
+					if (text.startsWith("/") && this.onSubmit) {
+						this.onSubmit(text);
+					}
+				}
+				return;
+			}
+		}
+
 		if (this.inputDisabled) {
 			if (this.keybindings.matches(data, "app.interrupt")) {
 				(this.onEscape ?? this.actionHandlers.get("app.interrupt"))?.();
