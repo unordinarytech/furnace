@@ -1038,6 +1038,7 @@ export function createFurnaceTerminal(options: CreateFurnaceTerminalOptions): Fu
     }
     options.onInterrupt?.()
   }
+  editor.onAction("app.mode.cycle", () => options.onModeCycle?.(1))
   editor.onAction("app.tools.expand", () => setToolsExpanded(!toolOutputExpanded))
   editor.onAction("app.tasks.background", () => options.onTaskBackground?.())
   editor.onAction("app.tasks.status", () => options.onTaskStatus?.())

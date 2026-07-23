@@ -66,6 +66,31 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
+		// Fix: When Enter is pressed while autocomplete is showing, the base pi-tui
+		// Editor applies the completion for slash commands and then falls through
+		// to the newline/submit checks. If Enter arrives as \n, the hardcoded
+		// newline check catches it before the submit check, inserting a newline
+		// instead of submitting the completed command.
+		//
+		// We intercept here: if autocomplete is showing and Enter is pressed, let
+		// the base Editor apply the completion, then submit immediately instead of
+		// falling through.
+		if (this.isShowingAutocomplete()) {
+			if (this.keybindings.matches(data, "tui.select.confirm") || this.keybindings.matches(data, "tui.input.submit")) {
+				// Let base Editor apply the completion (it handles this for slash commands)
+				super.handleInput(data);
+				// If autocomplete is now gone (the completion was applied), the text
+				// should be a completed slash command — submit the value
+				if (!this.isShowingAutocomplete()) {
+					const text = this.getText().trim();
+					if (text.startsWith("/") && this.onSubmit) {
+						this.onSubmit(text);
+					}
+				}
+				return;
+			}
+		}
+
 		if (this.keybindings.matches(data, "tui.input.tab")) {
 			const autocomplete = this as unknown as {
 				autocompleteState?: unknown;
